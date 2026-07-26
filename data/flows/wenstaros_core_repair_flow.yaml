@@ -1,0 +1,286 @@
+# ==============================================
+# Flow ID: wenstaros_core_repair_flow
+# Flow Name: WenStarOS TS内核缺陷修复&架构重构刚性管控流水线
+# 适配项目：wenstar-cc (TS5.7 Node22)
+# Harness引擎规范：gate_type[auto/human/condition] runner_mode[local/delegate]
+# max_jump_limit: 最大连续自动流转熔断，防止无限空转
+# global_memo_key: 全局架构备忘录，全阶段强制注入
+# ==============================================
+flow_id: wenstaros_core_repair_flow
+flow_name: WenStarOS TS内核缺陷修复&架构重构流水线
+version: 2.0
+max_jump_limit: 10
+global_memo_key: wenstaros_arch_global_constraint
+global_arch_constraint: |
+  # 全局不可突破架构铁律（每阶段启动自动注入）
+  1. M1-M9九层认知管线无循环依赖，仅chat.ts顶层编排，禁止反向依赖；
+  2. PFC(PrefrontalCortex.ts)为唯一顶层上下文门控，chat.ts仅做薄调度层，禁止堆砌业务逻辑；
+  3. FamilyGraph.ts为太虚境户籍唯一数据源，角色扮演使用独立分支FG，禁止污染主库；
+  4. UUID(TXS-xxxx)全链路belong_entity_uuid四层标注机制不可删减；
+  5. SQLiteAdapter为唯一持久写入通道，修改存储逻辑必须校验防抖save()落盘；
+  6. 会晤模式_meetingEntityName 12处判断点必须完整同步，禁止角色信息泄漏；
+  7. 新旧两套角色扮演管线规则必须同步修改，切换开关ROLEPLAY_STRUCTURED_ENABLED两边兼容；
+  8. 数据写入遵循「只增不删」，历史卷宗、记忆、黑钻记录禁止直接删除；
+  9. chat.ts内22段finalKnowledgeText注入顺序不可随意调换，避免LLM提示词逻辑错乱；
+  10. 高风险文件(chat.ts/FamilyGraph.ts/SQLiteAdapter.ts)修改必须完整评估全量import依赖。
+
+global_implementation_rules: |
+global_implementation_rules: |
+  # ====================== 全局开发落地强制校验规则（9条精简版，永久生效，全阶段自动注入） ======================
+
+  # 1. 顶层架构强制对齐铁律
+  - 所有代码变更、逻辑重构、缺陷修复、新机制新增，必须严格对齐WenStarOS白皮书、蓝皮书整体分层架构与底层管线设计。严禁局部改动隐性偏离顶层架构、私自简化内核流程、弱化系统核心机制。任何架构越界行为直接拦截驳回。
+
+  # 2. 变更范围围栏与三级风险管控规则
+  - 所有改动受文件白名单约束，S1风险扫描严格锁定改动爆炸半径，禁止跨无关模块扩散修改、无意扰动已固化稳定链路。系统自动划分高/中/低三级变更风险，高风险内核改动必须附带影响清单、回退方案与全量回归计划；风险判定错误直接退回重审。已标记稳定固化模块非极高必要性不得修改。
+
+  # 3. 上下游依赖全域校验规则
+  - 任何变更必须完整检索上下游调用链路、间接依赖、跨模块复用关系，不可仅处理单点报错而忽略连锁影响。S1公示全部隐性依赖，S4强制核验链路闭环完整性，杜绝修改一处、破坏上游或下游现有正常链路。
+
+  # 4. 代码与文档双向同步规则
+  - 涉及架构逻辑、公共底层机制、核心链路、配置规则的修改，必须同步更新对应注释、业务文档、白皮书对应段落。强制保证代码实现与书面描述永久一致，避免信息割裂与技术债务沉淀。
+
+  # 5. 双层代码质量准入规则（基础静态质量 + 缺陷鲁棒加固合并）
+  ## 第一层：基础静态质量门槛
+  编译必须完整通过，类型合规、无语法错误、无死代码、废弃导入、类型逃逸；公共模块需遵循高复用、低耦合原则，统一项目编码与分层规范。
+  ## 第二层：缺陷修复强制鲁棒加固门槛
+  所有异常、报错、逻辑缺陷修复，不可仅屏蔽表象问题即结束；必须配套空值校验、参数拦截、边界防护、异常捕获、错误分支兜底、关键节点日志埋点。公共共性底层修复必须额外内置内部自校验逻辑，避免单点故障向上多层扩散。仅表层补丁、无任何加固兜底的代码直接判定不合格并拦截流水线。
+
+  # 6. 共性/个性归类强制核验规则（根治补丁泛滥）
+  - S2方案必须二选一明确归类，不可模糊、隐瞒、造假。
+  - 共性底层问题：户籍系统、UUID跨层标注、认知管线、全局记忆、数据库、跨角色公共组件等，必须修复根源，禁止局部硬编码、条件分支补丁，必须横向核验全仓库所有复用点位并同步闭环。
+  - 个性特例：仅限单角色独有、无全局复用、不触碰内核链路，且必须写明无横向影响依据，仅允许局部合理微调。
+  - 将共性问题伪装为个性问题、逃避横向核验，一律评审不通过，强制退回重构。
+
+  # 7. 全流程审计卷宗永久归档规则
+  - 每一轮流水线的风险分析、两套方案内容、审批决策记录、代码变更、十维度评审结果、测试报告、异常日志、优化提案上下文，全部完整归档入系统卷宗，永久可追溯、复盘、比对，禁止缺失环节与上下文删减。
+
+  # 8. 核心链路Hook侦测与运行态自检规则（动态兜底防护）
+  - 九大核心底层链路：FamilyGraph户籍读写、UUID跨层标注、chat.ts注入链路、九层认知管线、全局记忆抽取、数据库通用读写、跨角色复用组件、API调度、状态同步链路，修复闭环后必须植入标准侦测Hook。
+  - Hook实时校验数据完整性、角色身份一致性、上下游时序与字段合规性；侦测异常自动留存全量日志、执行局部安全降级与轻量自复位、阻断故障扩散，并在每日体检报告中高亮预警。
+  - 流水线最终环节强制执行六级全景健康体检（编译/内存/数据库/API/前端/角色行为），出现黄色、红色告警则本轮变更不得完全闭环。
+
+  # 9. LLM全局优化提案弹性机制（防止体系僵化，保留上升空间）
+  - AI不可机械照搬单点指令，若识别当前方案会延续不合理历史设计、堆积技术债务、加重耦合，S2阶段必须并行输出两套内容：① 用户原始需求落地方案 ② 全局架构优化提案。
+  - 优化提案必须包含：原方案长期隐患、耦合问题、维护成本风险；以及更解耦、更通用、更贴合顶层架构的升级替代方案。
+  - 最终决策权完全归属用户：用户同意优化则基于优化方案生成全新完整执行方案；用户否决优化，则必须严格执行原始方案，禁止暗中夹带被否决的优化逻辑。
+
+# 全流程阶段，状态机严格锁定顺序，AI无权限跳步
+stages:
+  # ====================== S1 问题收录+影响范围盘点（只读锁死，禁止修改代码） ======================
+  - stage_id: S1_Problem_Analysis
+    stage_name: 问题定位&模块牵连风险盘点
+    work_manual: |
+      1. 完整复述本次BUG/重构目标，区分是小bug修复、局部迭代、大型架构重构；
+      2. 扫描所有待修改文件，自动标记风险等级：
+         🔴高风险：chat.ts、FamilyGraph.ts、SQLiteAdapter.ts、server.ts、DeepSeekLLMProvider.ts、PrefrontalCortex.ts
+         🟡中风险：M4/M5 orchestrator、KnowledgeEngine、VaultManager、EntityMeeting、MeetingContextPipeline、UUIDGatekeeper
+         🟢低风险：config、types、cli、__tests__、common工具函数
+      3. 枚举所有import依赖本文件的上层模块，输出完整牵连清单；
+      4. 识别是否触碰核心耦合点：
+         - chat.ts finalKnowledgeText 22段注入链路
+         - FamilyGraph人物dossier七子卷结构
+         - belong_entity_uuid四层标注写入/读取链路
+         - _meetingEntityName 12处传播判断点
+         - 新旧角色扮演双管线切换逻辑
+         - SQLiteAdapter防抖save持久化落盘
+      5. 预判数据库影响：conversations/memories/family_graph/black_diamond/knowledge_base表变更风险；
+      6. 输出本次改动是否触发FG11条户籍红线、UUID垃圾实体黑名单风险；
+      7. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件。
+    tool_whitelist:
+      read_file: true
+      list_dir: true
+      search_code: true
+      grep_import: true
+      run_cli_check: true
+      write_file: false
+      delete_file: false
+      run_modify_script: false
+    gate_type: human
+    next_stage: S2_Solution_Design
+    runner_mode: local
+
+  # ====================== S2 方案定稿（人工终审，写入全局备忘录） ======================
+  - stage_id: S2_Solution_Design
+    stage_name: 重构技术方案撰写&架构合规校验
+    work_manual: |
+      🔴【必填板块——方案缺失此项直接驳回，无法进入S3】
+      **【本次修改归类：二选一填写】**
+      □ 共性底层通用修复
+      □ 个性局部特例修改
+
+      若选「共性底层通用修复」→ 必须附：横向关联模块清单（逐文件列出所有复用该底层逻辑的模块/角色）
+      若选「个性局部特例修改」→ 必须附：为何无跨角色复用场景的判定依据（逐条论证）
+
+      【本板块不允许空缺、模糊、省略。无此板块的方案直接视为不合格。】
+
+      🔴【必填板块二——方案缺失此项直接驳回，无法进入S3】
+      **【全局架构优化提案：二选一填写】**
+
+      □ 形态一：无优化空间
+      本次仅为局部合理修复，无全局优化提案，将严格按照用户需求方案执行。
+
+      □ 形态二：存在全局升级空间
+      **【原方案隐患评估】**
+      （逐条列出当前用户提出的局部修复方案存在的架构隐患、技术债务风险、未覆盖的同类型模块清单）
+
+      **【全局优化替代方案】**
+      （完整的全局优化方案：架构设计思路 + 分步实施计划 + 影响面分析 + 共性横向全模块校验清单 + 鲁棒加固兜底方案 + 稳定链路保护措施）
+
+      **【差异对比矩阵】**
+      | 维度 | 原局部方案 | 全局优化方案 |
+      |------|-----------|-------------|
+      | 改动规模 | ... | ... |
+      | 风险等级 | ... | ... |
+      | 长期收益 | ... | ... |
+      | 回滚难度 | ... | ... |
+
+      **【用户审批】** □ 维持原始方案  □ 采纳全局优化方案
+      无论最终采用哪套方案，两套方案全文+审批选择+差异对比全部写入审计卷宗永久留存。
+
+      【本板块不允许空缺、模糊、省略。无此板块的方案直接视为不合格。】
+
+      ---
+
+      1. 输出分步修改清单，精确到文件、函数、代码行号，禁止擅自扩大改动范围；
+      2. 逐条校验方案是否违反global_arch_constraint全局铁律，冲突则调整方案；
+      3. 区分场景补充专属约束：
+         - 涉及FG户籍：严格遵守11条角色扮演隔离红线，分支/主FG读写分离；
+         - 涉及UUID链路：四层标注机制(在线/启动回填/离线脚本/知识库)全部兼容；
+         - 涉及chat.ts：保证22段注入顺序不变，不破坏亲密过滤、家族约束、PFC上下文；
+         - 涉及数据库：明确停服重启持久化审计回滚方案；
+         - 涉及角色扮演：新旧两套管线规则同步更新；
+      4. 完整定义验证用例：编译校验、单元测试、会晤/普通对话/角色扮演三类场景功能测试、数据库标注率校验；
+      5. 编写回滚方案：改错后如何恢复源码、执行safe-backfill.cjs修复UUID标注；
+      6. 方案确认后存入全局滚动备忘录，后续所有阶段强制读取。
+    tool_whitelist:
+      read_file: true
+      list_dir: true
+      run_cli_check: true
+      write_file: false
+    gate_type: human
+    next_stage: S3_Code_Implement
+    runner_mode: local
+    after_action: inject_global_memo
+
+  # ====================== S3 代码落地（唯一放开文件写入权限阶段） ======================
+  - stage_id: S3_Code_Implement
+    stage_name: Claude Code代码修改落地
+    work_manual: |
+      1. 严格依照S2审定方案修改，禁止顺带优化无关模块、隐性重构未约定逻辑；
+      2. 修改高风险文件必须在行注释标注风险等级、改动目的、对应耦合点；
+      3. 若修改SQLiteAdapter、persistence-stage.ts，必须保留scheduleFlush防抖落盘逻辑，禁止删除save()调用；
+      4. 改动FamilyGraph.dossier结构，同步适配EntityContextBuilder、MeetingContextPipeline、ProfileAcquisitionEngine等全部消费文件；
+      5. 涉及会晤模式同步更新全部12处_meetingEntityName判断分支；
+      6. 禁止新增垃圾实体匹配规则，必须匹配GARBAGE_NAMES黑名单；
+      7. 禁止删除types类型定义、单元测试用例；
+      8. 不允许直接删除数据库表数据，仅允许追加更新。
+    tool_whitelist:
+      read_file: true
+      write_file: true
+      run_command: true
+      delete_file: false
+      truncate_db: false
+    gate_type: auto
+    next_stage: S4_Arch_Review
+    runner_mode: local
+
+  # ====================== S4 独立子Agent架构评审（核心条件门控，运动员不自审） ======================
+  - stage_id: S4_Arch_Review
+    stage_name: 委托独立专家架构&代码合规评审
+    work_manual: |
+      评审完整校验维度，双通道输出：machine_signal结构化判定 + human_report可读问题清单
+      一、架构层级校验
+      1. 是否破坏M1-M9无循环依赖规则；
+      2. chat.ts是否新增业务逻辑，违背薄调度层约定；
+      3. PFC上下文注入逻辑是否被篡改；
+      二、户籍&UUID专项校验
+      1. FG主库/角色扮演分支是否隔离，不存在数据污染风险；
+      2. belong_entity_uuid写入、检索链路无缺失，不出现角色失忆；
+      3. UUIDGatekeeper三层白名单过滤逻辑完整；
+      三、耦合点专项校验
+      1. chat.ts 22段finalKnowledgeText注入顺序、内容无错乱；
+      2. _meetingEntityName 12处传播判断点全部同步；
+      3. 新旧角色扮演管线规则同步修改，无单侧遗漏；
+      4. FamilyGraph.dossier所有消费方同步适配字段变更；
+      四、持久化安全校验
+      1. SQLiteAdapter防抖save()调用无丢失，不会出现内存数据重启清空；
+      2. 无直接删除记忆/卷宗/黑钻记录逻辑；
+      五、风险兜底校验
+      1. 高风险文件改动是否完整覆盖全部import依赖；
+      2. 是否触碰FG11条红线产生角色串号、信息泄漏隐患；
+      3. 是否新增硬编码人名、时间常量，未做统一配置；
+      输出规范：
+      machine_signal: {passed: boolean, risk_level: high/mid/low, reject_reason: string[]}
+      human_report: 分点列出风险、违规代码位置、整改建议
+    tool_whitelist:
+      read_file: true
+      write_file: false
+      run_modify_script: false
+    gate_type: condition
+    next_stage_pass: S5_Compile_Test
+    next_stage_reject: S3_Code_Implement
+    runner_mode: delegate
+
+  # ====================== S5 编译+单元测试自动化校验 ======================
+  - stage_id: S5_Compile_Test
+    stage_name: TS编译校验+单元测试全量运行
+    work_manual: |
+      1. 执行编译检查：npx tsc --noEmit，捕获所有类型报错；
+      2. 全量单元测试：npx vitest run，模块测试失败直接拦截；
+      3. 若修改m4/fg/m2存储相关模块，额外执行对应目录专项测试；
+      4. 输出编译日志、测试失败用例、报错代码行；
+      5. 判定标准：无TS类型错误、全部用例通过才可放行；
+      6. 编译/测试失败自动打回S3修改代码。
+    tool_whitelist:
+      read_file: true
+      run_command: true
+      write_file: false
+    gate_type: condition
+    next_stage_pass: S6_Function_Verify
+    next_stage_reject: S3_Code_Implement
+    runner_mode: local
+
+  # ====================== S6 全场景功能&数据库核验 ======================
+  - stage_id: S6_Function_Verify
+    stage_name: 多场景功能验证+数据库标注审计
+    work_manual: |
+      1. 启动WebUI服务 npm run webui，三类场景测试：
+         ①普通对话 ②实体会晤模式 ③角色扮演分支
+      2. 校验五条核心行为规范：
+         - 角色称呼不混淆、无跨角色信息泄漏；
+         - 会晤场景不会读取其他角色记忆；
+         - 角色扮演不污染主FamilyGraph户籍；
+         - 记忆、对话belong_entity_uuid标注正常；
+         - 无LLM编造人物关系、幻觉问题；
+      3. 数据库审计校验：
+         执行UUID标注率查询脚本，核对memories/conversations/black_diamond标注比例；
+         若修改存储逻辑，执行离线回填脚本safe-backfill.cjs验证数据兼容；
+      4. 停服重启二次核验：内存写入数据落地不丢失、UUID标注不回退；
+      5. 输出完整验证报告，标记异常项。
+    tool_whitelist:
+      read_file: true
+      run_command: true
+      run_db_script: true
+      write_file: false
+    gate_type: condition
+    next_stage_pass: S7_Change_Archive
+    next_stage_reject: S3_Code_Implement
+    runner_mode: local
+
+  # ====================== S7 变更归档&流程闭环 ======================
+  - stage_id: S7_Change_Archive
+    stage_name: 变更台账归档+流程闭环
+    work_manual: |
+      1. 汇总本次所有修改文件、风险等级、改动代码范围；
+      2. 记录S4评审风险点、S5编译测试问题、S6数据库校验结果；
+      3. 保存回滚方案、验证用例清单，写入项目变更台账；
+      4. 输出完整修复总结：根因、改动内容、核验证据、长期注意事项；
+      5. 提示：大型重构(≥3文件/数据库变更)需执行三轮对比审计后提交。
+    tool_whitelist:
+      read_file: true
+      write_file: true
+      run_command: false
+    gate_type: auto
+    next_stage: END
+    runner_mode: local

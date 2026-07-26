@@ -1,0 +1,17 @@
+{
+  "name": "harness",
+  "version": "2.0.0",
+  "description": "轻量化通用流水线调度引擎 — 零侵入、插拔式、YAML驱动、DFA状态机",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

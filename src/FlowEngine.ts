@@ -1,0 +1,411 @@
+/**
+ * FlowEngine — 流水线引擎主控（DFA 状态机核心）
+ * ==================================================
+ * 基于确定性有限状态机实现 Stage 流转。
+ *
+ * 核心铁律：
+ *   1. AI 输出文本无法干预跳转——跳转由代码逻辑基于 gate_resolution 决定
+ *   2. max_jump_limit 对连续 auto 跳转计数，超过触发熔断
+ *   3. 每个 Stage 启动前注入全局备忘录
+ *   4. 白名单随 Stage 切换自动激活/停用
+ *   5. 全流程审计日志自动记录
+ *
+ * 使用示例：
+ *   const engine = new FlowEngine({ /* options *\/ });
+ *   const result = await engine.start('wenstaros_core_repair_flow', {
+ *     message: '修复 chat.ts 中的 FG 写入 bug',
+ *     modifiedFiles: ['src/webui/chat.ts'],
+ *     riskLevel: 'high',
+ *     isTrivial: false,
+ *   });
+ */
+
+import type {
+  FlowConfig,
+  StageConfig,
+  FlowRunState,
+  StageResult,
+  FlowStatus,
+  GateResolution,
+  TriggerContext,
+  RunMode,
+} from './types.js';
+import { CircuitBreakerError, StageExecutionError } from './types.js';
+import { loadFlowConfig } from './FlowConfigLoader.js';
+import { GateController, type HumanGateCallback } from './GateController.js';
+import { StageRunner, type DelegateReviewFn } from './StageRunner.js';
+import { ToolWhitelistGuard } from './ToolWhitelistGuard.js';
+import { GlobalMemoStore } from './GlobalMemoStore.js';
+import { AuditLogger } from './AuditLogger.js';
+
+// ════════════════════════════════════════════════════════════════════
+// 类型
+// ════════════════════════════════════════════════════════════════════
+
+/** FlowEngine 构造选项 */
+export interface FlowEngineOptions {
+  /** 人工审批回调（human gate 必须） */
+  onHumanGate?: HumanGateCallback;
+  /** 委托评审函数（delegate runner 必须） */
+  delegateReviewFn?: DelegateReviewFn;
+  /** 项目根目录 */
+  projectRoot?: string;
+}
+
+/** 流水线执行结果 */
+export interface FlowResult {
+  /** 运行 ID */
+  run_id: string;
+  /** 流程是否成功完成 */
+  success: boolean;
+  /** 终止原因（aborted / circuit_breaker / completed） */
+  end_reason: string;
+  /** 各 stage 的执行结果 */
+  stage_results: StageResult[];
+  /** 审计日志文件路径 */
+  audit_path?: string;
+  /** 备忘录文件路径 */
+  memo_path?: string;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 引擎
+// ════════════════════════════════════════════════════════════════════
+
+export class FlowEngine {
+  private readonly gateController: GateController;
+  private readonly stageRunner: StageRunner;
+  private memoStore: GlobalMemoStore | null = null;
+  private auditLogger: AuditLogger | null = null;
+  private config: FlowConfig | null = null;
+  private state: FlowRunState | null = null;
+  private _aborted = false;
+  private _paused = false;
+
+  constructor(options: FlowEngineOptions = {}) {
+    this.gateController = new GateController({
+      onHumanGate: options.onHumanGate,
+    });
+    this.stageRunner = new StageRunner({
+      delegateReviewFn: options.delegateReviewFn,
+      projectRoot: options.projectRoot || process.cwd(),
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 公开 API
+  // ════════════════════════════════════════════════════════════════
+
+  /**
+   * 启动流水线。
+   *
+   * @param flowFileName — YAML 配置文件名（如 "wenstaros_core_repair_flow.yaml"）
+   * @param context — 触发上下文
+   * @returns 流水线执行结果
+   */
+  async start(flowFileName: string, context: TriggerContext): Promise<FlowResult> {
+    // 0. 风险分级 → 决定流水线 / 自由模式
+    if (context.riskLevel === 'low' && context.isTrivial) {
+      return this.runFreeMode(context);
+    }
+
+    // 1. 加载配置
+    this.config = loadFlowConfig(flowFileName);
+
+    // 2. 初始化运行状态
+    const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    this.state = this.initRunState(runId, context);
+
+    // 3. 初始化备忘录
+    this.memoStore = new GlobalMemoStore(
+      runId,
+      this.config.flow_id,
+      this.config.global_arch_constraint,
+      this.config.global_implementation_rules,
+    );
+
+    // 4. 初始化审计日志
+    this.auditLogger = new AuditLogger(runId, this.config.flow_id);
+    this.auditLogger.logFlowStart({
+      flow_name: this.config.flow_name,
+      risk_level: context.riskLevel,
+      modified_files: context.modifiedFiles,
+    });
+
+    console.log(`\n[FlowEngine] 🚀 流水线启动: ${this.config.flow_name} (${runId})`);
+    console.log(`[FlowEngine]    风险: ${context.riskLevel} | 文件: ${context.modifiedFiles.join(', ')}`);
+
+    // 5. 进入第一个 Stage
+    try {
+      const firstStage = this.config.stages[0].stage_id;
+      await this.transitionTo(firstStage);
+      return this.buildResult(true, 'completed');
+    } catch (err) {
+      return this.handleError(err);
+    }
+  }
+
+  /** 获取当前流水线运行状态 */
+  getState(): FlowRunState | null {
+    return this.state;
+  }
+
+  /** 获取当前配置 */
+  getConfig(): FlowConfig | null {
+    return this.config;
+  }
+
+  /** 人工确认当前 human gate stage（从外部调用） */
+  async approveCurrentStage(): Promise<void> {
+    // human gate 的审批由 GateController 内部的 callback 处理
+    // 此方法作为外部入口，设置暂停标记
+    if (this._paused) {
+      this._paused = false;
+      console.log('[FlowEngine] ▶ 人工确认，继续流水线');
+    }
+  }
+
+  /** 驳回当前 human gate stage */
+  async rejectCurrentStage(): Promise<void> {
+    this._paused = false;
+    console.log('[FlowEngine] ⏹ 人工驳回');
+    // 由 GateController 的 callback 处理跳转
+  }
+
+  /** 中止流水线 */
+  abort(): void {
+    this._aborted = true;
+    this._paused = false;
+    if (this.state) this.state.flow_status = 'aborted';
+    if (this.auditLogger) this.auditLogger.logFlowAbort('用户主动中止');
+    ToolWhitelistGuard.deactivate();
+    console.log('[FlowEngine] ⏹ 流水线已中止');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // DFA 状态机核心
+  // ════════════════════════════════════════════════════════════════
+
+  /**
+   * 🔴 确定性跳转——AI 无权限干预。
+   * 跳转目标由纯代码逻辑根据 gate_type 和 gate_resolution 计算。
+   */
+  private async transitionTo(stageId: string): Promise<void> {
+    if (this._aborted) {
+      console.log('[FlowEngine] 流水线已中止，停止跳转');
+      return;
+    }
+
+    if (!this.config || !this.state) {
+      throw new Error('[FlowEngine] 未初始化');
+    }
+
+    // END 哨兵
+    if (stageId === 'END') {
+      this.state.flow_status = 'completed';
+      this.state.updated_at = new Date().toISOString();
+      if (this.auditLogger) this.auditLogger.logFlowComplete({ total_stages: this.state.stage_results.size });
+      ToolWhitelistGuard.deactivate();
+      console.log('[FlowEngine] ✅ 流水线完成');
+      return;
+    }
+
+    // 查找 stage 配置
+    const stage = this.config.stages.find(s => s.stage_id === stageId);
+    if (!stage) {
+      throw new StageExecutionError(stageId, `配置中不存在 stage_id: ${stageId}`);
+    }
+
+    // 更新状态
+    this.state.current_stage = stageId;
+    this.state.updated_at = new Date().toISOString();
+
+    // 🔴 注入全局备忘录到 work_manual
+    const workManual = this.injectMemo(stage);
+
+    // 🔴 激活工具白名单
+    ToolWhitelistGuard.activate(stage.tool_whitelist, stageId);
+
+    // 🔴 审计记录：Stage 进入
+    if (this.auditLogger) {
+      this.auditLogger.logStageEntry(stageId, {
+        gate_type: stage.gate_type,
+        runner_mode: stage.runner_mode,
+        whitelist_active: Object.keys(stage.tool_whitelist)
+          .filter(k => stage.tool_whitelist[k as keyof typeof stage.tool_whitelist] === false)
+          .join(', '),
+        memo_injected: this.memoStore ? this.memoStore.content.length > 0 : false,
+      });
+    }
+
+    // 🔴 执行 Stage
+    const stageWithMemo: StageConfig = { ...stage, work_manual: workManual };
+    const result = await this.stageRunner.execute(stageWithMemo, this.state);
+
+    // 存储结果
+    this.state.stage_results.set(stageId, result);
+
+    // 🔴 门控判定
+    const resolution = await this.gateController.resolve(stage, result);
+    result.gate_resolution = resolution;
+
+    // 审计记录：门控决议
+    if (this.auditLogger) {
+      this.auditLogger.logGateResolve(stageId, stage.gate_type, resolution);
+    }
+
+    console.log(`[FlowEngine] 🎯 ${stageId} → gate: ${stage.gate_type} → ${resolution}`);
+
+    // 🔴 熔断检查：连续 auto 跳转计数
+    if (stage.gate_type === 'auto' && resolution === 'auto_passed') {
+      this.state.jump_count++;
+      if (this.state.jump_count >= this.config.max_jump_limit) {
+        const err = new CircuitBreakerError(this.state.jump_count, this.config.max_jump_limit);
+        if (this.auditLogger) this.auditLogger.logCircuitBreaker(this.state.jump_count, this.config.max_jump_limit);
+        throw err;
+      }
+    } else {
+      this.state.jump_count = 0; // 非 auto 或非 passed → 重置计数
+    }
+
+    // 🔴 after_action 处理
+    if (stage.after_action === 'inject_global_memo' && resolution === 'human_approved') {
+      if (this.memoStore && result.human_report) {
+        this.memoStore.save(result.human_report);
+        this.state.global_memo = this.memoStore.content;
+        if (this.auditLogger) this.auditLogger.logMemoInjected(stageId, this.memoStore.content.length);
+        console.log('[FlowEngine] 📌 全局备忘录已注入');
+      }
+    }
+
+    // 🔴 确定性跳转：纯代码逻辑决定下一 stage
+    const nextStage = this.determineNextStage(stage, resolution);
+
+    // 停用当前 stage 的白名单
+    ToolWhitelistGuard.deactivate();
+
+    // 递归跳转
+    await this.transitionTo(nextStage);
+  }
+
+  /**
+   * 🔴 确定性跳转逻辑——AI 输出文本无法改变此决策。
+   *
+   * @param stage — 当前 stage 配置
+   * @param resolution — 门控决议
+   * @returns 下一 stage_id（或 "END"）
+   */
+  private determineNextStage(stage: StageConfig, resolution: GateResolution): string {
+    if (stage.gate_type === 'condition') {
+      // 条件门控：passed → next_stage_pass, rejected → next_stage_reject
+      if (resolution === 'condition_passed') {
+        return stage.next_stage_pass || 'END';
+      }
+      return stage.next_stage_reject || stage.stage_id; // 默认回退到自身
+    }
+
+    // auto / human 门控：统一走 next_stage
+    if (resolution === 'human_denied' || resolution === 'human_timeout') {
+      // 人工驳回/超时 → 停止流水线
+      return 'END';
+    }
+
+    return stage.next_stage || 'END';
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 备忘录注入
+  // ════════════════════════════════════════════════════════════════
+
+  private injectMemo(stage: StageConfig): string {
+    if (!this.memoStore) return stage.work_manual;
+
+    // 检查是否有全局备忘录内容（S2定稿方案）
+    if (this.state?.global_memo || this.memoStore.content) {
+      return this.memoStore.inject(stage.work_manual);
+    }
+
+    // 🔴 S2 之前：注入架构铁律 + 落地强制规则（双规则全量注入，不允许简化）
+    return this.memoStore.injectFullRules(stage.work_manual);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 运行状态初始化
+  // ════════════════════════════════════════════════════════════════
+
+  private initRunState(runId: string, context: TriggerContext): FlowRunState {
+    return {
+      run_id: runId,
+      flow_id: this.config!.flow_id,
+      flow_status: 'running',
+      current_stage: '',
+      jump_count: 0,
+      stage_results: new Map(),
+      global_memo: '',
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      modified_files: context.modifiedFiles,
+      risk_level: context.riskLevel,
+      mode: 'pipeline' as RunMode,
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 自由裸奔模式
+  // ════════════════════════════════════════════════════════════════
+
+  private runFreeMode(context: TriggerContext): FlowResult {
+    const runId = `free_${Date.now().toString(36)}`;
+
+    console.log(`[FlowEngine] 🆓 自由裸奔模式: 低风险微小修改，跳过流水线 (${context.modifiedFiles.join(', ')})`);
+
+    return {
+      run_id: runId,
+      success: true,
+      end_reason: 'free_mode',
+      stage_results: [],
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 错误处理
+  // ════════════════════════════════════════════════════════════════
+
+  private handleError(err: unknown): FlowResult {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+
+    if (err instanceof CircuitBreakerError) {
+      console.error(`[FlowEngine] 🔴 熔断: ${errorMsg}`);
+      if (this.state) this.state.flow_status = 'aborted';
+      if (this.auditLogger) {
+        this.auditLogger.logFlowAbort(`熔断: ${errorMsg}`);
+      }
+      ToolWhitelistGuard.deactivate();
+      return this.buildResult(false, 'circuit_breaker');
+    }
+
+    console.error(`[FlowEngine] 💥 异常: ${errorMsg}`);
+    if (this.state) this.state.flow_status = 'aborted';
+    if (this.auditLogger) {
+      this.auditLogger.logFlowAbort(errorMsg);
+    }
+    ToolWhitelistGuard.deactivate();
+    return this.buildResult(false, 'error');
+  }
+
+  private buildResult(success: boolean, endReason: string): FlowResult {
+    const stageResults: StageResult[] = [];
+    if (this.state) {
+      for (const [, result] of this.state.stage_results) {
+        stageResults.push(result);
+      }
+    }
+
+    return {
+      run_id: this.state?.run_id ?? 'unknown',
+      success,
+      end_reason: endReason,
+      stage_results: stageResults,
+    };
+  }
+}
