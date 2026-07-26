@@ -125,7 +125,7 @@ export function review(stage: StageConfig, state: FlowRunState): StageOutput {
 
 /**
  * 改动范围铁律校验：
- * - 修改文件必须在 src/harness/ 或 data/harness/ 目录内
+ * - 修改文件必须在 src/ 或 data/ 目录内
  * - 禁止修改业务目录（src/m1-m9, src/app, src/webui 等）
  * - 检测用户未明确指定的附属文件修改
  */
@@ -134,7 +134,7 @@ function checkSG_R1_ScopeBoundary(state: FlowRunState): string[] {
   const files = state.modified_files;
 
   // 1. 有效域检查：所有修改文件必须落在 harness 目录内
-  const ALLOWED_PREFIXES = ['src/harness/', 'data/harness/', 'harness/'];
+  const ALLOWED_PREFIXES = ['src/', 'data/', 'self_guard/'];
 
   for (const f of files) {
     const n = f.replace(/\\/g, '/');
@@ -143,7 +143,7 @@ function checkSG_R1_ScopeBoundary(state: FlowRunState): string[] {
     if (!inScope) {
       violations.push(
         `[SG-R1·范围越界] 文件 "${f}" 不在 Harness 管控域内。` +
-        'SelfGuard 仅管控 src/harness/ 及 data/harness/ 目录变更。' +
+        'SelfGuard 仅管控 src/ 及 data/ 目录变更。' +
         '业务目录文件请走主 Harness 流水线，不要在 SelfGuard 内提交。',
       );
     }
@@ -440,7 +440,7 @@ function checkSG_R7_TestEnforcement(state: FlowRunState): string[] {
 
   violations.push(
     '[SG-R7·测试强制] 🔴 Harness 自身全套单元测试必须全部通过（S5 阶段执行）：' +
-    '① npx vitest run src/harness/__tests__/ — 零测试失败；' +
+    '① npx vitest run src/__tests__/ — 零测试失败；' +
     '② 任意测试失败直接阻断变更落地，禁止强行放行；' +
     '③ 集成测试回归验证必须通过。',
   );
@@ -470,7 +470,7 @@ function checkSG_R8_AuditTrail(state: FlowRunState): string[] {
   violations.push(
     '[SG-R8·归档] 🔴 本次基础设施变更痕迹必须按以下要求归档：' +
     '① 所有审计记录打上【基础设施变更】专属标签；' +
-    '② 审计数据写入 data/harness/self_guard/audit/ 独立分区（非业务审计分区）；' +
+    '② 审计数据写入 data/self_guard/audit/ 独立分区（非业务审计分区）；' +
     '③ 遵循历史只增不删原则；' +
     '④ 记录版本链（当前版本 ← 上一稳定版本）；' +
     '⑤ 确保一键回退至上一稳定版本路径可用。',
@@ -697,7 +697,7 @@ function checkSG_R11_ExternalOversight(state: FlowRunState): string[] {
   // ── 检测 Harness 入口点是否被绕过 ──
   const harnessModifications = files.filter(f => {
     const n = f.replace(/\\/g, '/');
-    return n.startsWith('src/harness/') || n.startsWith('data/harness/');
+    return n.startsWith('src/') || n.startsWith('data/') || n.startsWith('self_guard/');
   });
 
   if (harnessModifications.length > 0) {
@@ -712,11 +712,11 @@ function checkSG_R11_ExternalOversight(state: FlowRunState): string[] {
   // ── GlobalWatchdog 状态检查 ──
   violations.push(
     '[SG-R11·Watchdog] 🔴 GlobalWatchdog 旁路巡检状态自查：' +
-    '• 监控域：src/harness/ + data/harness/ + harness/self_guard/ | ' +
+    '• 监控域：src/ + data/ + self_guard/ | ' +
     '• 扫描间隔：10s | ' +
     '• 快照文件数：见审计卷宗 | ' +
     '• 累计越权告警数：见审计卷宗 | ' +
-    '• 越权事件卷宗：data/harness/self_guard/breach_alerts/',
+    '• 越权事件卷宗：data/self_guard/breach_alerts/',
   );
 
   return violations;

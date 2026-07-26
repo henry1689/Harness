@@ -9,7 +9,7 @@
  *   3. 唯一入口固化 — 系统全局只承认 SelfGuard 为合法入口，其余身份全禁
  *
  * 🔴 运行模式：
- *   - 在 WenstarOSAdapter.initHarness() 中调用 GlobalWatchdog.boot() 启动
+ *   - 在 Harness 引擎初始化时调用 GlobalWatchdog.boot() 启动
  *   - 基于 fs.Stats.mtimeMs 的轮询检测（默认间隔 10s）
  *   - 不使用 fs.watch（跨平台兼容，不依赖 OS 事件）
  *
@@ -32,9 +32,9 @@ import type { AuditEntry, AuditEventType } from '../src/types.js';
 
 /** 受监控的 Harness 目录 */
 const WATCHED_DIRECTORIES = [
-  'src/harness/',
-  'data/harness/',
-  'harness/self_guard/',
+  'src/',
+  'data/',
+  'self_guard/',
 ];
 
 /** 旁路扫描间隔 (ms) */
@@ -45,7 +45,7 @@ const BREACH_ALERT_DIR = (() => {
   const base = typeof import.meta !== 'undefined' && (import.meta as unknown as Record<string, unknown>).dirname
     ? (import.meta as unknown as Record<string, unknown>).dirname as string
     : __dirname;
-  return resolve(base, '..', '..', 'data', 'harness', 'self_guard', 'breach_alerts');
+  return resolve(base, '..', 'data', 'self_guard', 'breach_alerts');
 })();
 
 /** SelfGuard 合法身份标识 */
@@ -149,7 +149,7 @@ export class GlobalWatchdog {
 
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
     console.log('║  🐕 GlobalWatchdog 全局旁路巡检已启动                        ║');
-    console.log('║  监控域：src/harness/ + data/harness/                        ║');
+    console.log('║  监控域：src/ + data/ + self_guard/                          ║');
     console.log('║  扫描间隔：' + (intervalMs / 1000) + 's                                              ║');
     console.log('║  唯一入口：SelfGuard                                         ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
@@ -389,7 +389,7 @@ export class GlobalWatchdog {
       'app/ 应用层',
       'webui/ 前端',
       'engine/ 引擎层',
-      'WenStarOS 主进程',
+      'Harness 引擎主进程',
     ];
 
     for (const subject of businessSubjects) {
@@ -411,7 +411,7 @@ export class GlobalWatchdog {
 
     // 主 Harness — 对自身配置有写权限（但需经过 SelfGuard）
     subjects.push({
-      subject: '主 Harness (WenstarOSAdapter)',
+      subject: '主 Harness (FlowEngine)',
       read: true,
       write: true,
       compliant: true,

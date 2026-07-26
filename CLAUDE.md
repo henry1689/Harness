@@ -27,7 +27,7 @@ Harness 是一个零侵入、插拔式、YAML 驱动的通用流水线调度引�
 
 🔴 所有对 Harness 自身文件的修改，必须走 SelfGuard 流水线，禁止直接写入。
 
-SelfGuard 接管域：`src/harness/`、`data/harness/`、`harness/self_guard/`、`.claude/`
+SelfGuard 接管域：`src/`、`data/`、`self_guard/`
 
 ## 开发命令
 

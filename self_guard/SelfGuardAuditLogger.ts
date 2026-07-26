@@ -34,7 +34,7 @@ const SELF_GUARD_AUDIT_DIR = (() => {
   const base = typeof import.meta !== 'undefined' && (import.meta as unknown as Record<string, unknown>).dirname
     ? (import.meta as unknown as Record<string, unknown>).dirname as string
     : __dirname;
-  return resolve(base, '..', '..', 'data', 'harness', 'self_guard', 'audit');
+  return resolve(base, '..', 'data', 'self_guard', 'audit');
 })();
 
 /** SelfGuard 版本链文件路径 */

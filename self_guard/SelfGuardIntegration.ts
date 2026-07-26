@@ -3,8 +3,7 @@
  * ================================================
  * 根据变更文件作用域自动分流至 SelfGuard（基础设施）或返回主 Harness 信号。
  *
- * 🔴 独立项目版本：不依赖任何宿主项目的适配层。
- * 宿主项目（如 WenStarOS）在自己的 bridge adapter 中处理主 Harness 路由。
+ * 🔴 独立项目版本：不依赖任何外部宿主项目。
  *
  * 使用方式：
  *   const result = await SelfGuardIntegration.dispatch(message, files, { projectRoot });
@@ -19,10 +18,9 @@ import type { SelfGuardTriggerInput } from './SelfGuardEngine.js';
 // ════════════════════════════════════════════════════════════════════
 /** SelfGuard 接管域前缀 */
 const SELF_GUARD_SCOPE = [
-  'src/harness/',
-  'data/harness/',
-  'harness/self_guard/',
-  '.claude/',
+  'src/',
+  'data/',
+  'self_guard/',
 ];
 
 // ════════════════════════════════════════════════════════════════════

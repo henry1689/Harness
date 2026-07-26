@@ -4,7 +4,7 @@
  * 零侵入外挂架构的 SelfGuard 子系统单一入口点。
  *
  * 体系概览：
- *   SelfGuard 是 WenStarOS 的独立自护子系统，专门管控主 Harness 自身的
+ *   SelfGuard 是 Harness 引擎的独立自护子系统，专门管控 Harness 自身的
  *   配置修改、规则升级、评审逻辑适配、内核微调。
  *
  *   分工铁律：
@@ -25,7 +25,7 @@
  *     const result = await engine.trigger({ message, modifiedFiles });
  *   }
  *
- * 🔑 启动口令（发给 WenStarOS 即可激活）：
+ * 🔑 启动口令（在 Harness 引擎运行时发送即可激活）：
  *   @selfguard on  |  启动自护  |  /selfguard  |  selfguard:on
  *
  * 体系注册信息：
@@ -99,13 +99,13 @@ export const SELF_GUARD_VERSION = '1.2.0';
 
 /** SelfGuard 生效域前缀 */
 export const SELF_GUARD_SCOPE_PREFIXES = [
-  'src/harness/',
-  'data/harness/',
-  'harness/self_guard/',
+  'src/',
+  'data/',
+  'self_guard/',
 ] as const;
 
 /** SelfGuard 卷宗分区路径（相对于项目根） */
-export const SELF_GUARD_AUDIT_PATH = 'data/harness/self_guard/audit/';
+export const SELF_GUARD_AUDIT_PATH = 'data/self_guard/audit/';
 
 /** SelfGuard 基础设施变更标签 */
 export const SELF_GUARD_INFRA_TAG = '【基础设施变更】';

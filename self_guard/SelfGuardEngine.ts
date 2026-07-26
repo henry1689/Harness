@@ -71,12 +71,9 @@ const SELF_GUARD_FLOW_CONFIG = 'self_guard_flow.yaml';
 
 /** SelfGuard 允许的修改域 */
 const ALLOWED_SCOPE_PREFIXES = [
-  'src/harness/',
-  'data/harness/',
-  'harness/self_guard/',
-  'harness-core/',           // junction from wenstar-cc → standalone harness
-  'src/',                    // standalone harness project relative
-  '.claude/',
+  'src/',
+  'data/',
+  'self_guard/',
 ];
 
 // ════════════════════════════════════════════════════════════════════
@@ -133,9 +130,9 @@ export class SelfGuardEngine {
 
     console.log('\n╔══════════════════════════════════════════════════════════════╗');
     console.log('║  🛡️  SelfGuard 基础设施自护流水线已激活                       ║');
-    console.log('║  生效域：src/harness/ + data/harness/                         ║');
-    console.log('║  评审器：SelfReviewer（九条自护铁律）                          ║');
-    console.log('║  卷　宗：data/harness/self_guard/audit/                       ║');
+    console.log('║  生效域：src/ + data/ + self_guard/                           ║');
+    console.log('║  评审器：SelfReviewer（十一条自护铁律）                        ║');
+    console.log('║  卷　宗：data/self_guard/audit/                               ║');
     console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
     // 4. 启动流水线
@@ -173,7 +170,7 @@ export class SelfGuardEngine {
       return {
         valid: false,
         reason: `以下文件不在 SelfGuard 管控域内：${outOfScope.join(', ')}。` +
-          'SelfGuard 仅管控 src/harness/ 及 data/harness/ 目录。' +
+          'SelfGuard 仅管控 src/ 及 data/ 目录。' +
           '业务迭代请走主 Harness 流水线。',
       };
     }

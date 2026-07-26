@@ -1,7 +1,7 @@
 # ================================================================
 # Flow ID: self_guard_flow
 # Flow Name: SelfGuard 基础设施自护流水线
-# 适配项目：wenstar-cc (TS5.7 Node22)
+# 适配项目：Harness (独立引擎，TS5.7 Node22)
 # 职责：专门管控主 Harness 自身的基础设施变更
 # 隔离：与主业务流水线物理隔离，配置/规则/评审/卷宗完全独立
 # ================================================================
@@ -76,7 +76,7 @@ global_implementation_rules: |
   # ==================== SelfGuard 开发落地强制校验规则 ====================
 
   # 规则 A：生效域限定
-  SelfGuard 仅允许对项目 src/harness/ 全局目录进行变更管控，
+  SelfGuard 仅允许对项目 src/ 全局目录进行变更管控，
   自动拦截所有上层业务目录（src/m1-m9, src/app, src/webui 等）的改动请求。
   业务迭代走主 Harness，Harness 基础设施改造走 SelfGuard。
 
@@ -86,7 +86,7 @@ global_implementation_rules: |
 
   # 规则 C：基础设施卷宗独立分区
   所有 Harness 基础设施变更统一打上【基础设施变更】专属标签，
-  独立归档至 data/harness/self_guard/audit/，与业务卷宗完全分区隔离。
+  独立归档至 data/self_guard/audit/，与业务卷宗完全分区隔离。
 
   # 规则 D：版本链与一键回退
   每次 SelfGuard 流水线完成后，自动在版本链中记录变更快照。
@@ -115,8 +115,8 @@ stages:
          - 内核微调（FlowEngine / StageRunner / GateController 逻辑调整）
          - 新增子系统（如本次 SelfGuard 自身）
       2. 扫描所有待修改文件，自动判定为超高风险（SG-R3）：
-         🔴 所有 src/harness/*.ts 文件均为超高风险
-         🔴 所有 data/harness/flows/*.yaml 文件均为超高风险
+         🔴 所有 src/*.ts 文件均为超高风险
+         🔴 所有 data/flows/*.yaml 文件均为超高风险
       3. 枚举所有 import 依赖被修改文件的上层模块，输出完整牵连清单；
       4. 识别是否触碰核心基础设施基线（SG-R2）：
          - FlowEngine DFA 状态机流转逻辑
@@ -254,7 +254,7 @@ stages:
     work_manual: |
       1. 🔴 SG-R7 强制要求：执行全量 Harness 单元测试；
       2. 编译检查：npx tsc --noEmit（零类型错误）；
-      3. 全量测试：npx vitest run src/harness/__tests__/（零测试失败）；
+      3. 全量测试：npx vitest run src/__tests__/（零测试失败）；
       4. 任意测试失败 → 直接阻断变更落地，打回 S3；
       5. 输出编译报告和测试报告摘要。
     tool_whitelist:
@@ -304,7 +304,7 @@ stages:
     work_manual: |
       1. 🔴 SG-R8 强化归档：
          (a) 所有变更记录打上【基础设施变更】专属标签
-         (b) 审计数据写入 data/harness/self_guard/audit/ 独立分区
+         (b) 审计数据写入 data/self_guard/audit/ 独立分区
          (c) 记录完整变更链：S1分析 → S2方案 → S3编码 → S4评审 → S5测试 → S6兼容
       2. 版本链维护：
          (a) 记录当前版本号与上一稳定版本号

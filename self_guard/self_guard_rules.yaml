@@ -58,7 +58,7 @@ self_guard_global_rules:
       S2 阶段必须强制输出四项材料：改动影响域、完整回退方案、
       前置校验步骤、落地后后置验证方案，四项缺一不可，禁止进入编码环节。
     check_items:
-      - 自动将涉及 src/harness/ 的变更判定为超高风险（highest）
+      - 自动将涉及 src/ 的变更判定为超高风险（highest）
       - 验证 S2 方案是否包含「改动影响域」板块
       - 验证 S2 方案是否包含「完整回退方案」板块
       - 验证 S2 方案是否包含「前置校验步骤」板块
@@ -140,7 +140,7 @@ self_guard_global_rules:
       Harness 自身全套单元测试、集成测试必须全部通过；
       任意测试用例失败，直接阻断变更落地，禁止强行放行。
     check_items:
-      - 执行 src/harness/__tests__/ 下全部测试用例
+      - 执行 src/__tests__/ 下全部测试用例
       - 所有测试必须通过（零失败）
       - 检测是否有跳过（skip）的测试用例
       - 检测是否有被注释掉的测试断言
@@ -160,7 +160,7 @@ self_guard_global_rules:
       标签，存入独立卷宗分区，永久追加不可删除，支持完整溯源与版本回退。
     check_items:
       - 验证审计记录是否携带【基础设施变更】专属标签
-      - 验证审计数据是否写入 data/harness/self_guard/audit/ 独立分区
+      - 验证审计数据是否写入 data/self_guard/audit/ 独立分区
       - 验证审计条目遵循只增不删原则
       - 验证是否维护了版本链（上一稳定版本引用）
       - 验证是否支持一键回退至上一稳定版本
@@ -246,6 +246,6 @@ meta:
   version: "1.2.0"
   created: "2026-07-26"
   updated: "2026-07-26"
-  scope: "仅限 src/harness/ 目录及 data/harness/ 配置目录"
+  scope: "仅限 src/ 目录及 data/harness/ 配置目录"
   isolation: "主业务流水线无法读取此规则集"
   amendment_procedure: "修改本规则集本身也需要走 SelfGuard 流水线"
