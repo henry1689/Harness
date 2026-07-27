@@ -1,0 +1,5 @@
+{
+  "timestamp": "2026-07-26T08:16:24.311Z",
+  "event": "PROTECTED_ZONE_HIT",
+  "file": "src/harness/FlowEngine.ts"
+}

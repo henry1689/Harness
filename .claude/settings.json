@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": "node .claude/harness-pre-check.cjs"
+      },
+      {
+        "matcher": "Read|Grep",
+        "command": "node .claude/harness-pre-check.cjs"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": "node .claude/harness-post-check.cjs"
+      }
+    ]
+  }
+}

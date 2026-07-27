@@ -37,6 +37,7 @@ import { StageRunner, type DelegateReviewFn } from './StageRunner.js';
 import { ToolWhitelistGuard } from './ToolWhitelistGuard.js';
 import { GlobalMemoStore } from './GlobalMemoStore.js';
 import { AuditLogger } from './AuditLogger.js';
+import { RulesLazyLoader, type SlimStageContext } from './RulesLazyLoader.js';
 
 // ════════════════════════════════════════════════════════════════════
 // 类型
@@ -281,6 +282,52 @@ export class FlowEngine {
     // 🔴 确定性跳转：纯代码逻辑决定下一 stage
     const nextStage = this.determineNextStage(stage, resolution);
 
+    // 🔴 human gate 超时/驳回 → 直接中止流水线，不进入下一阶段
+    if (resolution === 'human_timeout' || resolution === 'human_denied') {
+      if (this.state) this.state.flow_status = 'aborted';
+      this.abort();
+      if (this.auditLogger) {
+        this.auditLogger.logFlowAbort(`human gate ${resolution}: ${stageId}`);
+      }
+      console.log(`[FlowEngine] ⏹ human gate ${resolution} → 流水线中止`);
+      return;
+    }
+
+    // 🔴 回流计数器：检测是否回到 S3 或更高序号回退
+    if (this.isStageRegression(stageId, nextStage)) {
+      // S3 专属计数（S4/S5/S6 驳回→S3）
+      if (nextStage.startsWith('S3')) {
+        this.state.s3_retry_count++;
+        const maxS3 = this.config?.max_s3_retries ?? 3;
+        if (this.state.s3_retry_count > maxS3) {
+          console.error(`[FlowEngine] 🔴 S3 驳回熔断: 已回流 ${this.state.s3_retry_count}/${maxS3} 次，触发强制锁定 → 需人工解锁`);
+          if (this.auditLogger) {
+            this.auditLogger.logFlowAbort(`S3 驳回回流 ${this.state.s3_retry_count}/${maxS3} 次超限，强制锁定——需人工解锁`);
+          }
+          if (this.state) this.state.flow_status = 'aborted';
+          this.abort();
+          ToolWhitelistGuard.deactivate();
+          return;
+        }
+        console.log(`[FlowEngine] 🔄 S3 驳回回流 #${this.state.s3_retry_count}/${maxS3}: ${stageId}→${nextStage}`);
+      } else {
+        // 通用回流计数器（非 S3 驳回）
+        this.state.stage_retry_count++;
+        const maxRetries = this.config?.max_stage_retries ?? 5;
+        if (this.state.stage_retry_count > maxRetries) {
+          console.error(`[FlowEngine] 🔴 回流熔断: ${stageId}→${nextStage} 已达上限 ${maxRetries} 次`);
+          if (this.auditLogger) {
+            this.auditLogger.logFlowAbort(`重试次数 ${this.state.stage_retry_count}/${maxRetries} 超限，强制锁定`);
+          }
+          if (this.state) this.state.flow_status = 'aborted';
+          this.abort();
+          ToolWhitelistGuard.deactivate();
+          return;
+        }
+        console.log(`[FlowEngine] 🔄 回流 #${this.state.stage_retry_count}/${maxRetries}: ${stageId}→${nextStage}`);
+      }
+    }
+
     // 停用当前 stage 的白名单
     ToolWhitelistGuard.deactivate();
 
@@ -304,29 +351,99 @@ export class FlowEngine {
       return stage.next_stage_reject || stage.stage_id; // 默认回退到自身
     }
 
-    // auto / human 门控：统一走 next_stage
-    if (resolution === 'human_denied' || resolution === 'human_timeout') {
-      // 人工驳回/超时 → 停止流水线
-      return 'END';
-    }
+  // auto gate：无条件走 next_stage
+  return stage.next_stage || 'END';
+  }
 
-    return stage.next_stage || 'END';
+  // ════════════════════════════════════════════════════════════════
+  // 回流计数器
+  // ════════════════════════════════════════════════════════════════
+
+  /** 检测是否回到了更高序号的 stage（如 S4→S3） */
+  private isStageRegression(from: string, to: string): boolean {
+    if (!this.config) return false;
+    const fromIdx = this.config.stages.findIndex(s => s.stage_id === from);
+    const toIdx = this.config.stages.findIndex(s => s.stage_id === to);
+    return fromIdx >= 0 && toIdx >= 0 && fromIdx > toIdx;
   }
 
   // ════════════════════════════════════════════════════════════════
   // 备忘录注入
   // ════════════════════════════════════════════════════════════════
 
+  /**
+   * 🔴 Token 降耗：注入精简上下文。
+   *
+   * 业务流水线（wenstaros_core_repair_flow）使用 RulesLazyLoader 仅注入：
+   *   - 精简规则摘要（~200 tokens，替代完整架构铁律 ~3000 tokens）
+   *   - 前序阶段失败要点（仅违规项）
+   *   - S4→S3 回流时的具体驳回反馈
+   *
+   * SelfGuard 等其他 Flow 保持原有全量注入逻辑不变。
+   */
   private injectMemo(stage: StageConfig): string {
-    if (!this.memoStore) return stage.work_manual;
+    if (!this.memoStore || !this.state) return stage.work_manual;
 
-    // 检查是否有全局备忘录内容（S2定稿方案）
-    if (this.state?.global_memo || this.memoStore.content) {
+    const flowId = this.config?.flow_id ?? '';
+
+    // 🔴 业务流水线：使用懒加载精简上下文
+    if (RulesLazyLoader.getInstance().isBusinessFlow(flowId)) {
+      return this.injectSlimContext(stage);
+    }
+
+    // 其他流水线（SelfGuard 等）：保持原有全量注入逻辑不变
+    if (this.state.global_memo || this.memoStore.content) {
       return this.memoStore.inject(stage.work_manual);
     }
 
-    // 🔴 S2 之前：注入架构铁律 + 落地强制规则（双规则全量注入，不允许简化）
+    // S2 之前：注入架构铁律 + 落地强制规则
     return this.memoStore.injectFullRules(stage.work_manual);
+  }
+
+  /**
+   * 🔴 精简上下文注入（仅业务流水线）。
+   */
+  private injectSlimContext(stage: StageConfig): string {
+    if (!this.state || !this.config) return stage.work_manual;
+
+    const loader = RulesLazyLoader.getInstance();
+    const slimCtx = loader.buildStageContext(
+      this.config.flow_id,
+      stage.stage_id,
+      this.state.stage_results,
+    );
+
+    // 如果有 S2 定稿方案，仍需注入（这是用户审核确认的方案，不可省略）
+    const memoBlock = this.state.global_memo || (this.memoStore?.content || '');
+
+    const parts: string[] = [stage.work_manual, '', '---', ''];
+
+    // 1. 精简规则摘要
+    parts.push(slimCtx.rules_brief);
+
+    // 2. S2 定稿方案（若有）
+    if (memoBlock) {
+      parts.push('');
+      parts.push('## 📌 S2 审定方案（不可突破）');
+      parts.push('');
+      parts.push(memoBlock.slice(0, 2000)); // 截断过长方案，保留核心内容
+    }
+
+    // 3. 前序阶段失败要点
+    if (slimCtx.failure_brief && !slimCtx.failure_brief.includes('全部通过')) {
+      parts.push('');
+      parts.push(slimCtx.failure_brief);
+    }
+
+    // 4. S4→S3 回流反馈
+    if (slimCtx.review_feedback) {
+      parts.push('');
+      parts.push('## 🔴 S4 架构评审驳回项（仅修复以下内容）');
+      parts.push('');
+      parts.push(slimCtx.review_feedback);
+    }
+
+    return parts.join('\n');
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -340,6 +457,8 @@ export class FlowEngine {
       flow_status: 'running',
       current_stage: '',
       jump_count: 0,
+      stage_retry_count: 0,
+      s3_retry_count: 0,
       stage_results: new Map(),
       global_memo: '',
       started_at: new Date().toISOString(),

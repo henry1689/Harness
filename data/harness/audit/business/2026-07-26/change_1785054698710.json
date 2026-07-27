@@ -1,0 +1,7 @@
+{
+  "timestamp": "2026-07-26T08:31:38.710Z",
+  "source": "harness-post-check.cjs",
+  "tag": "business",
+  "file": "src/webui/chat.ts",
+  "recorded": true
+}

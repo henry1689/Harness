@@ -10,6 +10,8 @@ flow_id: wenstaros_core_repair_flow
 flow_name: WenStarOS TS内核缺陷修复&架构重构流水线
 version: 2.0
 max_jump_limit: 10
+max_stage_retries: 5
+max_s3_retries: 3
 global_memo_key: wenstaros_arch_global_constraint
 global_arch_constraint: |
   # 全局不可突破架构铁律（每阶段启动自动注入）
@@ -18,7 +20,7 @@ global_arch_constraint: |
   3. FamilyGraph.ts为太虚境户籍唯一数据源，角色扮演使用独立分支FG，禁止污染主库；
   4. UUID(TXS-xxxx)全链路belong_entity_uuid四层标注机制不可删减；
   5. SQLiteAdapter为唯一持久写入通道，修改存储逻辑必须校验防抖save()落盘；
-  6. 会晤模式_meetingEntityName 12处判断点必须完整同步，禁止角色信息泄漏；
+  6. 会晤模式_meetingEntityName 12处判断点（chat.ts 精确行号：L570 / L679 / L760 / L775 / L847 / L1233 / L1235 / L1302 / L1338 / L1445 / L1484 / L1501）必须完整同步，禁止角色信息泄漏；S4 独立评审必须 grep 逐点核验全部 12 处，输出「12 点逐项核验清单」（格式：行号 | 状态[✓/✗/不适用] | 证据），任一不适用但未说明原因则评审驳回；
   7. 新旧两套角色扮演管线规则必须同步修改，切换开关ROLEPLAY_STRUCTURED_ENABLED两边兼容；
   8. 数据写入遵循「只增不删」，历史卷宗、记忆、黑钻记录禁止直接删除；
   9. chat.ts内22段finalKnowledgeText注入顺序不可随意调换，避免LLM提示词逻辑错乱；
@@ -86,7 +88,11 @@ stages:
          - SQLiteAdapter防抖save持久化落盘
       5. 预判数据库影响：conversations/memories/family_graph/black_diamond/knowledge_base表变更风险；
       6. 输出本次改动是否触发FG11条户籍红线、UUID垃圾实体黑名单风险；
-      7. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件。
+      7. 🔴【FG 专项】若改动涉及 FamilyGraph / 角色 / 会晤 / 角色扮演 / belong_entity_uuid / 户籍档案任意一项：
+         (a) 强制 Read D:\AI文件\personal-assistant\memory\projects\wenstar-fg-roleplay.md；
+         (b) 逐条对照11条红线输出触碰判定表（格式：红线编号 | 红线内容 | 是否触碰 | 判定依据）；
+         (c) 未输出触碰判定表则 S2 人审闸门不得放行，直接退回 S1 补全；
+      8. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -96,11 +102,11 @@ stages:
       write_file: false
       delete_file: false
       run_modify_script: false
-    gate_type: human
+    gate_type: auto
     next_stage: S2_Solution_Design
     runner_mode: local
 
-  # ====================== S2 方案定稿（人工终审，写入全局备忘录） ======================
+  # ====================== S2 方案定稿（唯一人工终审节点） ======================
   - stage_id: S2_Solution_Design
     stage_name: 重构技术方案撰写&架构合规校验
     work_manual: |
@@ -163,10 +169,21 @@ stages:
     runner_mode: local
     after_action: inject_global_memo
 
-  # ====================== S3 代码落地（唯一放开文件写入权限阶段） ======================
+  # ====================== S3 代码落地（增量diff局部补丁，禁整文件全量重写） ======================
   - stage_id: S3_Code_Implement
-    stage_name: Claude Code代码修改落地
+    stage_name: Claude Code增量补丁修改落地
     work_manual: |
+      🔴【S3 驳回熔断】S4/S5/S6 驳回回流 S3 最多 3 轮，超限自动锁定 → 需人工解锁。
+
+      🔴【增量 Diff 补丁模式——禁止整文件全量重写】
+      1. 所有代码修改必须以增量 diff 方式应用（仅修改有问题的行/函数/区块，不动无关代码）；
+      2. 禁止使用 Write 工具覆盖完整文件——必须使用 Edit 工具做精确替换；
+      3. 每次 S3 回流仅修复 S4 驳回清单中的具体违规项，不自作主张扩大改动范围；
+      4. 若同文件有多处修改，逐条独立 diff，保持每次 Edit 的 old_string/new_string 最小化。
+
+      ---
+      以下为原 S3 规范（全部保留）：
+
       1. 严格依照S2审定方案修改，禁止顺带优化无关模块、隐性重构未约定逻辑；
       2. 修改高风险文件必须在行注释标注风险等级、改动目的、对应耦合点；
       3. 若修改SQLiteAdapter、persistence-stage.ts，必须保留scheduleFlush防抖落盘逻辑，禁止删除save()调用；
@@ -175,42 +192,60 @@ stages:
       6. 禁止新增垃圾实体匹配规则，必须匹配GARBAGE_NAMES黑名单；
       7. 禁止删除types类型定义、单元测试用例；
       8. 不允许直接删除数据库表数据，仅允许追加更新。
+      9. 🔴【S3 前置自检——编码完成后自动执行，通过方流入 S4】
+         ① 编译检查：npx tsc --noEmit（零类型错误，失败直接打回 S3 重改）；
+         ② 基础逻辑自检清单（全部打勾才通过）：
+            □ 本次改动是否新增了 if/else 条件分支？（是→需在代码注释中说明必要性，否则标记为疑似补丁）
+            □ SQLiteAdapter.save() / scheduleFlush 调用链是否完整？
+            □ FamilyGraph 主库/角色扮演分支读写是否隔离？
+            □ 有没有顺手改到无关文件的代码？
+         ③ 任一自检项未通过 → 阻断，返回 S3 修正代码；
+         ④ 全部通过 → 自动流入 S4 架构评审。
     tool_whitelist:
       read_file: true
       write_file: true
       run_command: true
       delete_file: false
       truncate_db: false
-    gate_type: auto
-    next_stage: S4_Arch_Review
+    gate_type: condition
+    next_stage_pass: S4_Arch_Review
+    next_stage_reject: S3_Code_Implement
     runner_mode: local
 
-  # ====================== S4 独立子Agent架构评审（核心条件门控，运动员不自审） ======================
+  # ====================== S4 架构铁律硬校验（本地脚本执行 + LLM 仅汇总评审） ======================
   - stage_id: S4_Arch_Review
-    stage_name: 委托独立专家架构&代码合规评审
+    stage_name: 本地脚本架构铁律硬校验 + LLM汇总
     work_manual: |
-      评审完整校验维度，双通道输出：machine_signal结构化判定 + human_report可读问题清单
-      一、架构层级校验
-      1. 是否破坏M1-M9无循环依赖规则；
-      2. chat.ts是否新增业务逻辑，违背薄调度层约定；
-      3. PFC上下文注入逻辑是否被篡改；
-      二、户籍&UUID专项校验
-      1. FG主库/角色扮演分支是否隔离，不存在数据污染风险；
-      2. belong_entity_uuid写入、检索链路无缺失，不出现角色失忆；
-      3. UUIDGatekeeper三层白名单过滤逻辑完整；
-      三、耦合点专项校验
-      1. chat.ts 22段finalKnowledgeText注入顺序、内容无错乱；
-      2. _meetingEntityName 12处传播判断点全部同步；
-      3. 新旧角色扮演管线规则同步修改，无单侧遗漏；
-      4. FamilyGraph.dossier所有消费方同步适配字段变更；
-      四、持久化安全校验
-      1. SQLiteAdapter防抖save()调用无丢失，不会出现内存数据重启清空；
-      2. 无直接删除记忆/卷宗/黑钻记录逻辑；
-      五、风险兜底校验
-      1. 高风险文件改动是否完整覆盖全部import依赖；
-      2. 是否触碰FG11条红线产生角色串号、信息泄漏隐患；
-      3. 是否新增硬编码人名、时间常量，未做统一配置；
-      输出规范：
+      🔴【执行流程——LLM 不直接做检查，仅汇总脚本输出】
+      第一步：执行本地硬校验脚本
+        npx tsx D:/AI文件/harness/src/main_harness_checker.ts \
+          --project-root <项目根目录> \
+          --files "<逗号分隔的修改文件列表>" \
+          --stage S4
+      第二步：读取脚本输出的 JSON（stdout），关注：
+        - summary.all_hard_passed: 全部硬性检查是否通过
+        - summary.failed_ids: 失败检查项列表
+        - 各 checks[].violations: 具体违规详情
+      第三步：LLM 汇总评审（仅做以下工作，不重新执行检查）：
+        ① 对脚本输出的 violations 做可读性格式化；
+        ② 判断每个违规是否为误报（需举证说明）；
+        ③ 输出 machine_signal（passed/rejected）和 human_report（可读问题清单）；
+        ④ 当 CK-05（12处会晤点位）出现 ⚠ 标记时，逐条人工确认"不适用"判定是否合理。
+
+      🔴【本地脚本已覆盖的硬校验维度（CK-01~CK-07）】
+      CK-01 九层管线依赖检查     CK-02 PFC薄调度检查
+      CK-03 FG户籍规范检查       CK-04 UUID全链路标注检查
+      CK-05 12处_meetingEntityName核验  CK-06 SQLite save()调用检查
+      CK-07 高风险依赖扫描
+
+      🔴【LLM 补充评审维度（脚本无法覆盖的语义层面）】
+      1. S2 归类真实性：S2 方案标记的"共性/个性"分类是否与代码改动匹配；
+      2. 文档同步：白皮书/蓝皮书相关段落是否需要同步更新；
+      3. 鲁棒加固：修复是否附带空值校验/异常捕获/边界防护；
+      4. Hook 兼容：核心链路是否触发 Hook 侦测点变更。
+
+      ---
+      输出规范（保持不变）：
       machine_signal: {passed: boolean, risk_level: high/mid/low, reject_reason: string[]}
       human_report: 分点列出风险、违规代码位置、整改建议
     tool_whitelist:
@@ -226,12 +261,39 @@ stages:
   - stage_id: S5_Compile_Test
     stage_name: TS编译校验+单元测试全量运行
     work_manual: |
-      1. 执行编译检查：npx tsc --noEmit，捕获所有类型报错；
-      2. 全量单元测试：npx vitest run，模块测试失败直接拦截；
-      3. 若修改m4/fg/m2存储相关模块，额外执行对应目录专项测试；
-      4. 输出编译日志、测试失败用例、报错代码行；
-      5. 判定标准：无TS类型错误、全部用例通过才可放行；
-      6. 编译/测试失败自动打回S3修改代码。
+      🔴【全部本地脚本执行——LLM 仅读取输出做最终判定】
+
+      第一步：补丁嗅探（本地脚本）
+        npx tsx D:/AI文件/harness/src/main_harness_checker.ts \
+          --project-root <项目根目录> \
+          --files "<逗号分隔的修改文件列表>" \
+          --stage S5
+      （脚本输出 CK-08 补丁嗅探结果）
+
+      第二步：编译检查（StageRunner.runCommand 本地执行）
+        npx tsc --noEmit
+      判定：零类型错误 → 通过；有错误 → 打回 S3
+
+      第三步：全量单元测试（StageRunner.runCommand 本地执行）
+        npx vitest run
+      判定：全部用例通过 → 通过；有失败 → 打回 S3
+
+      第四步：模块专项测试（若涉及 m4/fg/m2 存储模块）
+        npx vitest run --dir <对应目录>
+      判定：全部通过 → 通过
+
+      第五步：LLM 汇总（仅读取上述步骤输出，不重新执行任何命令）
+        ① 汇总编译/测试/补丁嗅探结果；
+        ② CK-08 疑似补丁清单逐条评定（确认为架构修复 or 临时规避）；
+        ③ 任一失败 → machine_signal.passed=false → 打回 S3；
+        ④ 全部通过且无未评定补丁 → machine_signal.passed=true → 放行 S6。
+
+      🔴【补丁嗅探阈值】
+      - 单个已有函数新增 ≥2 个 if/else if/switch case 分支 → 标记为「疑似补丁」
+      - 新增文件不适用此阈值
+      - 未附判定说明的疑似补丁 → 阻断放行
+
+      🔴【编译/测试/补丁任一失败 → 自动打回 S3】
     tool_whitelist:
       read_file: true
       run_command: true
@@ -241,10 +303,33 @@ stages:
     next_stage_reject: S3_Code_Implement
     runner_mode: local
 
-  # ====================== S6 全场景功能&数据库核验 ======================
+  # ====================== S6 全场景功能&数据库核验（全本地脚本执行） ======================
   - stage_id: S6_Function_Verify
     stage_name: 多场景功能验证+数据库标注审计
     work_manual: |
+      🔴【全部本地脚本执行——LLM 仅读取结果做最终判定】
+
+      第一步：编译检查（StageRunner.runCommand 本地执行）
+        npx tsc --noEmit
+      失败 → 打回 S3
+
+      第二步：全量单元测试（StageRunner.runCommand 本地执行）
+        npx vitest run
+      失败 → 打回 S3
+
+      第三步：数据库落盘检索（grep 本地执行，可缓存）
+        grep -rn "\.save()\|scheduleFlush" <项目根目录>/src/
+      检查修改文件涉及的持久化路径是否有 save/flush 调用缺失
+      失败 → 打回 S3
+
+      第四步：LLM 汇总（仅读取上述步骤输出，不重新执行）
+        ① 汇总编译/测试/落盘检索结果；
+        ② 若全部通过 → machine_signal.passed=true → 放行 S7；
+        ③ 任一失败 → machine_signal.passed=false → 打回 S3。
+
+      ---
+      以下为原 S6 规范（保留，供 LLM 汇总时参考）：
+
       1. 启动WebUI服务 npm run webui，三类场景测试：
          ①普通对话 ②实体会晤模式 ③角色扮演分支
       2. 校验五条核心行为规范：
@@ -253,11 +338,16 @@ stages:
          - 角色扮演不污染主FamilyGraph户籍；
          - 记忆、对话belong_entity_uuid标注正常；
          - 无LLM编造人物关系、幻觉问题；
-      3. 数据库审计校验：
-         执行UUID标注率查询脚本，核对memories/conversations/black_diamond标注比例；
-         若修改存储逻辑，执行离线回填脚本safe-backfill.cjs验证数据兼容；
-      4. 停服重启二次核验：内存写入数据落地不丢失、UUID标注不回退；
-      5. 输出完整验证报告，标记异常项。
+      3. 🔴【持久化落盘强制检索】自动化 .save() / scheduleFlush 校验：
+         (a) grep 检查 SQLiteAdapter 实例的 .save() 或 scheduleFlush() 调用是否存在；
+         (b) 持久化写入路径强制 grep + 逐调用点输出核验清单；
+         (c) 缺失防抖落盘调用 → 直接阻断，打回 S3；
+         (d) 核验通过后方可继续后续步骤；
+      4. 数据库审计校验：
+         执行UUID标注率查询脚本；
+         若修改存储逻辑，执行离线回填脚本 safe-backfill.cjs 验证数据兼容；
+      5. 停服重启二次核验；
+      6. 输出完整验证报告，标记异常项。
     tool_whitelist:
       read_file: true
       run_command: true

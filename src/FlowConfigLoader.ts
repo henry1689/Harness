@@ -393,6 +393,8 @@ function validateFlowConfig(raw: Record<string, unknown>, sourceFile: string): F
     flow_name: String(raw.flow_name),
     version: String(raw.version),
     max_jump_limit: Number(raw.max_jump_limit),
+    max_stage_retries: Number(raw.max_stage_retries || 5),
+    max_s3_retries: Number(raw.max_s3_retries || 3),
     global_memo_key: String(raw.global_memo_key || `${raw.flow_id}_global_memo`),
     global_arch_constraint: String(raw.global_arch_constraint || ''),
     global_implementation_rules: String(raw.global_implementation_rules || ''),

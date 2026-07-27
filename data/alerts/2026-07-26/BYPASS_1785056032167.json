@@ -1,0 +1,6 @@
+{
+  "timestamp": "2026-07-26T08:53:52.167Z",
+  "type": "BYPASS",
+  "file": "src/webui/chat.ts",
+  "detail": "Business file modified without valid pipeline pass token. Possible pipeline bypass."
+}

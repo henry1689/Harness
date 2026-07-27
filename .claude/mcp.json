@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "selfguard": {
+      "command": "node",
+      "args": ["D:/AI文件/SelfGuard/server.js"],
+      "description": "SelfGuard 独立自护子系统 — 十四条铁律监管 Harness 基础设施变更"
+    }
+  }
+}

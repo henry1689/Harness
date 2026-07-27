@@ -56,6 +56,10 @@ export interface FlowConfig {
   flow_name: string;
   version: string;
   max_jump_limit: number;
+  /** 通用单阶段回流最大次数（非 S3 阶段），默认 5 */
+  max_stage_retries: number;
+  /** 🔴 S3 专属驳回回流最大轮次（独立计数，超限强制锁定），默认 3 */
+  max_s3_retries: number;
   global_memo_key: string;
   /** 业务架构铁律（10条，不可突破） */
   global_arch_constraint: string;
@@ -230,6 +234,10 @@ export interface FlowRunState {
   current_stage: string;
   /** 连续 auto 跳转计数（熔断用） */
   jump_count: number;
+  /** 通用单阶段回流计数（非 S3 阶段回流，超限强制锁定） */
+  stage_retry_count: number;
+  /** 🔴 S3 专属驳回回流计数（独立于通用计数，max_s3_retries 限制） */
+  s3_retry_count: number;
   /** 各 stage 的执行结果（key: stage_id） */
   stage_results: Map<string, StageResult>;
   /** S2 确认后持久化的全局备忘录 */

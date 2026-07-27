@@ -32,6 +32,8 @@ function makeState(overrides: Partial<FlowRunState> & { modified_files?: string[
     flow_status: 'running',
     current_stage: 'S4_Arch_Review',
     jump_count: 0,
+    stage_retry_count: 0,
+    s3_retry_count: 0,
     stage_results: new Map(),
     global_memo: '',
     started_at: new Date().toISOString(),

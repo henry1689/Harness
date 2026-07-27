@@ -58,6 +58,33 @@ export {
 } from './NativeCommands.js';
 export { review } from './DelegateReviewer.js';
 
+// ── Token 降耗模块 ──
+export { CheckCache } from './CheckCache.js';
+export { RulesLazyLoader } from './RulesLazyLoader.js';
+export type { SlimStageContext } from './RulesLazyLoader.js';
+
+// ── 本地硬校验脚本（导出核心函数供外部调用） ──
+export {
+  checkNineLayerPipeline,
+  checkPFCThinScheduler,
+  checkFGHouseholdSpec,
+  checkUUIDAnnotationChain,
+  checkMeetingEntityPoints,
+  checkSQLiteSaveCalls,
+  checkHighRiskDependencyScan,
+  checkASTIfBranchCount,
+  MEETING_ENTITY_CHECKPOINTS,
+  PATCH_IF_THRESHOLD,
+  HIGH_RISK_FILES,
+} from './main_harness_checker.js';
+export type {
+  CheckResult,
+  Violation,
+  CheckerOutput,
+  CheckerSummary,
+  CacheableData,
+} from './main_harness_checker.js';
+
 // ── 类型 ──
 export type {
   FlowConfig,

@@ -29,6 +29,8 @@ function makeState(overrides: Partial<FlowRunState> = {}): FlowRunState {
     flow_status: 'running',
     current_stage: 'S_test',
     jump_count: 0,
+    stage_retry_count: 0,
+    s3_retry_count: 0,
     stage_results: new Map(),
     global_memo: '',
     started_at: new Date().toISOString(),

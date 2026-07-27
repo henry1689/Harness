@@ -1,23 +1,24 @@
 # ================================================================
 # Flow ID: self_guard_flow
-# Flow Name: SelfGuard 基础设施自护流水线
+# Flow Name: SelfGuard 基础设施自护流水线 v2.0
 # 适配项目：Harness (独立引擎，TS5.7 Node22)
 # 职责：专门管控主 Harness 自身的基础设施变更
 # 隔离：与主业务流水线物理隔离，配置/规则/评审/卷宗完全独立
 # ================================================================
 flow_id: self_guard_flow
 flow_name: SelfGuard 基础设施自护流水线
-version: 1.2.0
+version: 2.0.0
 max_jump_limit: 10
+max_stage_retries: 5
 global_memo_key: self_guard_global_constraint
 
 # ================================================================
-# 🔴 SelfGuard 十条自护铁律（全阶段自动注入）
+# 🔴 SelfGuard 十三条自护铁律（全阶段自动注入）
 # ================================================================
-# 说明：以下十条铁律在 SelfGuard 流水线每个阶段启动前自动注入，
+# 说明：以下十三条铁律在 SelfGuard 流水线每个阶段启动前自动注入，
 # 主业务流水线完全隔离，无法读取此规则集。
 global_arch_constraint: |
-  # ==================== SelfGuard 十条自护铁律（不可突破） ====================
+  # ==================== SelfGuard 十三条自护铁律（不可突破） ====================
 
   # SG-R1 改动范围铁律
   所有对主 Harness 的修改，必须由用户明确给出文件路径、修改字段、明确变更目标；
@@ -25,9 +26,10 @@ global_arch_constraint: |
   超出用户明确范围的改动，直接评审驳回。
 
   # SG-R2 主 Harness 底层架构不可破坏基线
-  主 Harness 七阶流水线流转顺序、UUID 门阀隔离机制、双轨卷宗存储、
-  历史只增不删原则、上下文隔离底层逻辑，属于不可动摇基础设施基线。
-  修改仅允许增补、配置替换、逻辑适配；禁止删除、倒置、整体重构原有底层流转流程。
+  主 Harness 底层架构属于不可动摇基础设施基线，所有修改仅允许增补、
+  配置替换、逻辑适配；禁止删除、倒置、整体重构原有底层流转流程。
+  UUID/卷宗/门阀/上下文隔离/只增不删等具体保护项由 SG-R5/R8/R11 分别承载，
+  SG-R2 仅做最高层级基线宣言，不枚举具体检查项。
 
   # SG-R3 Harness 变更强制升级为最高风险等级
   任何主 Harness 内部文件变更，系统自动判定为超高风险。
@@ -60,17 +62,31 @@ global_arch_constraint: |
   禁止主动提议底层架构重构、流程颠覆、核心机制替换。
   主 Harness 重大内核重构，必须由用户主动发起指令，AI 无权主动提议。
 
-  # SG-R10 版本迭代强制复审铁律
-  每一次通过 SelfGuard 对主 Harness 做升级、迭代、规则增补、逻辑调整后，必须自动执行一轮
-  内部 Review 自检：校验新旧规则、评审逻辑、配置条目之间是否语义重叠、逻辑冗余、条目臃肿、
-  权责交叉、上下规则相互矛盾；必须自动合并重复语义、剔除冗余描述、收拢交叉条目，
-  保证整体规则体系紧凑、层级递进、无多余重复内容，且全程不削弱原有任何防护能力。
+  # SG-R10 SelfGuard 自身规则体系自检铁律
+  每次 SelfGuard 迭代后，S4 复审必须对 SelfGuard 自身规则文件（self_guard_rules.yaml）
+  执行自检：扫描全量条目（SG-R1~R13）是否存在语义重叠、条目臃肿、权责交叉、上下矛盾；
+  若检出 → 必须自动合并重复语义、剔除冗余描述、收拢交叉条目。
+  自检范围严格限定于 SelfGuard 自身规则文件，不得越界扫描主流水线 YAML。
 
   # SG-R11 外部制衡与旁路巡检铁律
   系统全局只承认 SelfGuard 为 Harness 配置、脚本、规则、底层逻辑修改的合法入口；
   其余任何会话、任何身份，全部禁止改动管控中枢。后台 GlobalWatchdog 持续旁路扫描
   所有文件写入行为；捕获非 SelfGuard 修改 /harness → 越权告警 + 独立留痕。
-  每次迭代复审强制校验下游权限基线 + 拦截规则完整性。
+
+  # SG-R12 主流水线自动化校验基线不可删减铁律
+  主流水线（wenstaros_core_repair_flow）中 S3 前置编译自检、S5 补丁嗅探（if 分支静态扫描）、
+  S6 持久化落盘强制检索（.save()/scheduleFlush 自动化校验）三类自动化拦截机制
+  属于不可削弱基础设施基线。仅允许提高阈值或扩充新维度。
+
+  # SG-R13 主流水线下游规则完整性交叉审计铁律
+  每次 SelfGuard 流水线 S4 SelfReview 阶段，强制执行主流水线 YAML
+  （wenstaros_core_repair_flow.yaml）下游规则完整性交叉审计——
+  扫描范围严格限定于主流水线 YAML，不得越界扫描 SelfGuard 自身规则文件：
+  (a) 审计 global_arch_constraint 的 10 条条目数量是否完整；
+  (b) 审计 S1-S7 各阶段 tool_whitelist 权限是否被放宽；
+  (c) 审计各阶段 gate_type 是否被降级（human→auto 或 condition→auto）；
+  (d) 交叉审计结果输出至 SelfGuard 审计卷宗。
+  SelfGuard 自身规则的自检由 SG-R10 专项承担，两套扫描互不越界。
 
 global_implementation_rules: |
   # ==================== SelfGuard 开发落地强制校验规则 ====================
@@ -94,17 +110,33 @@ global_implementation_rules: |
 
   # 规则 E：流水线闭环前八阶体检
   ① 编译校验（tsc --noEmit）→ ② 全量单元测试（vitest run）→
-  ③ SelfReviewer 十一条铁律全维度评审 → ④ 版本一致性复审自检（去臃肿/去重复/一致性）→
-  ⑤ 外部制衡强制审计（权限基线+拦截规则+唯一入口+越权检测）→
-  ⑥ 兼容性校验 → ⑦ 文档同步校验 → ⑧ 卷宗归档校验
+  ③ SelfReviewer 十三条铁律全维度评审 → ④ SG-R10 规则去臃肿去重复自检 →
+  ⑤ SG-R13 下游主流水线 YAML 交叉审计 → ⑥ 外部制衡强制审计 →
+  ⑦ 兼容性校验 → ⑧ 文档同步校验 + 卷宗归档
+
+  # 规则 F：自动流转与回流熔断
+  流水线仅保留 S2 为唯一人工方案确认节点。S1/S3/S4/S5/S6/S7 校验合格后全部
+  自动流转。S3/S4/S5/S6 校验不通过自动回流 S3，设置最大 5 轮回流熔断
+  （max_jump_limit=10 自然限流：每轮 S3→S7 跨 5 个 condition gate，
+  两轮满跳 = 10 → 熔断）。超限后强制锁定，需人工解除冷却。
 
 # ================================================================
-# 全流程阶段定义（S1-S7，七阶流水线）
-# 状态机严格锁定顺序，AI 无权限跳步
+# 全流程阶段定义（S1-S7，七阶流水线 v2.0 自动化）
+# ================================================================
+# 流转逻辑：
+#   S1(condition) ──pass→ S2(human) ──approve→ S3(condition) ──pass→ S4(condition+delegate)
+#    │ reject→END      │ deny→END         │ reject→S3          │ pass→S5 │ reject→S3
+#                      │                  │                    │
+#   S5(condition) ──pass→ S6(condition) ──pass→ S7(condition) ──pass→ END + Token
+#    │ reject→S3          │ reject→S3         │ reject→S3
+#
+# 回流熔断：S3/S4/S5/S6/S7 任一 reject → 回流 S3，5 轮后 max_jump_limit 触发熔断
+# SG-R10 + SG-R13 在 S4 强制执行，不通过直接回流 S3
+# S7 通过后自动下发一次性写入令牌
 # ================================================================
 stages:
 
-  # ==================== S1 问题收录 & 影响范围盘点 ====================
+  # ==================== S1 问题收录（自动流转） ====================
   - stage_id: S1_Problem_Analysis
     stage_name: 基础设施变更定位 & Harness牵连风险盘点
     work_manual: |
@@ -113,7 +145,7 @@ stages:
          - 规则升级（global_arch_constraint / global_implementation_rules 修改）
          - 评审逻辑适配（DelegateReviewer 维度增删）
          - 内核微调（FlowEngine / StageRunner / GateController 逻辑调整）
-         - 新增子系统（如本次 SelfGuard 自身）
+         - 新增子系统
       2. 扫描所有待修改文件，自动判定为超高风险（SG-R3）：
          🔴 所有 src/*.ts 文件均为超高风险
          🔴 所有 data/flows/*.yaml 文件均为超高风险
@@ -122,15 +154,14 @@ stages:
          - FlowEngine DFA 状态机流转逻辑
          - StageRunner 执行流程
          - GateController 门控判定
-         - DelegateReviewer 十一维评审体系
+         - DelegateReviewer 十三维评审体系
          - AuditLogger 双轨卷宗机制
-         - UUID 门阀隔离机制
-         - 上下文隔离底层逻辑
       5. 预判全局影响：
          - 主业务流水线是否受波及
          - 已有审计卷宗是否可读
          - 历史运行状态是否兼容
-      6. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件。
+      6. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件；
+      7. 🔴 条件门控自动判定：分析完整 → pass 进入 S2；分析不完整 → reject 终止流水线。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -140,10 +171,11 @@ stages:
       write_file: false
       delete_file: false
       run_modify_script: false
-    gate_type: human
-    next_stage: S2_Solution_Design
+    gate_type: condition
+    next_stage_pass: S2_Solution_Design
+    next_stage_reject: END
 
-  # ==================== S2 方案设计 ====================
+  # ==================== S2 方案设计（🔴 唯一人工确认节点） ====================
   - stage_id: S2_Solution_Design
     stage_name: 基础设施变更方案设计 & 自护铁律合规审查
     work_manual: |
@@ -153,7 +185,7 @@ stages:
          (b) 完整回退方案：包含 git revert 步骤、数据回滚步骤、配置回退步骤
          (c) 前置校验步骤：编译检查、测试检查、兼容性预检的具体执行命令
          (d) 落地后后置验证方案：如何确认变更生效且未引入新问题
-      3. 逐条对照十条自护铁律进行方案合规自检：
+      3. 逐条对照十三条自护铁律进行方案合规自检：
          SG-R1: 改动范围是否严格限定在用户指定的文件？
          SG-R2: 是否仅做增补/配置替换/逻辑适配，不破坏基线？
          SG-R3: 四项材料是否齐全？
@@ -163,11 +195,17 @@ stages:
          SG-R7: 是否需要在 S5 阶段执行全量测试？
          SG-R8: 变更记录是否需要归档到 SelfGuard 专属卷宗？
          SG-R9: 是否超出了 AI 提案权限范围？
-         SG-R10: 是否存在规则语义重叠、逻辑冗余、条目臃肿？
+         SG-R10: SelfGuard 自身规则是否存在语义重叠、逻辑冗余、条目臃肿？
          SG-R11: 下游权限基线是否合规？拦截规则是否完整？GlobalWatchdog 越权事件？
+         SG-R12: 主流水线自动化校验基线是否保持完整未删减？
+         SG-R13: 主流水线 YAML 规则完整性是否通过交叉审计？
       4. 🔴 SG-R9 权限检查：AI 只能提冗余合并、结构精简类优化；
          底层架构重构、流程颠覆、核心机制替换必须由用户主动发起；
-      5. 输出用户审批选项：确认执行 / 修改方案 / 驳回。
+      5. 🔴 用户审批（S2 为全流水线唯一人工卡点）：
+         - 确认执行 → 进入 S3 自动编码+评审+测试+兼容性+归档全流程
+         - 修改方案 → 返回修改
+         - 驳回 → 流水线终止
+      6. 输出用户审批选项：确认执行 / 修改方案 / 驳回。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -180,17 +218,20 @@ stages:
     gate_type: human
     next_stage: S3_Code_Implement
 
-  # ==================== S3 编码落地 ====================
+  # ==================== S3 编码落地（自动流转+编译回流） ====================
   - stage_id: S3_Code_Implement
-    stage_name: 编码落地（仅限定范围内修改）
+    stage_name: 编码落地 + 编译自检（自动流转，失败回流S3）
     work_manual: |
       1. 严格按照 S2 审批通过的方案执行代码修改；
       2. 🔴 SG-R1 严格执行：仅修改用户明确指定的文件路径和字段；
          禁止跨文件附带改动，禁止删减用户未指定的流程节点；
       3. 🔴 SG-R2 严格执行：仅做增补/配置替换/逻辑适配，不破坏底层基线；
       4. 🔴 SG-R9 严格执行：编码时不可偷偷植入被否决的优化逻辑；
-      5. 修改完成后立即执行编译检查（npx tsc --noEmit）；
-      6. 在代码变更块中标注改动原因引用（关联 S2 方案中的决策项）。
+      5. 🔴 修改完成后自动执行编译检查（npx tsc --noEmit）：
+         编译通过 → 自动流转 S4 机器评审；
+         编译失败 → 自动回流 S3 修正代码（回流计数器 +1）；
+      6. 在代码变更块中标注改动原因引用（关联 S2 方案中的决策项）；
+      7. 🔴 回流熔断：S3 回流累计达 5 次 → 强制锁定，需人工解锁冷却。
     tool_whitelist:
       read_file: true
       write_file: true
@@ -200,15 +241,16 @@ stages:
       run_cli_check: true
       delete_file: false
       run_modify_script: false
-    gate_type: auto
-    next_stage: S4_SelfReview
+    gate_type: condition
+    next_stage_pass: S4_SelfReview
+    next_stage_reject: S3_Code_Implement
 
-  # ==================== S4 SelfReview 独立评审（使用 SelfReviewer） ====================
+  # ==================== S4 SelfReview 机器评审（🔴 SG-R10+SG-R13 强制执行） ====================
   - stage_id: S4_SelfReview
-    stage_name: SelfReviewer 十一条自护铁律全维度评审
+    stage_name: SelfReviewer 十三条铁律全维度评审（含SG-R10去臃肿+SG-R13下游交叉审计）
     work_manual: |
       1. 🔴 激活 SelfReviewer 独立评审组件（非主 Harness 的 DelegateReviewer）；
-      2. 对当前变更执行十一条自护铁律全维度逐条校验：
+      2. 对当前变更执行十三条自护铁律全维度逐条校验：
          SG-R1: 改动范围边界检查
          SG-R2: 底层架构基线完整性检查
          SG-R3: S2 四项材料完整性复核
@@ -218,22 +260,25 @@ stages:
          SG-R7: 测试覆盖与通过状态检查
          SG-R8: 归档标签与独立性检查
          SG-R9: AI 提案权限越界检测
-         SG-R10: 版本迭代强制复审（去臃肿/去重复/一致性校验）
+         SG-R10: SelfGuard 自身规则自检（仅扫描 self_guard_rules.yaml，去臃肿/去重复/一致性）
          SG-R11: 外部制衡与旁路巡检（权限基线+拦截规则+唯一入口+越权检测）
-      3. 🔴 版本一致性复审自检（SG-R10 强制植入，每次迭代自动触发）：
-         ① 检查新增规则与存量规则是否语义重复、范围重叠；
-         ② 检查整套规则体系是否出现结构臃肿、条目细碎、逻辑割裂问题；
-         ③ 校验全链路规则目标一致、约束口径统一，无自相矛盾；
-         ④ 自动输出冗余分析报告，若检出明显臃肿与重复，必须同步完成合理精简合并，
-           保证防护强度不变、体系更紧凑。
-      4. 🔴 外部制衡强制审计（SG-R11 强制植入，每次迭代自动触发）：
-         ① 审计下游主体对 /harness 目录的读写权限是否符合只读基线；
-         ② 校验顶层基础设施拦截规则（SG-R1~R11）是否完整启用、无一被弱化或删除；
-         ③ 核验 SelfGuard 为 /harness 目录唯一合法变更入口；
-         ④ 叠加 GlobalWatchdog 旁路巡检——报告本次迭代前的越权事件清单。
+         SG-R12: 主流水线自动化校验基线完整性（S3编译自检/S5补丁嗅探/S6落盘检索未删减未弱化）
+         SG-R13: 主流水线下游规则完整性交叉审计（仅扫描 wenstaros_core_repair_flow.yaml）
+      3. 🔴 SG-R10 强制执行——SelfGuard 自身规则去臃肿去重复：
+         ① 扫描 self_guard_rules.yaml 全量条目（SG-R1~R13），检测语义重复、范围重叠；
+         ② 检测条目是否过度细碎、层级是否超过 3 级；
+         ③ 检测不同规则之间是否存在目标冲突、约束口径不一致；
+         ④ 自动输出《规则一致性复审报告》，检出臃肿/重复/矛盾则立即精简合并；
+         ⑤ 报告写入 SelfGuard S4 审计卷宗附件，永久留存可追溯。
+      4. 🔴 SG-R13 强制执行——主流水线下游规则完整性交叉审计：
+         ① 读取 wenstaros_core_repair_flow.yaml，审计 global_arch_constraint 条目 ≥10；
+         ② 逐阶段审计 S1-S7 tool_whitelist 是否被放宽（write_file/delete_file/run_modify_script）；
+         ③ 逐阶段审计 gate_type 是否被降级（human→auto / condition→auto）；
+         ④ 交叉审计结果写入 SelfGuard S4 审计卷宗附件；
+         ⑤ 任一维度检出退化 → 直接判定 S4 不通过，回流 S3。
       5. 输出双通道信号（machine_signal + human_report）；
-      6. 任一铁律违规 → 驳回 S3，附带具体违规条目和修正指引；
-      7. 全部通过 → 进入 S5 编译测试。
+      6. 评审全部通过 → 自动流转 S5 编译测试；
+      7. 任一铁律违规 → 自动回流 S3，附带具体违规条目和修正指引。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -248,15 +293,18 @@ stages:
     next_stage_reject: S3_Code_Implement
     runner_mode: delegate
 
-  # ==================== S5 编译 & 测试 ====================
+  # ==================== S5 编译 & 测试（自动回流） ====================
   - stage_id: S5_Compile_Test
-    stage_name: TypeScript编译检查 & 全量单元测试
+    stage_name: TypeScript编译检查 & 全量单元测试（失败回流S3）
     work_manual: |
       1. 🔴 SG-R7 强制要求：执行全量 Harness 单元测试；
       2. 编译检查：npx tsc --noEmit（零类型错误）；
       3. 全量测试：npx vitest run src/__tests__/（零测试失败）；
-      4. 任意测试失败 → 直接阻断变更落地，打回 S3；
-      5. 输出编译报告和测试报告摘要。
+      4. 🔴 自动流转判定：
+         - 编译通过 + 全部测试通过 → 自动流转 S6 兼容性校验；
+         - 任意测试/编译失败 → 自动回流 S3（回流计数器 +1）；
+      5. 输出编译报告和测试报告摘要；
+      6. 🔴 回流熔断：S5 回流累计达 5 次 → 强制锁定。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -270,9 +318,9 @@ stages:
     next_stage_pass: S6_Compatibility_Check
     next_stage_reject: S3_Code_Implement
 
-  # ==================== S6 兼容性校验 ====================
+  # ==================== S6 兼容性校验（自动回流） ====================
   - stage_id: S6_Compatibility_Check
-    stage_name: 双向兼容性校验 & 文档同步核验
+    stage_name: 双向兼容性校验 & 文档同步核验（失败回流S3）
     work_manual: |
       1. 🔴 SG-R5 双向兼容强制校验：
          (a) 验证新版本 Harness 能否正确读取历史审计卷宗 JSON 文件
@@ -281,10 +329,13 @@ stages:
          (d) 验证历史 UUID 身份档案格式兼容
          (e) 验证数据模型变更向后兼容（字段只增不删）
       2. 🔴 SG-R6 文档同步核验：
-         (a) 检查 harness/self_guard/README.md 是否已同步更新
+         (a) 检查 self_guard/README.md 是否已同步更新
          (b) 检查规则释义是否与代码实现一致
          (c) 检查变更记录是否已准备归档
-      3. 兼容性或文档校验不通过 → 阻断流水线，打回 S3。
+      3. 🔴 自动流转判定：
+         - 兼容性 + 文档校验全部通过 → 自动流转 S7 归档；
+         - 任一校验不通过 → 自动回流 S3（回流计数器 +1）；
+      4. 🔴 回流熔断：S6 回流累计达 5 次 → 强制锁定。
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -298,9 +349,9 @@ stages:
     next_stage_pass: S7_Archive
     next_stage_reject: S3_Code_Implement
 
-  # ==================== S7 归档闭环 ====================
+  # ==================== S7 归档闭环 + Token 签发 ====================
   - stage_id: S7_Archive
-    stage_name: 基础设施变更痕迹归档 & 版本链维护
+    stage_name: 基础设施变更痕迹归档 + 版本链维护 + Token签发（失败回流S3）
     work_manual: |
       1. 🔴 SG-R8 强化归档：
          (a) 所有变更记录打上【基础设施变更】专属标签
@@ -310,7 +361,17 @@ stages:
          (a) 记录当前版本号与上一稳定版本号
          (b) 存储回退快照引用（git commit hash）
          (c) 确保一键回退路径可用
-      3. 输出变更报告摘要，闭环流水线。
+      3. 🔴 自动签发一次性写入令牌：
+         (a) 调用 SelfGuard MCP writePassToken()，下发多维 Token（2h 有效，单次使用）；
+         (b) Token 多维绑定：flow_id + 文件列表 + caller_uuid + 过期时间 + usage_count；
+         (c) Token 写入 data/tokens/，PreToolUse hook 校验通过后放行；
+      4. 🔴 MCP 推送 Main-Harness 热重载规则：
+         令牌签发同时通知主 Harness reload 最新流水线规则配置，
+         确保业务流水线即时感知 SelfGuard 规则体系变更；
+      5. 🔴 自动流转判定：
+         - 归档 + Token 签发 + 推送成功 → END，闭环流水线；
+         - 任一失败 → 回流 S3（回流计数器 +1），令牌不下发；
+      6. 输出变更报告摘要，闭环流水线。
     tool_whitelist:
       read_file: true
       write_file: true
@@ -320,5 +381,6 @@ stages:
       run_cli_check: true
       delete_file: false
       run_modify_script: false
-    gate_type: auto
-    next_stage: END
+    gate_type: condition
+    next_stage_pass: END
+    next_stage_reject: S3_Code_Implement

@@ -49,7 +49,7 @@ describe('FlowConfigLoader', () => {
     const s1 = config.stages[0];
 
     expect(s1.stage_id).toBe('S1_Problem_Analysis');
-    expect(s1.gate_type).toBe('human');
+    expect(s1.gate_type).toBe('auto');
     expect(s1.runner_mode).toBe('local');
     expect(s1.next_stage).toBe('S2_Solution_Design');
     expect(s1.tool_whitelist.write_file).toBe(false);

@@ -20,14 +20,16 @@ Harness 是一个零侵入、插拔式、YAML 驱动的通用流水线调度引�
 | ToolWhitelistGuard | `src/ToolWhitelistGuard.ts` | 执行层白名单拦截 |
 | DelegateReviewer | `src/DelegateReviewer.ts` | 11维代码评审 |
 | AuditLogger | `src/AuditLogger.ts` | 全流程审计日志 |
-| SelfGuardEngine | `self_guard/SelfGuardEngine.ts` | 基础设施自护引擎 |
-| SelfReviewer | `self_guard/SelfReviewer.ts` | 11条自护铁律评审 |
 
-## SelfGuard 规则
+## 🛡️ SelfGuard 监管（MCP 外部接入）
 
-🔴 所有对 Harness 自身文件的修改，必须走 SelfGuard 流水线，禁止直接写入。
+🔴 **所有对 Harness 文件的修改，必须先通过 SelfGuard MCP 校验。**
 
-SelfGuard 接管域：`src/`、`data/`、`self_guard/`
+SelfGuard 是独立 MCP 服务，不在本项目中。Claude Code 通过 `.claude/mcp.json` 自动连接。
+
+**每次修改 Harness 文件前，AI 必须先调用 `check_harness_change` 工具。**
+
+SelfGuard 十四条自护铁律全维度评审通过后才能进入编码。
 
 ## 开发命令
 
