@@ -1,8 +1,0 @@
-{
-  "timestamp": "2026-07-26T08:16:24.024Z",
-  "file": "src/m3/PerceptionAnalyzer.ts",
-  "warnings": [
-    "Patch signal #1 matched: if\\s*\\([^)]*\\)\\s*\\{",
-    "Patch signal #4 matched: TODO|FIXME|HACK|WORKAROUND"
-  ]
-}

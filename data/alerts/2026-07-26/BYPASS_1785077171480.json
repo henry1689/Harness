@@ -1,6 +1,0 @@
-{
-  "timestamp": "2026-07-26T14:46:11.480Z",
-  "type": "BYPASS",
-  "file": "src/FlowEngine.ts",
-  "detail": "Source file modified without valid pipeline pass token. Possible pipeline bypass."
-}

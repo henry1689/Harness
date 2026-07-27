@@ -1,6 +1,0 @@
-{
-  "timestamp": "2026-07-26T08:53:52.247Z",
-  "type": "BYPASS",
-  "file": "src/app/knowledge/KnowledgeContextBuilder.ts",
-  "detail": "Business file modified without valid pipeline pass token. Possible pipeline bypass."
-}

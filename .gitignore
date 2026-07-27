@@ -2,3 +2,9 @@ node_modules/
 dist/
 data/audit/
 data/memos/
+data/tokens/
+data/breaker/
+data/alerts/
+data/harness/tokens/
+data/harness/breaker/
+data/harness/audit/
