@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_p1_project_brain_closeout",
+  "generated_at": "2026-08-02T16:14:05.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测",
+      "abd0127 chore: 从版本控制移除运行时数据(tokens/alerts/audit)",
+      "1ee9292 v2.1 Token降耗改造 + 路径漏洞修复 + MCP令牌路径同步",
+      "e6ccd38 v1.2.0 — SelfGuard 独立自护子系统完整发布",
+      "24672bf Harness v2.0 — 轻量化通用流水线调度引擎"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 26,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/logs/",
+      "?? data/project-brain/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "?? docs/v4/",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs",
+      "?? scripts/project-brain-self-snapshot.cjs",
+      "?? src/project-brain/",
+      "?? tests/"
+    ],
+    "diff_name_only": ["data/heartbeat.json"],
+    "diff_stat": "data/heartbeat.json | 2 +-, 1 file changed, 1 insertion(+), 1 deletion(-)",
+    "notes": [
+      "M data/heartbeat.json — PM2 daemon runtime heartbeat, not a manual change",
+      "All ?? entries are untracked files from P0 and P1 phases",
+      "Zero tracked files modified (except heartbeat)"
+    ]
+  },
+  "change_classification": {
+    "p0_artifacts": [
+      "scripts/baseline-report.cjs",
+      "scripts/defense-health-check.cjs",
+      "scripts/harness-gate.cjs",
+      "hooks/pre-commit",
+      "hooks/pre-commit.template",
+      "docs/v4/upgrade-isolation-rules.md",
+      "data/reports/baseline/",
+      "data/reports/health/",
+      "data/reports/recovery/",
+      "data/reports/branch/",
+      "data/reports/p0-closeout/"
+    ],
+    "p1_project_brain_source": [
+      "src/project-brain/types.ts",
+      "src/project-brain/intent-builder.ts",
+      "src/project-brain/store.ts",
+      "src/project-brain/reporter.ts",
+      "src/project-brain/index.ts"
+    ],
+    "p1_project_brain_tests": [
+      "tests/project-brain/types.test.ts",
+      "tests/project-brain/intent-builder.test.ts",
+      "tests/project-brain/store.test.ts",
+      "tests/project-brain/reporter.test.ts"
+    ],
+    "p1_project_brain_script": [
+      "scripts/project-brain-self-snapshot.cjs"
+    ],
+    "p1_project_brain_data_reports": [
+      "data/project-brain/.gitkeep",
+      "data/project-brain/project-brain.json",
+      "data/reports/project-brain/.gitkeep",
+      "data/reports/project-brain/project-brain-20260803-001014.json",
+      "data/reports/project-brain/project-brain-20260803-001014.md",
+      "data/reports/project-brain/project-brain-20260803-001359.json",
+      "data/reports/project-brain/project-brain-20260803-001359.md"
+    ],
+    "runtime_state": [
+      "data/heartbeat.json",
+      "data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "data/logs/"
+    ],
+    "forbidden_core_changes": [],
+    "unexpected_changes": [],
+    "core_integrity_note": "src/FlowEngine.ts, src/StageRunner.ts, src/GateController.ts, mcp/, sentinel/, hooks/, data/flows/, data/tokens/, data/audit/, ecosystem.config.cjs, package.json, tsconfig.json — ALL UNTOUCHED."
+  },
+  "project_brain_inventory": {
+    "source_files": [
+      "src/project-brain/types.ts (+230 lines)",
+      "src/project-brain/intent-builder.ts (+240 lines)",
+      "src/project-brain/store.ts (+240 lines)",
+      "src/project-brain/reporter.ts (+230 lines)",
+      "src/project-brain/index.ts (re-exports all 4 modules)"
+    ],
+    "test_files": [
+      "tests/project-brain/types.test.ts (16 tests)",
+      "tests/project-brain/intent-builder.test.ts (46 tests)",
+      "tests/project-brain/store.test.ts (29 tests)",
+      "tests/project-brain/reporter.test.ts (23 tests)"
+    ],
+    "script_files": [
+      "scripts/project-brain-self-snapshot.cjs"
+    ],
+    "store_files": [
+      "data/project-brain/.gitkeep",
+      "data/project-brain/project-brain.json"
+    ],
+    "snapshot_reports": [
+      "data/reports/project-brain/project-brain-20260803-001014.json",
+      "data/reports/project-brain/project-brain-20260803-001014.md",
+      "data/reports/project-brain/project-brain-20260803-001359.json",
+      "data/reports/project-brain/project-brain-20260803-001359.md"
+    ],
+    "closeout_reports": [
+      "data/reports/project-brain/p1-closeout-20260803-001405.json",
+      "data/reports/project-brain/p1-closeout-20260803-001405.md"
+    ],
+    "total_source_files": 5,
+    "total_test_files": 4,
+    "total_project_brain_files": 16,
+    "total_project_brain_tests": 114
+  },
+  "validation": {
+    "self_snapshot": {
+      "command": "node scripts/project-brain-self-snapshot.cjs",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "tsc": {
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "vitest": {
+      "command": "npx vitest run",
+      "exit_code": 0,
+      "test_files": 10,
+      "tests": 181,
+      "status": "PASS"
+    },
+    "defense_health": {
+      "command": "node scripts/defense-health-check.cjs",
+      "exit_code": 0,
+      "health_report_json": "data/reports/health/health-20260803-001405.json",
+      "health_report_md": "data/reports/health/health-20260803-001405.md",
+      "defense_matrix": {
+        "pm2_guard": "PASS",
+        "mcp_gate": "PASS",
+        "sentinel": "PASS",
+        "git_hook": "PASS",
+        "overall": "PASS"
+      }
+    }
+  },
+  "commit_strategy": [
+    {
+      "name": "ProjectBrain core types and builder",
+      "message": "feat(project-brain): add core types and intent builder",
+      "include": [
+        "src/project-brain/types.ts",
+        "src/project-brain/intent-builder.ts",
+        "src/project-brain/index.ts",
+        "tests/project-brain/types.test.ts",
+        "tests/project-brain/intent-builder.test.ts",
+        "data/project-brain/.gitkeep",
+        "data/reports/project-brain/.gitkeep"
+      ],
+      "exclude": [
+        "data/reports/ （不建议提交运行时报告产物）",
+        "data/heartbeat.json"
+      ]
+    },
+    {
+      "name": "ProjectBrain store and reporter",
+      "message": "feat(project-brain): add local store and snapshot reporter",
+      "include": [
+        "src/project-brain/store.ts",
+        "src/project-brain/reporter.ts",
+        "tests/project-brain/store.test.ts",
+        "tests/project-brain/reporter.test.ts"
+      ],
+      "exclude": [
+        "data/reports/"
+      ]
+    },
+    {
+      "name": "ProjectBrain self snapshot evidence",
+      "message": "chore(project-brain): add v0.1 self snapshot evidence",
+      "include": [
+        "scripts/project-brain-self-snapshot.cjs",
+        "data/project-brain/project-brain.json",
+        "data/reports/project-brain/project-brain-20260803-001359.json",
+        "data/reports/project-brain/project-brain-20260803-001359.md"
+      ],
+      "exclude": [
+        "data/reports/project-brain/project-brain-20260803-001014.json （中间版本，建议不提交）"
+      ]
+    },
+    {
+      "name": "P1 closeout report",
+      "message": "docs(project-brain): add P1 closeout report",
+      "include": [
+        "data/reports/project-brain/p1-closeout-20260803-001405.json",
+        "data/reports/project-brain/p1-closeout-20260803-001405.md"
+      ],
+      "exclude": []
+    }
+  ],
+  "not_recommended_for_commit": [
+    { "path": "data/heartbeat.json", "reason": "PM2 daemon runtime heartbeat" },
+    { "path": "data/sentinel/**", "reason": "Sentinel runtime events" },
+    { "path": "data/logs/**", "reason": "Runtime logs" },
+    { "path": "data/tokens/**", "reason": "Approval tokens, sensitive" },
+    { "path": "data/reports/health/*.json", "reason": "大量中间健康检查报告（~10份），建议仅保留 latest closeout reference" }
+  ],
+  "summary": {
+    "go_no_go": "GO",
+    "overall_status": "PASS",
+    "go_conditions": [
+      "✅ current_branch = feature/harness-v4-project-brain",
+      "✅ self snapshot script = PASS",
+      "✅ tsc --noEmit = PASS",
+      "✅ vitest run = PASS (181 tests, 10 files)",
+      "✅ defense health = PASS (all 4 lines)",
+      "✅ PM2 Guard = PASS",
+      "✅ MCP Gate = PASS",
+      "✅ Sentinel = PASS",
+      "✅ Git Hook = PASS",
+      "✅ forbidden_core_changes = [] (zero)",
+      "✅ unexpected_changes = [] (zero)",
+      "✅ 5 ProjectBrain source files present",
+      "✅ 4 ProjectBrain test files present (114 total ProjectBrain tests)",
+      "✅ project-brain.json store present",
+      "✅ ProjectBrain snapshot JSON/MD present"
+    ],
+    "warnings": [
+      "工作区 dirty — P0+P1 产物尚未提交。这不影响 GO 决策，但建议架构师在 P2 开始前执行人工 commit（4 个分组）。",
+      "data/heartbeat.json 被 PM2 daemon 持续修改（运行时状态，正常）。"
+    ],
+    "critical_findings": [],
+    "recommendations": [
+      "架构师审查本报告后，按 commit_strategy 执行 4 次人工 git add + git commit",
+      "P2 DiffScopeGuard 可以开始：从 src/diff-scope/ 目录骨架开始",
+      "P2 开发前务必重读 docs/v4/upgrade-isolation-rules.md",
+      "P2 每次任务完成后必须运行 tsc + vitest + defense-health-check",
+      "建议 P0 和 P1 中间报告（~10 份 health + baseline）不提交到 repo"
+    ]
+  }
+}

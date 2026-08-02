@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "report_type": "evidence_cleanup_disposition_plan",
+  "generated_at": "2026-08-02T18:40:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "513acc41e16f452273b0a03f74cea88107957a32",
+    "recent_commits": [
+      "513acc4 chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout",
+      "7c86e56 feat(project-brain): add ArchitectureBaseline model, builder, and reporter",
+      "fec6420 chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence",
+      "a0c58de feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+      "9312061 chore(project-brain): add v0.1 self snapshot and P1 evidence",
+      "08ec6b5 feat(project-brain): add v0.1 core and tests",
+      "0b049db chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "diff_name_only": ["data/heartbeat.json"]
+  },
+  "classification": {
+    "recommended_evidence_commit": {
+      "description": "Pre/post-commit audit evidence — preserves governance trail for P0-P3",
+      "files": [
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.json",
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.md",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.json",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.md",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.json",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.md",
+        "data/reports/project-brain/evidence-cleanup-disposition-plan-20260803-024000.json",
+        "data/reports/project-brain/evidence-cleanup-disposition-plan-20260803-024000.md"
+      ],
+      "file_count": 8,
+      "already_committed": [
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json (in commit 513acc4)",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.md (in commit 513acc4)"
+      ],
+      "total_audit_evidence": 10,
+      "recommended_commit_message": "chore(project-brain): add P4 prep and manual commit audit evidence"
+    },
+    "quarantine_evidence_hold": {
+      "description": "P3-T6R unexpected files quarantine and resolution — separate review required before commit",
+      "files": [
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/e2e-result.txt",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.json",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.md"
+      ],
+      "file_count": 4,
+      "recommendation": "DO NOT COMMIT NOW. Hold for separate quarantine evidence review.",
+      "rationale": "These document the P3-T6R NO_GO→CONDITIONAL_GO resolution. They are not functional code. If audit trail matters, commit after explicit approval. If not needed, discard locally.",
+      "alternative_commit_message": "chore(project-brain): add P3-T6R quarantine and resolution evidence"
+    },
+    "health_reports_hold": {
+      "description": "Auto-generated defense health check reports from defense-health-check.cjs",
+      "directory": "data/reports/health/",
+      "file_count": 58,
+      "pair_count": 29,
+      "recommendation": "DO NOT COMMIT NOW. No representative pair selected.",
+      "rationale": "Health reports demonstrate defense integrity during development but accumulate noise. If a representative snapshot is desired, select the latest pair only (health-20260803-022857.json/.md).",
+      "selected_representative_if_any": "data/reports/health/health-20260803-022857 (post-commit verification, all 4 lines PASS)"
+    },
+    "never_commit_runtime": {
+      "description": "Runtime artifacts — NEVER commit under any circumstances",
+      "files": [
+        "data/heartbeat.json (modified tracked — PM2 heartbeat, ~30s interval)",
+        "data/logs/ (4 files: mcp-error.log, mcp-out.log, sentinel-error.log, sentinel-out.log)",
+        "data/sentinel/2026-08-02/ (146 JSON files: allowed/error/reverted events)",
+        "*.tmp (atomic write residues)"
+      ],
+      "file_count": 151,
+      "recommendation": "NEVER COMMIT. Add to .gitignore. Optionally clean locally after evidence decisions."
+    },
+    "forbidden_core_residuals": {
+      "files": [],
+      "file_count": 0,
+      "status": "CLEAN ✅ — all 13 protected areas verified absent"
+    },
+    "unexpected_residuals": {
+      "files": [],
+      "file_count": 0,
+      "status": "CLEAN ✅ — all 219 residual files classified"
+    }
+  },
+  "recommended_commits": [
+    {
+      "order": 1,
+      "type": "evidence",
+      "message": "chore(project-brain): add P4 prep and manual commit audit evidence",
+      "include": [
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.json",
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.md",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.json",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.md",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.json",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.md",
+        "data/reports/project-brain/evidence-cleanup-disposition-plan-20260803-024000.json",
+        "data/reports/project-brain/evidence-cleanup-disposition-plan-20260803-024000.md"
+      ],
+      "file_count": 8,
+      "notes": [
+        "This is OPTIONAL but RECOMMENDED. These 8 files form the complete pre/post-commit governance audit trail.",
+        "P4-Prep report (2 files) already committed in commit 7 (513acc4).",
+        "Together with P4-Prep: 10 audit evidence files across 2 commits.",
+        "If skipping this commit, the 8 files remain as untracked local artifacts."
+      ]
+    },
+    {
+      "order": 2,
+      "type": "gitignore_cleanup",
+      "message": "chore(harness-v4): ignore runtime-generated state and health reports",
+      "include": [".gitignore"],
+      "notes": [
+        "This task does NOT modify .gitignore. Listed as a planning recommendation only.",
+        "Exact additions listed in section 9 of the markdown report."
+      ]
+    }
+  ],
+  "suggested_gitignore_additions": [
+    "# Harness v4 runtime state",
+    "data/heartbeat.json",
+    "data/logs/",
+    "data/sentinel/",
+    "",
+    "# Auto-generated health reports (keep representative snapshots only)",
+    "data/reports/health/",
+    "",
+    "# Atomic write residues",
+    "*.tmp"
+  ],
+  "push_sequence": {
+    "option_a": {
+      "name": "Push now",
+      "steps": [
+        "1. Confirm git log shows 7 commits on feature/harness-v4-project-brain",
+        "2. Confirm tsc, vitest, defense health all PASS",
+        "3. Confirm residuals classified (0 forbidden, 0 unexpected)",
+        "4. git push origin feature/harness-v4-project-brain"
+      ],
+      "pros": ["Fastest path to PR", "All core verification already done"],
+      "cons": ["8 audit evidence files remain uncommitted", "No .gitignore update for runtime noise", "PR may contain git status noise comments"]
+    },
+    "option_b": {
+      "name": "Evidence + .gitignore before push (RECOMMENDED)",
+      "steps": [
+        "1. Execute Evidence Commit (8 audit files) → commit 8",
+        "2. Execute .gitignore Commit → commit 9",
+        "3. Optionally: Execute Quarantine Evidence Commit (4 files) → commit 10",
+        "4. Optionally: Execute Health Representative Commit (2 files) → commit 11",
+        "5. Optional: git clean runtime residuals (sentinel, logs, old health)",
+        "6. Final verification: git status (should be clean or near-clean)",
+        "7. Final: npx tsc --noEmit && npx vitest run && node scripts/defense-health-check.cjs",
+        "8. git push origin feature/harness-v4-project-brain"
+      ],
+      "pros": ["Clean PR with no noise", "Complete audit trail in version control", ".gitignore prevents future noise", "Professional commit history"],
+      "cons": ["Additional 2-4 commits before push", "Requires manual execution"]
+    },
+    "recommended": "Option B — Evidence + .gitignore before push"
+  },
+  "summary": {
+    "decision": "DISPOSITION_PLAN_READY",
+    "overall_status": "PASS",
+    "warnings": [
+      {
+        "severity": "low",
+        "message": "8 audit evidence files recommended for separate commit but not yet committed."
+      },
+      {
+        "severity": "low",
+        "message": ".gitignore should be updated to exclude runtime paths (heartbeat, logs, sentinel, health)."
+      },
+      {
+        "severity": "info",
+        "message": "Quarantine evidence (4 files) held pending separate review decision."
+      },
+      {
+        "severity": "info",
+        "message": "58 health reports held — no representative pair selected yet."
+      }
+    ],
+    "critical_findings": [],
+    "recommended_next_action": "Execute Option B: evidence commit → .gitignore commit → push. See markdown report for exact file lists and commands."
+  }
+}

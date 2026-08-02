@@ -1,0 +1,23 @@
+#!/bin/sh
+# Harness Git pre-commit hook (template)
+# ========================================
+# This hook delegates to Harness gate for high-risk file checking.
+#
+# Installation:
+#   Copy this file to your project's .git/hooks/pre-commit
+#   Example: cp hooks/pre-commit.template D:/tools/wenstar-cc/.git/hooks/pre-commit
+#
+# Note: The HARNESS_ROOT path contains Chinese characters.
+# Git Bash on Windows should handle this correctly.
+# If you encounter path issues, try using the short path or a junction.
+
+HARNESS_ROOT="D:/AI文件/harness"
+node "$HARNESS_ROOT/scripts/harness-gate.cjs"
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+  echo "[Harness] pre-commit blocked by harness-gate.cjs"
+  exit $RESULT
+fi
+
+exit 0

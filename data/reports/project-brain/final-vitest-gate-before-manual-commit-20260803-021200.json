@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "report_type": "final_vitest_gate_before_manual_commit",
+  "generated_at": "2026-08-02T18:12:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20"
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "status_porcelain_summary": {
+      "tracked_modified": 1,
+      "untracked_entries": 26
+    }
+  },
+  "vitest": {
+    "command": "npx vitest run",
+    "exit_code": 0,
+    "status": "PASS",
+    "test_files_passed": 19,
+    "test_files_total": 19,
+    "tests_passed": 418,
+    "tests_total": 418,
+    "duration_seconds": 2.15,
+    "failure_summary": "",
+    "note": "Previous P4-Prep run had 1 transient EPERM flake (Windows atomic rename race). This run: clean 418/418, zero failures."
+  },
+  "summary": {
+    "decision": "ALLOW_MANUAL_COMMIT",
+    "reason": "npx vitest run: exit 0, 19/19 test files passed, 418/418 tests passed. All gating conditions met.",
+    "warnings": [],
+    "critical_findings": []
+  }
+}

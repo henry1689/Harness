@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "report_type": "post_commit_residual_file_review",
+  "generated_at": "2026-08-02T18:35:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "513acc41e16f452273b0a03f74cea88107957a32",
+    "recent_commits": [
+      "513acc4 chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout",
+      "7c86e56 feat(project-brain): add ArchitectureBaseline model, builder, and reporter",
+      "fec6420 chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence",
+      "a0c58de feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+      "9312061 chore(project-brain): add v0.1 self snapshot and P1 evidence",
+      "08ec6b5 feat(project-brain): add v0.1 core and tests",
+      "0b049db chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "status_porcelain_top_level": [
+      " M data/heartbeat.json",
+      "?? data/logs/",
+      "?? data/reports/health/",
+      "?? data/reports/project-brain/final-vitest-gate-before-manual-commit-*",
+      "?? data/reports/project-brain/manual-commit-execution-plan-*",
+      "?? data/reports/project-brain/p3-t6r-unexpected-files-resolution-*",
+      "?? data/reports/project-brain/quarantine/",
+      "?? data/sentinel/2026-08-02/*"
+    ],
+    "diff_name_only": ["data/heartbeat.json"],
+    "note": "data/heartbeat.json is the ONLY modified tracked file. All others are untracked (new)."
+  },
+  "residual_classification": {
+    "never_commit_runtime": {
+      "description": "Runtime artifacts managed by PM2/Sentinel — NEVER commit",
+      "files": [
+        "data/heartbeat.json (modified, 1 line, PM2 runtime)"
+      ],
+      "directories": [
+        "data/logs/ (4 files: mcp-error.log, mcp-out.log, sentinel-error.log, sentinel-out.log)",
+        "data/sentinel/2026-08-02/ (146 JSON files: allowed, error, reverted events)"
+      ],
+      "total_files": 151,
+      "disposition": "NEVER_COMMIT",
+      "gitignore_candidate": true,
+      "candidate_paths_for_gitignore": ["data/heartbeat.json", "data/logs/", "data/sentinel/"]
+    },
+    "health_reports": {
+      "description": "Auto-generated defense health check reports from defense-health-check.cjs",
+      "files_summary": "data/reports/health/ (58 files, 29 pairs of .json + .md)",
+      "total_files": 58,
+      "disposition": "DO_NOT_INCLUDE_IN_FEATURE_COMMITS",
+      "suggested_policy": "Keep locally. Optionally commit 1 representative pair as final health evidence in a separate audit commit. Consider retention policy (keep last N, auto-delete older).",
+      "gitignore_candidate": false,
+      "note": "Health reports are useful audit evidence but generate noise in feature commits. They accumulate over time — 29 pairs exist from P0-P3. Recommend adding to .gitignore after committing a representative final snapshot."
+    },
+    "quarantine_resolution_evidence": {
+      "description": "P3-T6R unexpected files quarantine and resolution audit evidence",
+      "files": [
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/e2e-result.txt",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.json",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.md"
+      ],
+      "total_files": 4,
+      "disposition": "SEPARATE_REVIEW_REQUIRED",
+      "suggested_action": "Commit as a single separate evidence commit if audit trail is desired. Do NOT mix with P0-P3 feature commits. Optionally exclude entirely if the audit trail is not needed in version control."
+    },
+    "pre_commit_execution_audit_evidence": {
+      "description": "Pre-commit gate and execution plan reports — audit evidence generated after P4-Prep",
+      "files": [
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.json",
+        "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.md",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.json",
+        "data/reports/project-brain/manual-commit-execution-plan-20260803-021900.md",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.json",
+        "data/reports/project-brain/post-commit-residual-file-review-20260803-023500.md"
+      ],
+      "total_files": 6,
+      "disposition": "OPTIONAL_SEPARATE_EVIDENCE_COMMIT",
+      "suggested_action": "These are pre/post-commit audit trail documents. Recommended to commit as a separate evidence commit to preserve audit trail. Do NOT mix with P0-P3 feature commits. Alternative: keep locally, do not commit."
+    },
+    "forbidden_core_residuals": {
+      "description": "Core pipeline, defense, config files that must NEVER appear in residuals",
+      "files": [],
+      "total_files": 0,
+      "verified_absent": [
+        "src/FlowEngine.ts",
+        "src/StageRunner.ts",
+        "src/GateController.ts",
+        "src/ComplianceScorer.ts",
+        "src/EvolutionEngine.ts",
+        "mcp/ (MCP server files — tracked, unmodified)",
+        "sentinel/ (Sentinel source — tracked, unmodified)",
+        "data/flows/",
+        "data/tokens/",
+        "data/audit/",
+        "ecosystem.config.cjs",
+        "package.json",
+        "tsconfig.json",
+        ".gitignore"
+      ],
+      "status": "CLEAN — no forbidden/core files in residuals ✅"
+    },
+    "already_committed_not_in_residuals": {
+      "description": "Files committed in the 7-commit plan — verified absent from residual list",
+      "committed": [
+        "P4-Prep reports (p4-prep-commit-plan-dry-run-*) — committed in commit 7 ✅"
+      ],
+      "preexisting_tracked": [
+        "data/docs/HARNESS-SPEC.md",
+        "data/docs/HARNESS-USAGE.md",
+        "data/docs/HARNESS-WHITEPAPER.md",
+        "scripts/clean-tmp.cjs",
+        "scripts/health-check.cjs"
+      ],
+      "status": "All expected committed files absent from residuals ✅"
+    },
+    "unexpected_residuals": {
+      "description": "Files not matching any known classification",
+      "files": [],
+      "total_files": 0,
+      "status": "CLEAN — no unexpected residuals ✅"
+    }
+  },
+  "disposition_recommendations": {
+    "never_commit_runtime": {
+      "action": "DO NOT COMMIT",
+      "gitignore": "Add data/heartbeat.json, data/logs/, data/sentinel/ to .gitignore",
+      "rationale": "These are runtime artifacts. PM2 writes heartbeat.json every ~30s. Sentinel writes events on every filesystem change. Logs grow unbounded. They have no audit value in version control."
+    },
+    "health_reports": {
+      "action": "SELECTIVE_RETENTION",
+      "suggested": "Commit 1 representative health report pair as final evidence, then add data/reports/health/ to .gitignore",
+      "rationale": "Health reports demonstrate defense integrity during P0-P3 development. Once a representative final report is committed, ongoing health checks produce noise."
+    },
+    "quarantine_resolution_evidence": {
+      "action": "SEPARATE_REVIEW",
+      "suggested": "Commit as single separate evidence commit OR exclude entirely",
+      "rationale": "The quarantine documents the P3-T6R NO_GO→CONDITIONAL_GO resolution. It is not functional code but documents an important audit event. If the audit trail matters, commit it separately."
+    },
+    "pre_commit_execution_audit_evidence": {
+      "action": "RECOMMENDED_SEPARATE_COMMIT",
+      "suggested": "Commit these 6 files as a single audit evidence commit",
+      "rationale": "Final Vitest Gate (418/418 PASS), Manual Commit Execution Plan, and Post-Commit Residual Review form the pre/post-commit audit trail. They are the formal record that commits were verified before push. Recommended for governance compliance."
+    },
+    "gitignore_review_needed": true,
+    "gitignore_suggested_additions": [
+      "data/heartbeat.json",
+      "data/logs/",
+      "data/sentinel/",
+      "data/reports/health/"
+    ],
+    "cleanup_review_needed": true,
+    "cleanup_suggestions": [
+      "Consider archiving or deleting older health reports (keep last 3-5 pairs)",
+      "Sentinel has 146 files in a single day — consider log rotation policy",
+      "quarantine files can be deleted after resolution review is complete"
+    ]
+  },
+  "summary": {
+    "decision": "RESIDUALS_CLASSIFIED",
+    "overall_status": "PASS",
+    "warnings": [
+      {
+        "severity": "low",
+        "message": "data/heartbeat.json, data/logs/, data/sentinel/ appear in every git status. Recommend adding to .gitignore to reduce noise."
+      },
+      {
+        "severity": "low",
+        "message": "58 health reports accumulated — consider retention policy."
+      },
+      {
+        "severity": "info",
+        "message": "6 pre/post-commit audit evidence files ready for optional separate evidence commit."
+      }
+    ],
+    "critical_findings": [],
+    "recommended_next_action": "1) Add runtime paths to .gitignore. 2) Commit 1 representative health report pair. 3) Commit audit evidence files as separate evidence commit. 4) Optionally commit or discard quarantine evidence. 5) Approved for push/PR after any of the above."
+  }
+}

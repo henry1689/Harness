@@ -8,3 +8,14 @@ data/alerts/
 data/harness/tokens/
 data/harness/breaker/
 data/harness/audit/
+
+# Harness v4 runtime state
+data/heartbeat.json
+data/logs/
+data/sentinel/
+
+# Generated health check reports
+data/reports/health/
+
+# Atomic write residues
+*.tmp

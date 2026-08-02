@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_p2_diff_scope_guard_closeout",
+  "generated_at": "2026-08-02T16:46:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测",
+      "abd0127 chore: 从版本控制移除运行时数据(tokens/alerts/audit)",
+      "1ee9292 v2.1 Token降耗改造 + 路径漏洞修复 + MCP令牌路径同步",
+      "e6ccd38 v1.2.0 — SelfGuard 独立自护子系统完整发布",
+      "24672bf Harness v2.0 — 轻量化通用流水线调度引擎"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 28,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs",
+      "?? scripts/project-brain-self-snapshot.cjs",
+      "?? scripts/project-brain-diff-scope-audit.cjs",
+      "?? hooks/",
+      "?? docs/v4/",
+      "?? src/project-brain/",
+      "?? tests/",
+      "?? data/project-brain/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "?? data/logs/",
+      "?? data/docs/",
+      "?? data/e2e-result.txt"
+    ],
+    "diff_name_only": ["data/heartbeat.json"],
+    "diff_stat": "data/heartbeat.json | 2 +-, 1 file changed",
+    "notes": [
+      "Only tracked change: data/heartbeat.json (PM2 daemon runtime)",
+      "All other entries are untracked P0+P1+P2 artifacts",
+      "ZERO existing tracked files modified"
+    ]
+  },
+  "change_classification": {
+    "p0_artifacts": [
+      "scripts/baseline-report.cjs",
+      "scripts/defense-health-check.cjs",
+      "scripts/harness-gate.cjs",
+      "hooks/pre-commit",
+      "hooks/pre-commit.template",
+      "docs/v4/upgrade-isolation-rules.md",
+      "data/reports/baseline/",
+      "data/reports/health/",
+      "data/reports/recovery/",
+      "data/reports/branch/",
+      "data/reports/p0-closeout/"
+    ],
+    "p1_project_brain_core": [
+      "src/project-brain/types.ts",
+      "src/project-brain/intent-builder.ts",
+      "src/project-brain/store.ts",
+      "src/project-brain/reporter.ts",
+      "src/project-brain/index.ts",
+      "tests/project-brain/types.test.ts",
+      "tests/project-brain/intent-builder.test.ts",
+      "tests/project-brain/store.test.ts",
+      "tests/project-brain/reporter.test.ts",
+      "scripts/project-brain-self-snapshot.cjs",
+      "data/project-brain/",
+      "data/reports/project-brain/project-brain-*.json",
+      "data/reports/project-brain/project-brain-*.md",
+      "data/reports/project-brain/p1-closeout-*.json",
+      "data/reports/project-brain/p1-closeout-*.md"
+    ],
+    "p2_diff_scope_source": [
+      "src/project-brain/diff-scope-guard.ts",
+      "src/project-brain/diff-scope-reporter.ts",
+      "src/project-brain/diff-scope-scenario-runner.ts",
+      "src/project-brain/git-diff-adapter.ts"
+    ],
+    "p2_diff_scope_tests": [
+      "tests/project-brain/diff-scope-guard.test.ts",
+      "tests/project-brain/diff-scope-reporter.test.ts",
+      "tests/project-brain/diff-scope-scenario-runner.test.ts",
+      "tests/project-brain/git-diff-adapter.test.ts",
+      "tests/project-brain/diff-scope-audit-script.test.ts"
+    ],
+    "p2_diff_scope_scripts_reports": [
+      "scripts/project-brain-diff-scope-audit.cjs",
+      "data/reports/project-brain/diff-scope-*.json",
+      "data/reports/project-brain/diff-scope-*.md",
+      "data/reports/project-brain/p2-closeout-*.json",
+      "data/reports/project-brain/p2-closeout-*.md"
+    ],
+    "runtime_state": [
+      "data/heartbeat.json",
+      "data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "data/logs/"
+    ],
+    "forbidden_core_changes": [],
+    "unexpected_changes": [],
+    "core_integrity_note": "src/FlowEngine.ts, src/StageRunner.ts, src/GateController.ts, mcp/, sentinel/, hooks/, data/flows/, data/tokens/, data/audit/, ecosystem.config.cjs, package.json, tsconfig.json — ALL UNTOUCHED across P0+P1+P2."
+  },
+  "p2_inventory": {
+    "source_files": [
+      "src/project-brain/diff-scope-guard.ts — evaluateDiffScope, pathMatchesRule, strict/advisory, forbidden-priority",
+      "src/project-brain/diff-scope-reporter.ts — buildDiffScopeEvidence, renderDiffScopeMarkdown (9 sections), writeDiffScopeReport (atomic)",
+      "src/project-brain/diff-scope-scenario-runner.ts — DiffScopeScenario, runDiffScopeScenario, runDiffScopeScenarios (serial batch)",
+      "src/project-brain/git-diff-adapter.ts — getChangedPathsFromGitDiff (diff/staged/refs/untracked), execFile runner"
+    ],
+    "test_files": [
+      "tests/project-brain/diff-scope-guard.test.ts (33 tests)",
+      "tests/project-brain/diff-scope-reporter.test.ts (24 tests)",
+      "tests/project-brain/diff-scope-scenario-runner.test.ts (23 tests)",
+      "tests/project-brain/git-diff-adapter.test.ts (20 tests)",
+      "tests/project-brain/diff-scope-audit-script.test.ts (29 tests)"
+    ],
+    "script_files": [
+      "scripts/project-brain-diff-scope-audit.cjs — manual CLI (--help, --intent-id, --staged, etc.)"
+    ],
+    "report_files": [
+      "data/reports/project-brain/p2-closeout-20260803-004600.json",
+      "data/reports/project-brain/p2-closeout-20260803-004600.md"
+    ],
+    "total_p2_source_files": 4,
+    "total_p2_test_files": 5,
+    "total_p2_tests": 129,
+    "total_all_tests": 310
+  },
+  "diff_scope_capabilities": {
+    "guard": [
+      "evaluateDiffScope — strict/advisory dual mode, forbidden-priority, overlap detection",
+      "pathMatchesRule — exact / directory / no-trailing-slash / /** / non-similar-prefix protection",
+      "normalizeFilePath / normalizePathList — backslash→slash, trim, dedup, first-occurrence order"
+    ],
+    "reporter": [
+      "buildDiffScopeEvidence — DiffScopeGuardResult → EvidenceRecord (code_review type)",
+      "renderDiffScopeMarkdown — 9 sections: Summary/Intent/Changed/Allowed/Forbidden/Violations/Warnings/Matched/Evidence",
+      "writeDiffScopeReport — atomic JSON+MD write, generates diff-scope-YYYYMMDD-HHmmss.{json,md}"
+    ],
+    "scenario_runner": [
+      "DiffScopeScenario — id/title/intent/changed_paths/mode/expected_allowed/notes",
+      "runDiffScopeScenario — evaluate→evidence→report, expected_allowed assertion",
+      "runDiffScopeScenarios — serial batch, total/passed/failed, order-preserving",
+      "sanitizeDiffScopeScenarioId — alphanumeric+_- only, empty→scenario"
+    ],
+    "git_diff_adapter": [
+      "getChangedPathsFromGitDiff — default/staged/refs/untracked modes",
+      "defaultGitCommandRunner — child_process.execFile (no shell)",
+      "parseGitNameOnlyOutput / normalizeGitDiffPath",
+      "ref validation — whitespace/;/&/| prohibited",
+      "injectable runner for zero-real-git tests"
+    ],
+    "manual_audit_cli": [
+      "scripts/project-brain-diff-scope-audit.cjs — full CLI with --help and 9 parameters",
+      "parseArgs / printHelp / loadProjectBrain / findIntent / runAuditCli",
+      "End-to-end: intent lookup → git diff → scenario runner → JSON/MD report",
+      "NOT a Git Hook / NOT a Sentinel / NOT a blocker"
+    ]
+  },
+  "validation": {
+    "audit_help": {
+      "command": "node scripts/project-brain-diff-scope-audit.cjs --help",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "tsc": {
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "vitest": {
+      "command": "npx vitest run",
+      "exit_code": 0,
+      "test_files": 15,
+      "tests": 310,
+      "status": "PASS"
+    },
+    "defense_health": {
+      "command": "node scripts/defense-health-check.cjs",
+      "exit_code": 0,
+      "health_report_json": "data/reports/health/health-20260803-004512.json",
+      "defense_matrix": {
+        "pm2_guard": "PASS",
+        "mcp_gate": "PASS",
+        "sentinel": "PASS",
+        "git_hook": "PASS",
+        "overall": "PASS"
+      }
+    }
+  },
+  "commit_strategy": [
+    {
+      "name": "P0 isolation instrumentation and baseline reports",
+      "message": "chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+      "include_files": 12
+    },
+    {
+      "name": "ProjectBrain v0.1 core",
+      "message": "feat(project-brain): add v0.1 core and tests",
+      "include_files": 11
+    },
+    {
+      "name": "ProjectBrain self snapshot and P1 evidence",
+      "message": "chore(project-brain): add v0.1 self snapshot and P1 closeout evidence",
+      "include_files": 6
+    },
+    {
+      "name": "DiffScopeGuard core",
+      "message": "feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+      "include_files": 9
+    },
+    {
+      "name": "DiffScopeGuard manual audit CLI",
+      "message": "chore(project-brain): add DiffScopeGuard manual git audit CLI",
+      "include_files": 2
+    },
+    {
+      "name": "P2 closeout report",
+      "message": "docs(project-brain): add P2 closeout report",
+      "include_files": 2
+    }
+  ],
+  "not_recommended_for_commit": [
+    {"path": "data/heartbeat.json", "reason": "PM2 daemon runtime"},
+    {"path": "data/sentinel/**", "reason": "Runtime sentinel events"},
+    {"path": "data/logs/**", "reason": "Runtime logs"},
+    {"path": "data/tokens/**", "reason": "Approval tokens, sensitive"},
+    {"path": "data/reports/health/*.json", "reason": "~12 intermediate health reports, only latest reference needed"}
+  ],
+  "summary": {
+    "go_no_go": "GO",
+    "overall_status": "PASS",
+    "go_conditions": [
+      "✅ current_branch = feature/harness-v4-project-brain",
+      "✅ audit CLI help = PASS",
+      "✅ tsc = PASS",
+      "✅ vitest = PASS (310 tests, 15 files)",
+      "✅ defense health = PASS (all 4 lines)",
+      "✅ PM2 Guard = PASS",
+      "✅ MCP Gate = PASS",
+      "✅ Sentinel = PASS",
+      "✅ Git Hook = PASS",
+      "✅ forbidden_core_changes = [] (zero across P0+P1+P2)",
+      "✅ unexpected_changes = [] (zero)",
+      "✅ P2 source files: 4",
+      "✅ P2 test files: 5 (129 P2 tests)",
+      "✅ Audit CLI exists and --help works"
+    ],
+    "warnings": [
+      "工作区 dirty — P0+P1+P2 产物尚未提交。建议架构师在 P3 前执行 6 个 commit 分组",
+      "data/heartbeat.json PM2 daemon 持续修改（正常运行时状态）"
+    ],
+    "critical_findings": [],
+    "recommendations": [
+      "按 commit_strategy 执行 6 次人工 git add + git commit",
+      "P3 ArchitectureBaseline 可以开始：从 src/architecture/ 骨架开始",
+      "P3 开发前重读 docs/v4/upgrade-isolation-rules.md",
+      "累计 310 tests (67 core + 114 P1 + 129 P2)，零核心逻辑变更",
+      "ProjectBrain v0.1 + DiffScopeGuard 完整能力已就绪"
+    ]
+  }
+}

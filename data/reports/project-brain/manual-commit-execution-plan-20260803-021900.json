@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "report_type": "manual_commit_execution_plan",
+  "generated_at": "2026-08-02T18:19:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20"
+  },
+  "source_reports": {
+    "p4_prep": "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json",
+    "final_vitest_gate": "data/reports/project-brain/final-vitest-gate-before-manual-commit-20260803-021200.json"
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "diff_name_only": ["data/heartbeat.json"],
+    "note": "data/heartbeat.json is the ONLY modified tracked file — PM2 runtime. Do NOT stage or commit."
+  },
+  "manual_execution_rules": {
+    "forbidden_commands": ["git add .", "git add -A", "git add --all", "git add *"],
+    "required_check_before_each_commit": "git diff --cached --name-only",
+    "abort_rule": "If staged files include any excluded file, run: git reset HEAD <file> immediately.",
+    "commit_order": "1 → 2 → 3 → 4 → 5 → 6 → 7 (sequential, chronological)",
+    "no_amend": "Each commit is atomic. Do not use --amend across commits."
+  },
+  "commit_steps": [
+    {
+      "commit_no": 1,
+      "title": "P0 isolation instrumentation and baseline reports",
+      "message": "chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+      "git_add_command": "git add \\\n  scripts/baseline-report.cjs \\\n  scripts/defense-health-check.cjs \\\n  scripts/harness-gate.cjs \\\n  hooks/pre-commit \\\n  hooks/pre-commit.template \\\n  docs/v4/upgrade-isolation-rules.md \\\n  data/reports/baseline/baseline-20260802-225453.json \\\n  data/reports/baseline/baseline-20260802-225453.md \\\n  data/reports/baseline/baseline-20260802-225626.json \\\n  data/reports/baseline/baseline-20260802-225953.json \\\n  data/reports/baseline/baseline-20260802-225953.md \\\n  data/reports/baseline/baseline-20260802-231849.json \\\n  data/reports/baseline/baseline-20260802-231849.md \\\n  data/reports/branch/branch-20260802-233319.json \\\n  data/reports/branch/branch-20260802-233319.md \\\n  data/reports/p0-closeout/p0-closeout-20260802-234337.json \\\n  data/reports/p0-closeout/p0-closeout-20260802-234337.md \\\n  data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak \\\n  data/reports/recovery/recovery-20260802-232114.json \\\n  data/reports/recovery/recovery-20260802-232114.md",
+      "expected_staged_files": [
+        "scripts/baseline-report.cjs",
+        "scripts/defense-health-check.cjs",
+        "scripts/harness-gate.cjs",
+        "hooks/pre-commit",
+        "hooks/pre-commit.template",
+        "docs/v4/upgrade-isolation-rules.md",
+        "data/reports/baseline/baseline-20260802-225453.json",
+        "data/reports/baseline/baseline-20260802-225453.md",
+        "data/reports/baseline/baseline-20260802-225626.json",
+        "data/reports/baseline/baseline-20260802-225953.json",
+        "data/reports/baseline/baseline-20260802-225953.md",
+        "data/reports/baseline/baseline-20260802-231849.json",
+        "data/reports/baseline/baseline-20260802-231849.md",
+        "data/reports/branch/branch-20260802-233319.json",
+        "data/reports/branch/branch-20260802-233319.md",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.json",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.md",
+        "data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak",
+        "data/reports/recovery/recovery-20260802-232114.json",
+        "data/reports/recovery/recovery-20260802-232114.md"
+      ],
+      "expected_count": 20,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"chore(harness-v4): add P0 isolation instrumentation and baseline reports\"",
+      "watch_items": [
+        "data/reports/baseline/baseline-20260802-225626.md.tmp — do NOT stage"
+      ]
+    },
+    {
+      "commit_no": 2,
+      "title": "ProjectBrain v0.1 core",
+      "message": "feat(project-brain): add v0.1 core and tests",
+      "git_add_command": "git add \\\n  src/project-brain/types.ts \\\n  src/project-brain/intent-builder.ts \\\n  src/project-brain/store.ts \\\n  src/project-brain/reporter.ts \\\n  tests/project-brain/types.test.ts \\\n  tests/project-brain/intent-builder.test.ts \\\n  tests/project-brain/store.test.ts \\\n  tests/project-brain/reporter.test.ts \\\n  data/project-brain/.gitkeep \\\n  data/reports/project-brain/.gitkeep",
+      "expected_staged_files": [
+        "src/project-brain/types.ts",
+        "src/project-brain/intent-builder.ts",
+        "src/project-brain/store.ts",
+        "src/project-brain/reporter.ts",
+        "tests/project-brain/types.test.ts",
+        "tests/project-brain/intent-builder.test.ts",
+        "tests/project-brain/store.test.ts",
+        "tests/project-brain/reporter.test.ts",
+        "data/project-brain/.gitkeep",
+        "data/reports/project-brain/.gitkeep"
+      ],
+      "expected_count": 10,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"feat(project-brain): add v0.1 core and tests\"",
+      "watch_items": [
+        "src/project-brain/index.ts — DO NOT stage (deferred to commit 6)"
+      ]
+    },
+    {
+      "commit_no": 3,
+      "title": "ProjectBrain self snapshot and P1 evidence",
+      "message": "chore(project-brain): add v0.1 self snapshot and P1 evidence",
+      "git_add_command": "git add \\\n  scripts/project-brain-self-snapshot.cjs \\\n  data/project-brain/project-brain.json \\\n  data/reports/project-brain/project-brain-20260803-001014.json \\\n  data/reports/project-brain/project-brain-20260803-001014.md \\\n  data/reports/project-brain/project-brain-20260803-001359.json \\\n  data/reports/project-brain/project-brain-20260803-001359.md \\\n  data/reports/project-brain/p1-closeout-20260803-001405.json \\\n  data/reports/project-brain/p1-closeout-20260803-001405.md",
+      "expected_staged_files": [
+        "scripts/project-brain-self-snapshot.cjs",
+        "data/project-brain/project-brain.json",
+        "data/reports/project-brain/project-brain-20260803-001014.json",
+        "data/reports/project-brain/project-brain-20260803-001014.md",
+        "data/reports/project-brain/project-brain-20260803-001359.json",
+        "data/reports/project-brain/project-brain-20260803-001359.md",
+        "data/reports/project-brain/p1-closeout-20260803-001405.json",
+        "data/reports/project-brain/p1-closeout-20260803-001405.md"
+      ],
+      "expected_count": 8,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"chore(project-brain): add v0.1 self snapshot and P1 evidence\""
+    },
+    {
+      "commit_no": 4,
+      "title": "DiffScopeGuard core",
+      "message": "feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+      "git_add_command": "git add \\\n  src/project-brain/diff-scope-guard.ts \\\n  src/project-brain/diff-scope-reporter.ts \\\n  src/project-brain/diff-scope-scenario-runner.ts \\\n  src/project-brain/git-diff-adapter.ts \\\n  tests/project-brain/diff-scope-guard.test.ts \\\n  tests/project-brain/diff-scope-reporter.test.ts \\\n  tests/project-brain/diff-scope-scenario-runner.test.ts \\\n  tests/project-brain/git-diff-adapter.test.ts",
+      "expected_staged_files": [
+        "src/project-brain/diff-scope-guard.ts",
+        "src/project-brain/diff-scope-reporter.ts",
+        "src/project-brain/diff-scope-scenario-runner.ts",
+        "src/project-brain/git-diff-adapter.ts",
+        "tests/project-brain/diff-scope-guard.test.ts",
+        "tests/project-brain/diff-scope-reporter.test.ts",
+        "tests/project-brain/diff-scope-scenario-runner.test.ts",
+        "tests/project-brain/git-diff-adapter.test.ts"
+      ],
+      "expected_count": 8,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter\"",
+      "watch_items": [
+        "tests/project-brain/diff-scope-audit-script.test.ts — DO NOT stage (commit 5)"
+      ]
+    },
+    {
+      "commit_no": 5,
+      "title": "DiffScopeGuard manual audit CLI and P2 evidence",
+      "message": "chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence",
+      "git_add_command": "git add \\\n  scripts/project-brain-diff-scope-audit.cjs \\\n  tests/project-brain/diff-scope-audit-script.test.ts \\\n  data/reports/project-brain/p2-closeout-20260803-004600.json \\\n  data/reports/project-brain/p2-closeout-20260803-004600.md",
+      "expected_staged_files": [
+        "scripts/project-brain-diff-scope-audit.cjs",
+        "tests/project-brain/diff-scope-audit-script.test.ts",
+        "data/reports/project-brain/p2-closeout-20260803-004600.json",
+        "data/reports/project-brain/p2-closeout-20260803-004600.md"
+      ],
+      "expected_count": 4,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence\""
+    },
+    {
+      "commit_no": 6,
+      "title": "ArchitectureBaseline core",
+      "message": "feat(project-brain): add ArchitectureBaseline model, builder, and reporter",
+      "git_add_command": "git add \\\n  src/project-brain/architecture-baseline.ts \\\n  src/project-brain/architecture-baseline-builder.ts \\\n  src/project-brain/architecture-baseline-reporter.ts \\\n  src/project-brain/index.ts \\\n  tests/project-brain/architecture-baseline.test.ts \\\n  tests/project-brain/architecture-baseline-builder.test.ts \\\n  tests/project-brain/architecture-baseline-reporter.test.ts",
+      "expected_staged_files": [
+        "src/project-brain/architecture-baseline.ts",
+        "src/project-brain/architecture-baseline-builder.ts",
+        "src/project-brain/architecture-baseline-reporter.ts",
+        "src/project-brain/index.ts",
+        "tests/project-brain/architecture-baseline.test.ts",
+        "tests/project-brain/architecture-baseline-builder.test.ts",
+        "tests/project-brain/architecture-baseline-reporter.test.ts"
+      ],
+      "expected_count": 7,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"feat(project-brain): add ArchitectureBaseline model, builder, and reporter\"",
+      "watch_items": [
+        "src/project-brain/index.ts — this IS included, as the consolidated barrel export",
+        "tests/project-brain/architecture-baseline-snapshot-script.test.ts — DO NOT stage (commit 7)"
+      ]
+    },
+    {
+      "commit_no": 7,
+      "title": "ArchitectureBaseline snapshot CLI and P3 closeout",
+      "message": "chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout",
+      "git_add_command": "git add \\\n  scripts/project-brain-architecture-baseline-snapshot.cjs \\\n  tests/project-brain/architecture-baseline-snapshot-script.test.ts \\\n  data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.json \\\n  data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.md \\\n  data/reports/project-brain/p3-final-closeout-20260803-013200.json \\\n  data/reports/project-brain/p3-final-closeout-20260803-013200.md \\\n  data/reports/project-brain/p3-final-closeout-20260803-014913.json \\\n  data/reports/project-brain/p3-final-closeout-20260803-014913.md \\\n  data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json \\\n  data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.md",
+      "expected_staged_files": [
+        "scripts/project-brain-architecture-baseline-snapshot.cjs",
+        "tests/project-brain/architecture-baseline-snapshot-script.test.ts",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.json",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.md",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.md"
+      ],
+      "expected_count": 10,
+      "verification_command": "git diff --cached --name-only",
+      "commit_command": "git commit -m \"chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout\"",
+      "watch_items": [
+        "data/reports/project-brain/quarantine/** — DO NOT stage",
+        "data/reports/project-brain/p3-t6r-* — DO NOT stage"
+      ]
+    }
+  ],
+  "always_exclude": [
+    "data/heartbeat.json",
+    "data/sentinel/**",
+    "data/logs/**",
+    "data/reports/health/**",
+    "data/reports/project-brain/quarantine/**",
+    "data/reports/project-brain/p3-t6r-unexpected-files-resolution-*.json",
+    "data/reports/project-brain/p3-t6r-unexpected-files-resolution-*.md",
+    "data/reports/project-brain/final-vitest-gate-before-manual-commit-*.json",
+    "data/reports/project-brain/final-vitest-gate-before-manual-commit-*.md",
+    "data/reports/project-brain/manual-commit-execution-plan-*.json",
+    "data/reports/project-brain/manual-commit-execution-plan-*.md",
+    "data/reports/baseline/*.tmp",
+    "*.tmp"
+  ],
+  "post_commit_verification": {
+    "commands": [
+      "npx tsc --noEmit",
+      "npx vitest run",
+      "node scripts/defense-health-check.cjs",
+      "git status --porcelain",
+      "git log --oneline -n 10"
+    ],
+    "expected": {
+      "tsc": "exit 0, PASS",
+      "vitest": "exit 0, 418/418 tests PASS, 19/19 files PASS",
+      "defense_health": "exit 0, overall PASS, all 4 lines PASS",
+      "git_status": "Should only contain excluded runtime/evidence files, or be clean. Verify no unexpected untracked files.",
+      "git_log": "Should show 7 new commits on top of 28dd3ae, in chronological P0→P3 order",
+      "expected_log_top": [
+        "chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout",
+        "feat(project-brain): add ArchitectureBaseline model, builder, and reporter",
+        "chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence",
+        "feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+        "chore(project-brain): add v0.1 self snapshot and P1 evidence",
+        "feat(project-brain): add v0.1 core and tests",
+        "chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+        "28dd3ae docs: Harness v3.0 设计白皮书"
+      ]
+    }
+  },
+  "plan_summary": {
+    "total_planned_files": 67,
+    "total_commits": 7,
+    "commit_order": "1 → 2 → 3 → 4 → 5 → 6 → 7",
+    "p0_files": 20,
+    "p1_files": 18,
+    "p2_files": 12,
+    "p3_files": 15,
+    "p4_prep_files": 2,
+    "excluded_from_all_commits": "~849 files (runtime, health, sentinel, logs, quarantine, resolution evidence, gate reports, plan reports, tmp)",
+    "index_ts_assigned_to_commit": 6
+  },
+  "summary": {
+    "decision": "PLAN_READY",
+    "overall_status": "PASS",
+    "warnings": [
+      {
+        "severity": "low",
+        "message": "src/project-brain/index.ts assigned to commit 6. It re-exports P1+P2+P3 modules that won't exist until after commits 2, 4, and 6 are applied. This is safe because commits are sequential — index.ts will be correct when commit 6 is applied."
+      },
+      {
+        "severity": "low",
+        "message": "data/reports/baseline/baseline-20260802-225626.md.tmp — delete before starting commits."
+      },
+      {
+        "severity": "info",
+        "message": "Final Vitest Gate and Manual Commit Execution Plan reports are excluded from the 7 feature commits. Optionally commit separately as pre-commit audit evidence."
+      }
+    ],
+    "critical_findings": []
+  }
+}
