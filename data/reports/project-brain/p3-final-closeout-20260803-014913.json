@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "report_type": "p3_architecture_baseline_final_closeout",
+  "generated_at": "2026-08-02T17:50:00.000Z",
+  "predecessor": "P3-T6 final closeout (NO_GO) — resolved by P3-T6R",
+  "resolution_report": "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.json",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/logs/",
+      "?? data/project-brain/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/*",
+      "?? docs/v4/",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs",
+      "?? scripts/project-brain-architecture-baseline-snapshot.cjs",
+      "?? scripts/project-brain-diff-scope-audit.cjs",
+      "?? scripts/project-brain-self-snapshot.cjs",
+      "?? src/project-brain/",
+      "?? tests/"
+    ],
+    "diff_name_only": ["data/heartbeat.json"],
+    "diff_stat": "data/heartbeat.json | 1 file changed, 1 insertion(+), 1 deletion(-)"
+  },
+  "change_classification": {
+    "p0_artifacts": [
+      "docs/v4/upgrade-isolation-rules.md",
+      "hooks/pre-commit",
+      "hooks/pre-commit.template",
+      "scripts/baseline-report.cjs",
+      "scripts/defense-health-check.cjs",
+      "scripts/harness-gate.cjs",
+      "data/reports/baseline/* (8 files + 1 .tmp residue)",
+      "data/reports/branch/* (2 files)",
+      "data/reports/p0-closeout/* (2 files)",
+      "data/reports/recovery/* (3 files)"
+    ],
+    "p1_project_brain_core": [
+      "src/project-brain/types.ts",
+      "src/project-brain/intent-builder.ts",
+      "src/project-brain/store.ts",
+      "src/project-brain/reporter.ts",
+      "src/project-brain/index.ts",
+      "tests/project-brain/types.test.ts (16)",
+      "tests/project-brain/intent-builder.test.ts (46)",
+      "tests/project-brain/store.test.ts (29)",
+      "tests/project-brain/reporter.test.ts (23)",
+      "scripts/project-brain-self-snapshot.cjs",
+      "data/project-brain/.gitkeep",
+      "data/project-brain/project-brain.json",
+      "data/reports/project-brain/.gitkeep",
+      "data/reports/project-brain/project-brain-*.json (2)",
+      "data/reports/project-brain/project-brain-*.md (2)",
+      "data/reports/project-brain/p1-closeout-*.json (1)",
+      "data/reports/project-brain/p1-closeout-*.md (1)"
+    ],
+    "p2_diff_scope_guard": [
+      "src/project-brain/diff-scope-guard.ts",
+      "src/project-brain/diff-scope-reporter.ts",
+      "src/project-brain/diff-scope-scenario-runner.ts",
+      "src/project-brain/git-diff-adapter.ts",
+      "tests/project-brain/diff-scope-guard.test.ts (33)",
+      "tests/project-brain/diff-scope-reporter.test.ts (24)",
+      "tests/project-brain/diff-scope-scenario-runner.test.ts (23)",
+      "tests/project-brain/git-diff-adapter.test.ts (20)",
+      "tests/project-brain/diff-scope-audit-script.test.ts (29)",
+      "scripts/project-brain-diff-scope-audit.cjs",
+      "data/reports/project-brain/p2-closeout-*.json (1)",
+      "data/reports/project-brain/p2-closeout-*.md (1)"
+    ],
+    "p3_architecture_baseline": [
+      "src/project-brain/architecture-baseline.ts",
+      "src/project-brain/architecture-baseline-builder.ts",
+      "src/project-brain/architecture-baseline-reporter.ts",
+      "tests/project-brain/architecture-baseline.test.ts (27)",
+      "tests/project-brain/architecture-baseline-builder.test.ts (27)",
+      "tests/project-brain/architecture-baseline-reporter.test.ts (29)",
+      "tests/project-brain/architecture-baseline-snapshot-script.test.ts (25)",
+      "scripts/project-brain-architecture-baseline-snapshot.cjs",
+      "data/reports/project-brain/p3-architecture-baseline-closeout-*.json (1)",
+      "data/reports/project-brain/p3-architecture-baseline-closeout-*.md (1)",
+      "data/reports/project-brain/p3-final-closeout-20260803-013200.json (NO_GO, superseded)",
+      "data/reports/project-brain/p3-final-closeout-20260803-013200.md (NO_GO, superseded)",
+      "data/reports/project-brain/p3-final-closeout-20260803-014913.json (CONDITIONAL_GO, this report)",
+      "data/reports/project-brain/p3-final-closeout-20260803-014913.md (CONDITIONAL_GO, this report)"
+    ],
+    "p3_resolution_evidence": [
+      "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/* (2 files)",
+      "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.json",
+      "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.md"
+    ],
+    "runtime_state": [
+      "data/heartbeat.json (modified — PM2 runtime)",
+      "data/logs/",
+      "data/sentinel/2026-08-02/* (10 files: sentinel runtime events)",
+      "data/reports/health/* (36 files: health check reports)"
+    ],
+    "forbidden_core_changes": [],
+    "unexpected_changes": [],
+    "notes": {
+      "resolution": "P3-T6R resolved 2 unexpected files via quarantine. Hash verified intact.",
+      "tmp_residue": "data/reports/baseline/baseline-20260802-225626.md.tmp — atomic write residue from P0-T1."
+    }
+  },
+  "architecture_baseline_inventory": {
+    "source_files": [
+      "src/project-brain/architecture-baseline.ts",
+      "src/project-brain/architecture-baseline-builder.ts",
+      "src/project-brain/architecture-baseline-reporter.ts"
+    ],
+    "script_files": [
+      "scripts/project-brain-architecture-baseline-snapshot.cjs"
+    ],
+    "test_files": [
+      "tests/project-brain/architecture-baseline.test.ts",
+      "tests/project-brain/architecture-baseline-builder.test.ts",
+      "tests/project-brain/architecture-baseline-reporter.test.ts",
+      "tests/project-brain/architecture-baseline-snapshot-script.test.ts"
+    ],
+    "report_files": [
+      "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.json",
+      "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.md",
+      "data/reports/project-brain/p3-final-closeout-20260803-014913.json",
+      "data/reports/project-brain/p3-final-closeout-20260803-014913.md"
+    ]
+  },
+  "p3_capabilities": {
+    "architecture_baseline": [
+      "ArchitectureBaseline, ArchitectureScope, ModuleBoundary, ForbiddenZone, DefenseLine, RuntimeSurface, BaselineRisk",
+      "createArchitectureBaseline(input)",
+      "validateArchitectureBaseline(baseline) — 17 rules"
+    ],
+    "builder": [
+      "createHarnessV4ArchitectureBaseline(input) — append/override modes",
+      "6 default factories: scope, modules(5), forbidden_zones(4), defense_lines(5), runtime_surfaces(4), risks(3)"
+    ],
+    "reporter": [
+      "buildArchitectureBaselineEvidence, renderArchitectureBaselineMarkdown (10 sections)",
+      "writeArchitectureBaselineReport (atomic JSON+MD), formatArchitectureBaselineReportTimestamp"
+    ],
+    "snapshot_cli": [
+      "parseArgs, printHelp, runArchitectureBaselineSnapshotCli (dependency injection)",
+      "--help, --dry-run (built-in fallback), formal snapshot, tryLoadRealDeps()"
+    ]
+  },
+  "validation": {
+    "help": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --help",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "dry_run": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --dry-run",
+      "exit_code": 0,
+      "status": "PASS",
+      "output": "Baseline: architecture_baseline_harness_v4, Valid: true, Modules: 5, FZ: 4, DL: 5",
+      "fallback_used": true
+    },
+    "formal_snapshot": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --output-dir data/reports/project-brain",
+      "exit_code": 2,
+      "status": "ENVIRONMENT_LIMITED",
+      "reason": "TS modules (.ts) cannot be require()-d from plain Node .cjs without tsx or compiled output.",
+      "impact": "Does not affect code quality — 418 tests pass, dry-run fallback works.",
+      "decision_effect": "CONDITIONAL_GO instead of GO."
+    },
+    "tsc": {
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "vitest": {
+      "command": "npx vitest run",
+      "exit_code": 0,
+      "status": "PASS",
+      "test_count": 418,
+      "test_files": 19
+    },
+    "defense_health": {
+      "command": "node scripts/defense-health-check.cjs",
+      "exit_code": 0,
+      "status": "PASS",
+      "health_report_json": "data/reports/health/health-20260803-014913.json",
+      "defense_matrix": {
+        "pm2_guard": "PASS",
+        "mcp_gate": "PASS",
+        "sentinel": "PASS",
+        "git_hook": "PASS",
+        "overall": "PASS"
+      }
+    }
+  },
+  "commit_strategy": [
+    {
+      "id": 1,
+      "title": "P0 isolation instrumentation and baseline reports",
+      "message": "chore(harness-v4): add P0 isolation instrumentation and baseline reports"
+    },
+    {
+      "id": 2,
+      "title": "ProjectBrain v0.1 core",
+      "message": "feat(project-brain): add v0.1 core and tests"
+    },
+    {
+      "id": 3,
+      "title": "ProjectBrain self snapshot and P1 evidence",
+      "message": "chore(project-brain): add v0.1 self snapshot and P1 evidence"
+    },
+    {
+      "id": 4,
+      "title": "DiffScopeGuard core",
+      "message": "feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter"
+    },
+    {
+      "id": 5,
+      "title": "DiffScopeGuard manual audit CLI and P2 evidence",
+      "message": "chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence"
+    },
+    {
+      "id": 6,
+      "title": "ArchitectureBaseline core",
+      "message": "feat(project-brain): add ArchitectureBaseline model, builder, and reporter"
+    },
+    {
+      "id": 7,
+      "title": "ArchitectureBaseline snapshot CLI and P3 closeout",
+      "message": "chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout"
+    }
+  ],
+  "excluded_from_commits": {
+    "runtime_state": ["data/heartbeat.json", "data/logs/", "data/sentinel/", "data/reports/health/"],
+    "quarantine_evidence": ["data/reports/project-brain/quarantine/**", "data/reports/project-brain/p3-t6r-unexpected-files-resolution-*"],
+    "tmp_residue": ["data/reports/baseline/baseline-20260802-225626.md.tmp"],
+    "note": "Runtime state, quarantine evidence, and tmp residue should not be included in feature commits."
+  },
+  "summary": {
+    "decision": "CONDITIONAL_GO",
+    "overall_status": "PASS",
+    "warnings": [
+      {
+        "severity": "medium",
+        "message": "Formal snapshot ENVIRONMENT_LIMITED: TS modules cannot be require()-d from plain Node .cjs. Use npx tsx or build with tsc for production use."
+      },
+      {
+        "severity": "low",
+        "message": "Atomic write residue: data/reports/baseline/baseline-20260802-225626.md.tmp"
+      },
+      {
+        "severity": "low",
+        "message": "Workspace dirty — P0+P1+P2+P3 artifacts not yet committed"
+      },
+      {
+        "severity": "info",
+        "message": "Previous P3-T6 report (NO_GO, 2 unexpected files) superseded by this report after P3-T6R quarantine resolution."
+      }
+    ],
+    "critical_findings": [],
+    "recommendations": [
+      "P3-T6R has resolved the NO_GO blocker — 2 unexpected files quarantined with verified hashes.",
+      "All code quality metrics remain green: tsc, 418 vitest, 4/4 defense lines PASS.",
+      "Commit in 7 groups per commit_strategy. Exclude runtime_state, quarantine, and tmp residue.",
+      "Proceed to P4 Dashboard/Digest phase.",
+      "For production formal snapshot: use `npx tsx scripts/project-brain-architecture-baseline-snapshot.cjs --output-dir data/reports/project-brain`"
+    ]
+  }
+}

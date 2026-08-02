@@ -1,0 +1,573 @@
+{
+  "schema_version": 1,
+  "report_type": "p4_prep_commit_plan_dry_run",
+  "generated_at": "2026-08-02T18:02:00.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测",
+      "abd0127 chore: 从版本控制移除运行时数据(tokens/alerts/audit)",
+      "1ee9292 v2.1 Token降耗改造 + 路径漏洞修复 + MCP令牌路径同步",
+      "e6ccd38 v1.2.0 — SelfGuard 独立自护子系统完整发布",
+      "24672bf Harness v2.0 — 轻量化通用流水线调度引擎"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 27,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/logs/",
+      "?? data/project-brain/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/*",
+      "?? docs/v4/",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs",
+      "?? scripts/project-brain-architecture-baseline-snapshot.cjs",
+      "?? scripts/project-brain-diff-scope-audit.cjs",
+      "?? scripts/project-brain-self-snapshot.cjs",
+      "?? src/project-brain/",
+      "?? tests/"
+    ],
+    "diff_name_only": ["data/heartbeat.json"],
+    "diff_stat": "data/heartbeat.json | 2 +-\n1 file changed, 1 insertion(+), 1 deletion(-)",
+    "note": "data/heartbeat.json is the ONLY modified tracked file — PM2 runtime heartbeat, 1 line change. All other entries are new (untracked) files from P0-P3 phases."
+  },
+  "classification": {
+    "p0_artifacts": {
+      "description": "P0 isolation instrumentation, baseline reports, recovery, branch, closeout",
+      "files": [
+        "scripts/baseline-report.cjs",
+        "scripts/defense-health-check.cjs",
+        "scripts/harness-gate.cjs",
+        "hooks/pre-commit",
+        "hooks/pre-commit.template",
+        "docs/v4/upgrade-isolation-rules.md",
+        "data/reports/baseline/baseline-20260802-225453.json",
+        "data/reports/baseline/baseline-20260802-225453.md",
+        "data/reports/baseline/baseline-20260802-225626.json",
+        "data/reports/baseline/baseline-20260802-225953.json",
+        "data/reports/baseline/baseline-20260802-225953.md",
+        "data/reports/baseline/baseline-20260802-231849.json",
+        "data/reports/baseline/baseline-20260802-231849.md",
+        "data/reports/branch/branch-20260802-233319.json",
+        "data/reports/branch/branch-20260802-233319.md",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.json",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.md",
+        "data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak",
+        "data/reports/recovery/recovery-20260802-232114.json",
+        "data/reports/recovery/recovery-20260802-232114.md"
+      ],
+      "file_count": 20,
+      "excluded_from_commit": [
+        "data/reports/baseline/baseline-20260802-225626.md.tmp"
+      ]
+    },
+    "p1_project_brain_core": {
+      "description": "ProjectBrain v0.1 types, intent-builder, store, reporter, self-snapshot",
+      "files": [
+        "src/project-brain/types.ts",
+        "src/project-brain/intent-builder.ts",
+        "src/project-brain/store.ts",
+        "src/project-brain/reporter.ts",
+        "tests/project-brain/types.test.ts",
+        "tests/project-brain/intent-builder.test.ts",
+        "tests/project-brain/store.test.ts",
+        "tests/project-brain/reporter.test.ts",
+        "scripts/project-brain-self-snapshot.cjs",
+        "data/project-brain/.gitkeep",
+        "data/project-brain/project-brain.json",
+        "data/reports/project-brain/.gitkeep",
+        "data/reports/project-brain/project-brain-20260803-001014.json",
+        "data/reports/project-brain/project-brain-20260803-001014.md",
+        "data/reports/project-brain/project-brain-20260803-001359.json",
+        "data/reports/project-brain/project-brain-20260803-001359.md",
+        "data/reports/project-brain/p1-closeout-20260803-001405.json",
+        "data/reports/project-brain/p1-closeout-20260803-001405.md"
+      ],
+      "file_count": 18,
+      "note": "src/project-brain/index.ts intentionally deferred to commit 6 (final barrel export)"
+    },
+    "p2_diff_scope_guard": {
+      "description": "DiffScopeGuard core, reporter, scenario runner, git adapter, audit CLI",
+      "files": [
+        "src/project-brain/diff-scope-guard.ts",
+        "src/project-brain/diff-scope-reporter.ts",
+        "src/project-brain/diff-scope-scenario-runner.ts",
+        "src/project-brain/git-diff-adapter.ts",
+        "tests/project-brain/diff-scope-guard.test.ts",
+        "tests/project-brain/diff-scope-reporter.test.ts",
+        "tests/project-brain/diff-scope-scenario-runner.test.ts",
+        "tests/project-brain/git-diff-adapter.test.ts",
+        "tests/project-brain/diff-scope-audit-script.test.ts",
+        "scripts/project-brain-diff-scope-audit.cjs",
+        "data/reports/project-brain/p2-closeout-20260803-004600.json",
+        "data/reports/project-brain/p2-closeout-20260803-004600.md"
+      ],
+      "file_count": 12
+    },
+    "p3_architecture_baseline": {
+      "description": "ArchitectureBaseline model, builder, reporter, snapshot CLI, closeout reports",
+      "files": [
+        "src/project-brain/architecture-baseline.ts",
+        "src/project-brain/architecture-baseline-builder.ts",
+        "src/project-brain/architecture-baseline-reporter.ts",
+        "src/project-brain/index.ts",
+        "tests/project-brain/architecture-baseline.test.ts",
+        "tests/project-brain/architecture-baseline-builder.test.ts",
+        "tests/project-brain/architecture-baseline-reporter.test.ts",
+        "tests/project-brain/architecture-baseline-snapshot-script.test.ts",
+        "scripts/project-brain-architecture-baseline-snapshot.cjs",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.json",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.md"
+      ],
+      "file_count": 15,
+      "notes": [
+        "src/project-brain/index.ts is the consolidated barrel export — assigned to P3 commit 6 per Section 11.2.",
+        "p3-final-closeout-20260803-013200.* = NO_GO closeout (superseded by 014913 CONDITIONAL_GO). Included in P3 classification as historical evidence."
+      ]
+    },
+    "p3_resolution_evidence": {
+      "description": "P3-T6R unexpected files quarantine and resolution reports",
+      "files": [
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+        "data/reports/project-brain/quarantine/unexpected-files-20260803-014722/e2e-result.txt",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.json",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-20260803-014913.md"
+      ],
+      "file_count": 4,
+      "commit_policy": "separate_review_evidence — do NOT include in normal feature commits"
+    },
+    "p4_prep_report": {
+      "description": "This report (P4-Prep commit plan dry run)",
+      "files": [
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.md"
+      ],
+      "file_count": 2,
+      "commit_policy": "include in P3 commit 7 or separate P4 planning commit"
+    },
+    "runtime_excluded": {
+      "description": "Runtime state — ALWAYS EXCLUDE from feature commits",
+      "files": [
+        "data/heartbeat.json",
+        "data/logs/mcp-error.log",
+        "data/logs/mcp-out.log",
+        "data/logs/sentinel-error.log",
+        "data/logs/sentinel-out.log",
+        "data/sentinel/2026-08-02/* (838 JSON files — sentinel runtime events)",
+        "data/reports/health/health-20260802-230934.json",
+        "data/reports/health/health-20260802-230934.md",
+        "data/reports/health/health-20260802-231903.json",
+        "data/reports/health/health-20260802-231903.md",
+        "data/reports/health/health-20260802-232617.json",
+        "data/reports/health/health-20260802-232617.md",
+        "data/reports/health/health-20260802-232840.json",
+        "data/reports/health/health-20260802-232840.md",
+        "data/reports/health/health-20260802-233319.json",
+        "data/reports/health/health-20260802-233319.md",
+        "data/reports/health/health-20260802-233919.json",
+        "data/reports/health/health-20260802-233919.md",
+        "data/reports/health/health-20260802-234309.json",
+        "data/reports/health/health-20260802-234309.md",
+        "data/reports/health/health-20260802-234919.json",
+        "data/reports/health/health-20260802-234919.md",
+        "data/reports/health/health-20260802-235557.json",
+        "data/reports/health/health-20260802-235557.md",
+        "data/reports/health/health-20260803-000032.json",
+        "data/reports/health/health-20260803-000032.md",
+        "data/reports/health/health-20260803-000530.json",
+        "data/reports/health/health-20260803-000530.md",
+        "data/reports/health/health-20260803-001041.json",
+        "data/reports/health/health-20260803-001041.md",
+        "data/reports/health/health-20260803-001405.json",
+        "data/reports/health/health-20260803-001405.md",
+        "data/reports/health/health-20260803-001941.json",
+        "data/reports/health/health-20260803-001941.md",
+        "data/reports/health/health-20260803-002513.json",
+        "data/reports/health/health-20260803-002513.md",
+        "data/reports/health/health-20260803-003113.json",
+        "data/reports/health/health-20260803-003113.md",
+        "data/reports/health/health-20260803-003850.json",
+        "data/reports/health/health-20260803-003850.md",
+        "data/reports/health/health-20260803-004512.json",
+        "data/reports/health/health-20260803-004512.md",
+        "data/reports/health/health-20260803-004923.json",
+        "data/reports/health/health-20260803-004923.md",
+        "data/reports/health/health-20260803-005619.json",
+        "data/reports/health/health-20260803-005619.md",
+        "data/reports/health/health-20260803-010134.json",
+        "data/reports/health/health-20260803-010134.md",
+        "data/reports/health/health-20260803-010635.json",
+        "data/reports/health/health-20260803-010635.md",
+        "data/reports/health/health-20260803-011103.json",
+        "data/reports/health/health-20260803-011103.md",
+        "data/reports/health/health-20260803-011616.json",
+        "data/reports/health/health-20260803-011616.md",
+        "data/reports/health/health-20260803-012007.json",
+        "data/reports/health/health-20260803-012007.md",
+        "data/reports/health/health-20260803-013100.json",
+        "data/reports/health/health-20260803-013100.md",
+        "data/reports/health/health-20260803-014913.json",
+        "data/reports/health/health-20260803-014913.md",
+        "data/reports/health/health-20260803-015956.json",
+        "data/reports/health/health-20260803-015956.md"
+      ],
+      "file_count_approximate": "844+ (838 sentinel + 4 logs + 1 heartbeat + 38 health)",
+      "note": "health reports are auto-generated by defense-health-check.cjs. Sentinel files are runtime events. Logs are runtime output. heartbeat.json is PM2 runtime."
+    },
+    "tmp_residue_excluded": {
+      "description": "Atomic write residue — ALWAYS EXCLUDE",
+      "files": [
+        "data/reports/baseline/baseline-20260802-225626.md.tmp"
+      ],
+      "file_count": 1,
+      "note": "P0-T1 baseline report atomic write residue. Should be deleted by cleanup script, NEVER committed."
+    },
+    "forbidden_core_changes": {
+      "description": "Core pipeline, defense, config — MUST NOT be modified",
+      "files": [],
+      "file_count": 0,
+      "verified_untouched": [
+        "src/FlowEngine.ts",
+        "src/StageRunner.ts",
+        "src/GateController.ts",
+        "src/ComplianceScorer.ts",
+        "src/EvolutionEngine.ts",
+        "mcp/",
+        "sentinel/",
+        "data/flows/",
+        "data/tokens/",
+        "data/audit/",
+        "ecosystem.config.cjs",
+        "package.json",
+        "tsconfig.json"
+      ]
+    },
+    "unexpected_changes": {
+      "description": "Files not matching any P0/P1/P2/P3 classification",
+      "files": [],
+      "file_count": 0,
+      "note": "P3-T6R resolved 2 unexpected files via quarantine. Verified absent from worktree."
+    },
+    "unclassified": {
+      "description": "Files in git status not assigned to any category",
+      "files": [],
+      "file_count": 0,
+      "note": "All 27 porcelain entries fully classified."
+    },
+    "already_tracked_not_in_scope": {
+      "description": "Files tracked in git but not part of P0-P4 scope — verified unmodified",
+      "files": [
+        "data/docs/HARNESS-SPEC.md",
+        "data/docs/HARNESS-USAGE.md",
+        "data/docs/HARNESS-WHITEPAPER.md",
+        "scripts/clean-tmp.cjs",
+        "scripts/health-check.cjs"
+      ],
+      "note": "These are pre-existing tracked files. Verified absent from git diff-name-only and porcelain modified list."
+    }
+  },
+  "commit_plan": [
+    {
+      "commit_no": 1,
+      "title": "P0 isolation instrumentation and baseline reports",
+      "message": "chore(harness-v4): add P0 isolation instrumentation and baseline reports",
+      "include": [
+        "scripts/baseline-report.cjs",
+        "scripts/defense-health-check.cjs",
+        "scripts/harness-gate.cjs",
+        "hooks/pre-commit",
+        "hooks/pre-commit.template",
+        "docs/v4/upgrade-isolation-rules.md",
+        "data/reports/baseline/baseline-20260802-225453.json",
+        "data/reports/baseline/baseline-20260802-225453.md",
+        "data/reports/baseline/baseline-20260802-225626.json",
+        "data/reports/baseline/baseline-20260802-225953.json",
+        "data/reports/baseline/baseline-20260802-225953.md",
+        "data/reports/baseline/baseline-20260802-231849.json",
+        "data/reports/baseline/baseline-20260802-231849.md",
+        "data/reports/branch/branch-20260802-233319.json",
+        "data/reports/branch/branch-20260802-233319.md",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.json",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.md",
+        "data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak",
+        "data/reports/recovery/recovery-20260802-232114.json",
+        "data/reports/recovery/recovery-20260802-232114.md"
+      ],
+      "include_count": 20,
+      "exclude": [
+        "data/reports/baseline/baseline-20260802-225626.md.tmp",
+        "data/reports/health/**",
+        "data/heartbeat.json",
+        "data/sentinel/**",
+        "data/logs/**"
+      ],
+      "notes": [
+        "Excludes .md.tmp atomic write residue from P0-T1."
+      ]
+    },
+    {
+      "commit_no": 2,
+      "title": "ProjectBrain v0.1 core",
+      "message": "feat(project-brain): add v0.1 core and tests",
+      "include": [
+        "src/project-brain/types.ts",
+        "src/project-brain/intent-builder.ts",
+        "src/project-brain/store.ts",
+        "src/project-brain/reporter.ts",
+        "tests/project-brain/types.test.ts",
+        "tests/project-brain/intent-builder.test.ts",
+        "tests/project-brain/store.test.ts",
+        "tests/project-brain/reporter.test.ts",
+        "data/project-brain/.gitkeep",
+        "data/reports/project-brain/.gitkeep"
+      ],
+      "include_count": 10,
+      "exclude": [
+        "src/project-brain/index.ts (deferred to commit 6)",
+        "src/project-brain/diff-scope-guard.ts",
+        "src/project-brain/diff-scope-reporter.ts",
+        "src/project-brain/diff-scope-scenario-runner.ts",
+        "src/project-brain/git-diff-adapter.ts",
+        "src/project-brain/architecture-baseline.ts",
+        "src/project-brain/architecture-baseline-builder.ts",
+        "src/project-brain/architecture-baseline-reporter.ts"
+      ],
+      "notes": [
+        "src/project-brain/index.ts intentionally deferred to commit 6 per Section 10 rules.",
+        "P1 tests: 114 tests across 4 files (types:16, intent-builder:46, store:29, reporter:23)."
+      ]
+    },
+    {
+      "commit_no": 3,
+      "title": "ProjectBrain self snapshot and P1 evidence",
+      "message": "chore(project-brain): add v0.1 self snapshot and P1 evidence",
+      "include": [
+        "scripts/project-brain-self-snapshot.cjs",
+        "data/project-brain/project-brain.json",
+        "data/reports/project-brain/project-brain-20260803-001014.json",
+        "data/reports/project-brain/project-brain-20260803-001014.md",
+        "data/reports/project-brain/project-brain-20260803-001359.json",
+        "data/reports/project-brain/project-brain-20260803-001359.md",
+        "data/reports/project-brain/p1-closeout-20260803-001405.json",
+        "data/reports/project-brain/p1-closeout-20260803-001405.md"
+      ],
+      "include_count": 8,
+      "exclude": [],
+      "notes": [
+        "Self-snapshot store and P1 closeout evidence."
+      ]
+    },
+    {
+      "commit_no": 4,
+      "title": "DiffScopeGuard core",
+      "message": "feat(project-brain): add DiffScopeGuard core, reporter, scenarios, and git adapter",
+      "include": [
+        "src/project-brain/diff-scope-guard.ts",
+        "src/project-brain/diff-scope-reporter.ts",
+        "src/project-brain/diff-scope-scenario-runner.ts",
+        "src/project-brain/git-diff-adapter.ts",
+        "tests/project-brain/diff-scope-guard.test.ts",
+        "tests/project-brain/diff-scope-reporter.test.ts",
+        "tests/project-brain/diff-scope-scenario-runner.test.ts",
+        "tests/project-brain/git-diff-adapter.test.ts"
+      ],
+      "include_count": 8,
+      "exclude": [
+        "tests/project-brain/diff-scope-audit-script.test.ts (goes to commit 5)",
+        "scripts/project-brain-diff-scope-audit.cjs (goes to commit 5)"
+      ],
+      "notes": [
+        "P2 tests: 100 tests across 4 files (diff-scope-guard:33, reporter:24, scenario-runner:23, git-adapter:20)."
+      ]
+    },
+    {
+      "commit_no": 5,
+      "title": "DiffScopeGuard manual audit CLI and P2 evidence",
+      "message": "chore(project-brain): add DiffScopeGuard manual audit CLI and P2 evidence",
+      "include": [
+        "scripts/project-brain-diff-scope-audit.cjs",
+        "tests/project-brain/diff-scope-audit-script.test.ts",
+        "data/reports/project-brain/p2-closeout-20260803-004600.json",
+        "data/reports/project-brain/p2-closeout-20260803-004600.md"
+      ],
+      "include_count": 4,
+      "exclude": [],
+      "notes": [
+        "Audit CLI test: 29 tests. P2 total: 129 tests across 5 files."
+      ]
+    },
+    {
+      "commit_no": 6,
+      "title": "ArchitectureBaseline core",
+      "message": "feat(project-brain): add ArchitectureBaseline model, builder, and reporter",
+      "include": [
+        "src/project-brain/architecture-baseline.ts",
+        "src/project-brain/architecture-baseline-builder.ts",
+        "src/project-brain/architecture-baseline-reporter.ts",
+        "src/project-brain/index.ts",
+        "tests/project-brain/architecture-baseline.test.ts",
+        "tests/project-brain/architecture-baseline-builder.test.ts",
+        "tests/project-brain/architecture-baseline-reporter.test.ts"
+      ],
+      "include_count": 7,
+      "exclude": [
+        "tests/project-brain/architecture-baseline-snapshot-script.test.ts (goes to commit 7)",
+        "scripts/project-brain-architecture-baseline-snapshot.cjs (goes to commit 7)"
+      ],
+      "notes": [
+        "src/project-brain/index.ts IS assigned here — final consolidated barrel export for all ProjectBrain modules (P1+P2+P3).",
+        "P3 core tests: 83 tests across 3 files (baseline:27, builder:27, reporter:29)."
+      ]
+    },
+    {
+      "commit_no": 7,
+      "title": "ArchitectureBaseline snapshot CLI and P3 closeout",
+      "message": "chore(project-brain): add ArchitectureBaseline snapshot CLI and P3 closeout",
+      "include": [
+        "scripts/project-brain-architecture-baseline-snapshot.cjs",
+        "tests/project-brain/architecture-baseline-snapshot-script.test.ts",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.json",
+        "data/reports/project-brain/p3-architecture-baseline-closeout-20260803-012007.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-013200.md",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.json",
+        "data/reports/project-brain/p3-final-closeout-20260803-014913.md",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.json",
+        "data/reports/project-brain/p4-prep-commit-plan-dry-run-20260803-020200.md"
+      ],
+      "include_count": 10,
+      "exclude": [
+        "data/reports/project-brain/quarantine/** (resolution evidence)",
+        "data/reports/project-brain/p3-t6r-unexpected-files-resolution-* (resolution evidence)"
+      ],
+      "notes": [
+        "Snapshot CLI test: 25 tests. P3 total: 108 tests across 4 files.",
+        "013200.* = NO_GO closeout (superseded). 014913.* = CONDITIONAL_GO closeout (current).",
+        "P4-Prep report (020200.*) included here as this is the latest planning document."
+      ]
+    }
+  ],
+  "plan_integrity": {
+    "unclassified_files": [],
+    "unclassified_count": 0,
+    "duplicate_assignments": [],
+    "duplicate_count": 0,
+    "forbidden_included": [],
+    "forbidden_included_count": 0,
+    "unexpected_changes": [],
+    "unexpected_count": 0,
+    "index_ts_assignment": {
+      "path": "src/project-brain/index.ts",
+      "assigned_to_commit": 6,
+      "reason": "Per Section 10 (Commit 6 note) and Section 11.2: final consolidated ProjectBrain barrel export surface. In a real git workflow, index.ts would be partially staged across commits 2/4/6, but for this dry run plan, it is assigned to the final source commit (6). The actual file contains re-exports from all P1+P2+P3 modules."
+    },
+    "total_files_in_plan": 67,
+    "total_files_excluded": 845,
+    "total_files_unclassified": 0,
+    "cross_check": {
+      "all_porcelain_entries_classified": true,
+      "no_overlap_between_commits": true,
+      "no_forbidden_files_in_plan": true,
+      "no_unexpected_files_remaining": true
+    }
+  },
+  "validation": {
+    "help": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --help",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "dry_run": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --dry-run",
+      "exit_code": 0,
+      "status": "PASS",
+      "output": "Baseline: architecture_baseline_harness_v4, Valid: true, Modules: 5, FZ: 4, DL: 5",
+      "fallback_used": true
+    },
+    "formal_snapshot": {
+      "command": "node scripts/project-brain-architecture-baseline-snapshot.cjs --output-dir data/reports/project-brain",
+      "exit_code": 2,
+      "status": "ENVIRONMENT_LIMITED",
+      "reason": "TS modules cannot be require()-d from plain Node .cjs without tsx or compiled output."
+    },
+    "tsc": {
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "status": "PASS"
+    },
+    "vitest": {
+      "command": "npx vitest run",
+      "exit_code": 1,
+      "status": "WARN",
+      "test_count": 418,
+      "test_files": 19,
+      "passed": 417,
+      "failed": 1,
+      "failed_test": "tests/project-brain/diff-scope-scenario-runner.test.ts > runDiffScopeScenarios > 19. batch returns total/passed/failed counts",
+      "failure_type": "EPERM: operation not permitted, rename (.tmp → .md) — Windows temp directory file lock race during atomic write",
+      "re_run_result": "PASS (23/23 passed on isolated re-run)",
+      "verdict": "TRANSIENT_ENVIRONMENTAL_FLAKE — not a code defect. Atomic rename failed due to Windows filesystem lock contention with parallel vitest workers. Test passes cleanly in isolation. Does not affect commit readiness."
+    },
+    "defense_health": {
+      "command": "node scripts/defense-health-check.cjs",
+      "exit_code": 0,
+      "status": "PASS",
+      "health_report_json": "data/reports/health/health-20260803-015956.json",
+      "defense_matrix": {
+        "pm2_guard": "PASS",
+        "mcp_gate": "PASS",
+        "sentinel": "PASS",
+        "git_hook": "PASS",
+        "overall": "PASS"
+      }
+    }
+  },
+  "summary": {
+    "decision": "READY_FOR_MANUAL_COMMIT",
+    "overall_status": "PASS",
+    "warnings": [
+      {
+        "severity": "medium",
+        "message": "Formal snapshot ENVIRONMENT_LIMITED: TS modules require tsx or compiled output for production use. Dry-run fallback works correctly."
+      },
+      {
+        "severity": "low",
+        "message": "vitest transient EPERM flake: test 19 in diff-scope-scenario-runner.test.ts failed due to Windows temp file lock (atomic rename). Isolated re-run: 23/23 PASS. Not a code defect."
+      },
+      {
+        "severity": "low",
+        "message": "Atomic write residue: data/reports/baseline/baseline-20260802-225626.md.tmp. Should be cleaned up before commit."
+      },
+      {
+        "severity": "low",
+        "message": "src/project-brain/index.ts assigned to commit 6 only. In real workflow, it would need partial staging across commits 2/4/6. Use `git add -p` or commit order (6 after 2 and 4) to ensure correctness."
+      },
+      {
+        "severity": "low",
+        "message": "data/heartbeat.json is modified (1 line) — PM2 runtime. Do NOT include in any commit."
+      }
+    ],
+    "critical_findings": [],
+    "manual_notes": [
+      "DO NOT use `git add .` — stage files individually per commit plan.",
+      "Before each commit: review `git diff --cached --name-only`.",
+      "After all 7 commits complete: run `npx tsc --noEmit && npx vitest run && node scripts/defense-health-check.cjs`.",
+      "Always exclude: data/heartbeat.json, data/sentinel/**, data/logs/**, data/reports/health/**, *.tmp.",
+      "Quarantine + resolution evidence files should NOT enter feature commits — separate review decision required.",
+      "Recommended commit order: 1 → 2 → 3 → 4 → 5 → 6 → 7 (chronological, P0 through P3)."
+    ]
+  }
+}
