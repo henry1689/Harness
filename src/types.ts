@@ -130,6 +130,82 @@ export interface MachineSignalMetrics {
   test_failures?: number;
   /** 数据库标注率（S6） */
   uuid_label_rate?: number;
+  /** S4.5 合规得分 (0-100) */
+  compliance_score?: number;
+  /** S4.5 收敛轮次 */
+  convergence_round?: number;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// S4.5 收敛闸门 — 设计标准合规评分类型
+// ════════════════════════════════════════════════════════════════════
+
+/** 单条设计标准合规得分 */
+export interface StandardComplianceScore {
+  /** 标准编号（DS-01 ~ DS-19） */
+  standardId: string;
+  /** 标准标题（简短） */
+  standardText: string;
+  /** 权重（0.0~1.0） */
+  weight: number;
+  /** 得分（0-100） */
+  score: number;
+  /** 总检查项数 */
+  totalChecks: number;
+  /** 通过的检查项数 */
+  passedChecks: number;
+  /** 失败的检查项数 */
+  failedChecks: number;
+  /** 关联的违规描述 */
+  relatedViolations: string[];
+  /** 距 90% 目标的差距分 */
+  gapToTarget: number;
+}
+
+/** 差距项（需要改进的标准） */
+export interface GapItem {
+  standardId: string;
+  standardText: string;
+  currentScore: number;
+  targetScore: number;
+  pointsNeeded: number;
+  suggestedActions: string[];
+}
+
+/** 合规报告（S4.5 输出） */
+export interface ComplianceReport {
+  /** 加权综合得分 (0-100) */
+  overallScore: number;
+  /** 达标标准数 */
+  passedStandards: number;
+  /** 总标准数 */
+  totalStandards: number;
+  /** 逐条标准得分 */
+  standardScores: StandardComplianceScore[];
+  /** 差距分析 */
+  gapAnalysis: GapItem[];
+  /** 最需解决的 Top 5 问题 */
+  topIssues: string[];
+  /** 计算时间（ISO 时间戳） */
+  computedAt: string;
+}
+
+/** 收敛历史条目 */
+export interface ConvergenceEntry {
+  /** 轮次 */
+  round: number;
+  /** 综合得分 */
+  overallScore: number;
+  /** 通过标准数 */
+  passedStandards: number;
+  /** 总标准数 */
+  totalStandards: number;
+  /** 决策 */
+  decision: 'PASS' | 'REJECT' | 'HUMAN_BYPASS' | 'HARD_LOCKOUT';
+  /** 时间戳 */
+  timestamp: string;
+  /** 仍未达标的标准 ID */
+  gapStandards: string[];
 }
 
 /**
@@ -160,7 +236,10 @@ export type AuditEventType =
   | 'machine_signal'
   | 'memo_injected'
   | 'circuit_breaker'
-  | 'proposal_archive';
+  | 'proposal_archive'
+  | 'convergence_check'
+  | 'convergence_bypass'
+  | 'convergence_lockout';
 
 /** 单条审计记录 */
 export interface AuditEntry {
@@ -220,6 +299,8 @@ export interface TriggerContext {
   isTrivial: boolean;
   /** 触发该流水线的用户标识 */
   triggeredBy?: string;
+  /** 项目根目录（供 ConvergenceGate 运行 CK 检查） */
+  projectRoot?: string;
 }
 
 /** 整个 Flow 的运行时状态 */
@@ -238,6 +319,12 @@ export interface FlowRunState {
   stage_retry_count: number;
   /** 🔴 S3 专属驳回回流计数（独立于通用计数，max_s3_retries 限制） */
   s3_retry_count: number;
+  /** 🔴 S4.5 收敛轮次计数 */
+  convergence_round: number;
+  /** 🔴 S4.5 收敛历史（每轮得分快照） */
+  convergence_history: ConvergenceEntry[];
+  /** 🔴 项目根目录（供 ConvergenceGate 运行 CK 检查） */
+  project_root?: string;
   /** 各 stage 的执行结果（key: stage_id） */
   stage_results: Map<string, StageResult>;
   /** S2 确认后持久化的全局备忘录 */
@@ -296,6 +383,40 @@ export class StageExecutionError extends Error {
     this.cause_error = cause;
   }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// 自进化引擎 — EvolutionEngine 相关类型
+// ════════════════════════════════════════════════════════════════════
+
+/** 观察到的原始事件类型 */
+export type ObservedEventType =
+  | 'sentinel_reverted'
+  | 'sentinel_allowed'
+  | 'sentinel_error'
+  | 'audit_convergence'
+  | 'audit_bypass'
+  | 'audit_lockout'
+  | 'hook_denial';
+
+/** 违规模式类型 */
+export type ViolationPatternType =
+  | 'cluster_attack'
+  | 'repeat_offender'
+  | 'git_contention'
+  | 'bash_script'
+  | 'new_violation_type'
+  | 'convergence_bottleneck'
+  | 'bypass_abuse';
+
+/** 规则升级建议类型 */
+export type RuleUpgradeType =
+  | 'add_ck_check'
+  | 'add_design_standard'
+  | 'modify_yaml_stage'
+  | 'add_yaml_rule'
+  | 'risk_upgrade'
+  | 'weight_adjust'
+  | 'add_blocklist_rule';
 
 /** 配置校验异常 */
 export class FlowConfigError extends Error {

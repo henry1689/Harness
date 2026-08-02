@@ -1,0 +1,7 @@
+{
+  "file": "src/webui/server-chat-routes.ts",
+  "error": "unknown",
+  "reason": "🚫 中高风险文件 \"src/webui/server-chat-routes.ts\" 未经授权被修改 (风险: mid, 令牌: 未找到)",
+  "attempts": 1,
+  "timestamp": "2026-07-31T14:24:46.488Z"
+}

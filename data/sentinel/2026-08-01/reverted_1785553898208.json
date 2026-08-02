@@ -1,0 +1,8 @@
+{
+  "file": "src/app/knowledge/KnowledgeContextBuilder.ts",
+  "risk": "high",
+  "reason": "中高风险文件 \"src/app/knowledge/KnowledgeContextBuilder.ts\" 无有效令牌",
+  "hash": "487ad67",
+  "attempts": 1,
+  "timestamp": "2026-08-01T03:11:37.991Z"
+}

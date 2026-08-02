@@ -1,0 +1,7 @@
+{
+  "file": "src/m2/SQLiteAdapter.ts",
+  "risk": "high",
+  "reason": "中高风险文件 \"src/m2/SQLiteAdapter.ts\" 无有效令牌",
+  "hash": "a82690e",
+  "timestamp": "2026-07-30T17:41:38.574Z"
+}

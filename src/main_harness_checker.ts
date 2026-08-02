@@ -174,6 +174,12 @@ function main(): void {
 
   const allChecks: CheckResult[] = [];
 
+  if (stage === 'S1' || stage === 'all') {
+    allChecks.push(
+      checkGlobalSurvey(projectRoot, files),
+    );
+  }
+
   if (stage === 'S4' || stage === 'all') {
     allChecks.push(
       checkNineLayerPipeline(projectRoot, files),
@@ -182,6 +188,7 @@ function main(): void {
       checkUUIDAnnotationChain(projectRoot, files),
       checkMeetingEntityPoints(projectRoot, files),
       checkSQLiteSaveCalls(projectRoot, files),
+      checkSystemicPattern(projectRoot, files),
       checkHighRiskDependencyScan(projectRoot, files),
     );
   }
@@ -189,6 +196,13 @@ function main(): void {
   if (stage === 'S5' || stage === 'all') {
     allChecks.push(
       checkASTIfBranchCount(projectRoot, files),
+    );
+  }
+
+  if (stage === 'S6' || stage === 'all') {
+    allChecks.push(
+      checkRegressionSafety(projectRoot, files),
+      checkIntentFulfillment(projectRoot, files),
     );
   }
 
@@ -572,6 +586,175 @@ function checkSQLiteSaveCalls(projectRoot: string, files: string[]): CheckResult
 }
 
 // ════════════════════════════════════════════════════════════════════
+// CK-06.5: 举一反三系统性扫描 — 是共性问题还是个性特例
+// ════════════════════════════════════════════════════════════════════
+
+function checkSystemicPattern(projectRoot: string, files: string[]): CheckResult {
+  const start = Date.now();
+  const violations: Violation[] = [];
+  const n = files.map(f => f.replace(/\\/g, '/'));
+
+  if (!existsSync(resolve(projectRoot, 'src'))) {
+    return { id: 'CK-06.5', name: '举一反三系统性扫描', passed: true, severity: 'pass', violations: [], durationMs: 0, cacheable: false };
+  }
+
+  // 1. 提取待修改代码的特征模式
+  const patterns = extractCodePatterns(projectRoot, files);
+
+  // 2. 对每个模式做全仓库 grep，找同类问题
+  const systemicHits: Array<{ pattern: string; file: string; line: number; snippet: string }> = [];
+  for (const pat of patterns) {
+    const hits = searchPatternInRepo(projectRoot, pat.pattern, files);
+    for (const hit of hits) {
+      systemicHits.push({ ...hit, pattern: pat.description });
+    }
+  }
+
+  // 3. 判定：共性 vs 个性
+  if (systemicHits.length > 0) {
+    const uniqueFiles = new Set(systemicHits.map(h => h.file));
+    violations.push({
+      file: n[0] || '',
+      message: `🔴 共性问题: 特征模式在 ${uniqueFiles.size} 个额外文件中发现 ${systemicHits.length} 处同类问题，必须一起修复！`,
+    });
+    for (const hit of systemicHits.slice(0, 10)) {
+      violations.push({
+        line: hit.line, file: hit.file,
+        message: `同类模式 "${hit.pattern}" → ${hit.file}:L${hit.line}: ${hit.snippet.slice(0, 80)}`,
+      });
+    }
+    if (systemicHits.length > 10) {
+      violations.push({
+        file: '全仓库',
+        message: `...还有 ${systemicHits.length - 10} 处同类问题未列出。S2 方案必须覆盖全部。`,
+      });
+    }
+  } else {
+    violations.push({
+      file: n[0] || '',
+      message: '✅ 个性特例: 未在仓库其他位置发现同类问题模式，可作为局部修改处理。',
+    });
+  }
+
+  return {
+    id: 'CK-06.5',
+    name: '举一反三系统性扫描',
+    passed: systemicHits.length === 0, // 有同类问题 → 需要扩大方案
+    severity: systemicHits.length > 0 ? 'fail' : 'pass',
+    violations,
+    durationMs: Date.now() - start,
+    cacheable: false,
+  };
+}
+
+/** 从待修改文件中提取可搜索的特征模式 */
+function extractCodePatterns(projectRoot: string, files: string[]): Array<{ pattern: string; description: string }> {
+  const patterns: Array<{ pattern: string; description: string }> = [];
+
+  for (const file of files) {
+    const absPath = resolve(projectRoot, file);
+    if (!existsSync(absPath)) continue;
+    const content = readFileSync(absPath, 'utf-8');
+    const lines = content.split('\n');
+
+    // 特征提取优先级:
+    // 1) 函数名 / 方法名 (如 updateRelation)
+    // 2) 关键 API 调用 (如 .save() / .query() / .insert())
+    // 3) 特定的字段赋值 (如 entity.relation =)
+    // 4) 异常处理模式 (如 try {} catch {} 空块)
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line || line.startsWith('//') || line.startsWith('/*') || line.startsWith('*')) continue;
+
+      // 函数定义
+      const funcMatch = line.match(/(?:async\s+)?(?:function\s+)?(?:private\s+|public\s+|export\s+)?(\w+)\s*\([^)]*\)\s*[{:]/);
+      if (funcMatch && funcMatch[1].length > 3 && !['if','for','while','switch','catch','try'].includes(funcMatch[1])) {
+        const funcName = funcMatch[1];
+        // 方法名: 查找整个仓库中的同名调用
+        patterns.push({
+          pattern: `\\.${funcName}\\(`,
+          description: `方法调用 .${funcName}()`,
+        });
+      }
+
+      // 特定 API: .save() / .update() / .insert() / .delete()
+      const apiMatch = line.match(/\.(save|update|insert|query|execute|dispatch|emit|send|process|handle|transform)\s*\(/);
+      if (apiMatch) {
+        const apiName = apiMatch[1];
+        patterns.push({
+          pattern: `\\.${apiName}\\(`,
+          description: `API调用 .${apiName}()`,
+        });
+      }
+
+      // 关系/边相关的赋值
+      const relMatch = line.match(/(\w+)\s*[.=]\s*(?:new\s+)?(\w+)\s*\(?/);
+      if (relMatch && isRelationKeyword(relMatch[1])) {
+        patterns.push({
+          pattern: `\\b${relMatch[1]}\\s*[.=]`,
+          description: `关系赋值: ${relMatch[1]}`,
+        });
+      }
+
+      // 异常/条件分支
+      if (line.includes('if') && line.includes('return') && line.includes('null')) {
+        patterns.push({
+          pattern: `if\\s*\\(.*null\\).*return`,
+          description: '空值兜底模式 if(null) return',
+        });
+      }
+    }
+  }
+
+  // 去重 + 限制数量
+  const seen = new Set<string>();
+  return patterns.filter(p => {
+    if (seen.has(p.pattern)) return false;
+    seen.add(p.pattern);
+    return true;
+  }).slice(0, 8);
+}
+
+function isRelationKeyword(word: string): boolean {
+  const keywords = ['relation', 'edge', 'link', 'connection', 'parent', 'child', 'sibling',
+    'source', 'target', 'from', 'to', 'entity', 'owner', 'member', 'role', 'family'];
+  return keywords.some(k => word.toLowerCase().includes(k));
+}
+
+/** 在整个仓库中搜索指定模式 */
+function searchPatternInRepo(projectRoot: string, pattern: string, excludeFiles: string[]): Array<{ file: string; line: number; snippet: string }> {
+  const results: Array<{ file: string; line: number; snippet: string }> = [];
+  const srcDir = resolve(projectRoot, 'src');
+  if (!existsSync(srcDir)) return results;
+
+  const allFiles = scanDirRecursive(srcDir);
+  const excludeSet = new Set(excludeFiles.map(f => f.replace(/\\/g, '/')));
+
+  try {
+    const re = new RegExp(pattern, 'gi');
+    for (const file of allFiles) {
+      if (!file.endsWith('.ts')) continue;
+      const relPath = relative(projectRoot, file).replace(/\\/g, '/');
+      // 排除待修改文件自身以及测试文件
+      if (excludeSet.has(relPath) || relPath.includes('.test.ts') || relPath.includes('.spec.ts')) continue;
+
+      try {
+        const content = readFileSync(file, 'utf-8');
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (re.test(lines[i])) {
+            results.push({ file: relPath, line: i + 1, snippet: lines[i].trim() });
+          }
+        }
+      } catch (_) { /* skip unreadable */ }
+    }
+  } catch (_) { /* invalid regex */ }
+
+  return results;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // CK-07: 高风险依赖扫描
 // ════════════════════════════════════════════════════════════════════
 
@@ -777,8 +960,414 @@ function countConditionalBranches(body: string[]): number {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 工具函数
+// CK-00: S1 全局审视硬校验 — 强制全局import扫描 + 6大耦合点 + FG专项
 // ════════════════════════════════════════════════════════════════════
+
+function checkGlobalSurvey(projectRoot: string, files: string[]): CheckResult {
+  const start = Date.now();
+  const violations: Violation[] = [];
+  const n = files.map(f => f.replace(/\\/g, '/'));
+
+  // 1. 全量 import 牵连清单 — grep 整个 src/ 找谁引用了待改文件
+  const importChain: string[] = [];
+  const srcDir = resolve(projectRoot, 'src');
+  if (existsSync(srcDir)) {
+    const allFiles = scanDirRecursive(srcDir);
+    for (const srcFile of allFiles) {
+      if (!srcFile.endsWith('.ts')) continue;
+      const relPath = relative(projectRoot, srcFile).replace(/\\/g, '/');
+      try {
+        const content = readFileSync(srcFile, 'utf-8');
+        for (const modifiedFile of n) {
+          const baseName = basename(modifiedFile).replace('.ts', '').replace('.tsx', '');
+          const importRe = new RegExp(`from\\s+['"].*${escapeRegex(baseName)}['"]`, 'i');
+          if (importRe.test(content)) {
+            importChain.push(relPath);
+            break;
+          }
+        }
+      } catch (_) { /* skip unreadable */ }
+    }
+  }
+
+  if (importChain.length === 0 && n.some(f => f.includes('src/'))) {
+    // 没有找到 import 依赖项 = 未执行完整全局审视
+    violations.push({
+      line: 1, file: n[0] || '',
+      message: 'S1 前置条件不满足: 未输出完整 import 牵连清单。必须 grep 全局找出所有引用待修改文件的上游模块。',
+    });
+  }
+
+  // 2. 6 大耦合点逐点扫描
+  const couplingPoints = scanSixCouplingPoints(projectRoot, files);
+  for (const cp of couplingPoints) {
+    violations.push({
+      line: cp.line || 1, file: cp.file,
+      message: `耦合点检测: ${cp.message}`,
+    });
+  }
+
+  // 3. FG 专项: 若修改触及 FG/会晤/角色/户籍 → 输出 11 条红线表
+  const fgRelated = files.some(f =>
+    f.includes('FamilyGraph') || f.includes('family_graph') ||
+    f.includes('EntityMeeting') || f.includes('MeetingContext') ||
+    f.includes('EntityContextBuilder') || f.includes('UUIDGatekeeper') ||
+    f.includes('ProfileAcquisition') || f.includes('belong_entity_uuid') ||
+    f.includes('role') || f.includes('Roleplay') || f.includes('app/fg/'),
+  );
+
+  if (fgRelated) {
+    const redlineTable = buildFGRedlineTable(projectRoot, files);
+    if (redlineTable.length === 0) {
+      violations.push({
+        line: 1, file: files[0] || '',
+        message: 'FG 专项不满足: 改动涉及 FG/户籍/会晤/角色/UUID，必须输出 11 条红线逐条触碰判定表。当前表为空 → S2 直接驳回。',
+      });
+    }
+  }
+
+  return {
+    id: 'CK-00',
+    name: 'S1全局审视硬校验',
+    passed: violations.length === 0,
+    severity: violations.length > 0 ? 'fail' : 'pass',
+    violations,
+    durationMs: Date.now() - start,
+    cacheable: false,
+  };
+}
+
+/** 扫描 6 大核心耦合点 */
+function scanSixCouplingPoints(projectRoot: string, files: string[]): Array<{ line?: number; file: string; message: string }> {
+  const results: Array<{ line?: number; file: string; message: string }> = [];
+  const chatPath = resolve(projectRoot, 'src/webui/chat.ts');
+
+  // 耦合点1: chat.ts 22段注入
+  if (files.some(f => f.includes('chat.ts')) && existsSync(chatPath)) {
+    const content = readFileSync(chatPath, 'utf-8');
+    const finalKnowledgeMatches = content.match(/finalKnowledgeText/g);
+    const count = finalKnowledgeMatches ? finalKnowledgeMatches.length : 0;
+    if (count < 20) {
+      results.push({ file: 'src/webui/chat.ts', message: `finalKnowledgeText 注入仅 ${count} 处（预期 ≥22 段），可能被删减` });
+    }
+  }
+
+  // 耦合点2: 12 处会晤点位
+  if (files.some(f => f.includes('chat.ts') || f.includes('meeting') || f.includes('Meeting'))) {
+    for (const cp of MEETING_ENTITY_CHECKPOINTS) {
+      if (existsSync(chatPath)) {
+        const lines = readFileSync(chatPath, 'utf-8').split('\n');
+        const idx = cp.line - 1;
+        if (idx < lines.length) {
+          const hasME = lines[idx].includes('meetingEntity') || lines[idx].includes('meeting_entity');
+          if (!hasME) {
+            results.push({ line: cp.line, file: 'src/webui/chat.ts', message: `会晤点位 L${cp.line} (${cp.description}): 未找到 _meetingEntityName 引用` });
+          }
+        }
+      }
+    }
+  }
+
+  // 耦合点3: UUID 四层机制
+  if (files.some(f => f.includes('UUID') || f.includes('belong_entity_uuid') || f.includes('SQLite'))) {
+    const uuidFiles = grepRecursive(projectRoot, 'src', 'belong_entity_uuid');
+    if (uuidFiles.length < 4) {
+      results.push({ file: '全仓库', message: `belong_entity_uuid 标注仅 ${uuidFiles.length} 处（四层机制可能不完整）` });
+    }
+  }
+
+  // 耦合点4: 双管线
+  if (files.some(f => f.includes('roleplay') || f.includes('Roleplay'))) {
+    const roleplayFiles = grepRecursive(projectRoot, 'src', 'ROLEPLAY_STRUCTURED_ENABLED');
+    if (roleplayFiles.length < 2) {
+      results.push({ file: '全仓库', message: 'ROLEPLAY_STRUCTURED_ENABLED 仅 1 处引用（双管线同步可能遗漏）' });
+    }
+  }
+
+  // 耦合点5: save() 防抖
+  if (files.some(f => f.includes('SQLite') || f.includes('persistence') || f.includes('Adapter'))) {
+    const saveCalls = grepRecursive(projectRoot, 'src', 'scheduleFlush|\.save\(\)');
+    if (saveCalls.length === 0) {
+      results.push({ file: '全仓库', message: 'scheduleFlush / .save() 调用未找到（持久化防抖可能缺失）' });
+    }
+  }
+
+  // 耦合点6: FG 11 条红线预检
+  if (files.some(f => f.includes('FamilyGraph') || f.includes('app/fg/'))) {
+    results.push({ file: files.find(f => f.includes('FamilyGraph')) || files[0] || '', message: 'FG 户籍变更: 必须对照 11 条红线输出逐条触碰判定表（S1 工作手册步骤7）' });
+  }
+
+  return results;
+}
+
+/** 构建 FG 11 条红线逐条触碰判定表 */
+const FG_REDLINE_TITLES = [
+  '红线1: FamilyGraph 为户籍唯一数据源',
+  '红线2: 角色扮演使用独立分支 FG',
+  '红线3: roleplay_forbidden 判定逻辑不可削弱',
+  '红线4: 会晤模式不读取其他角色记忆',
+  '红线5: FamilyGraph.dossier 七子卷结构不可删减',
+  '红线6: 家族关系检测使用 relation type 而非正则匹配',
+  '红线7: 角色称呼不混淆，无跨角色信息泄漏',
+  '红线8: 记忆/对话 belong_entity_uuid 标注完整',
+  '红线9: 新旧角色扮演双管线同步修改',
+  '红线10: 禁止新增垃圾实体匹配规则',
+  '红线11: 新增字段必须同步全链路四层机制',
+];
+
+function buildFGRedlineTable(_projectRoot: string, _files: string[]): string[] {
+  // 返回 11 条红线的标题列表（供 S1 报告使用）
+  // 实际的触碰判定由 LLM 在 S1 分析中逐条对照填写
+  return FG_REDLINE_TITLES.map(t => `| ${t} | 待判定 | 待填写 |`);
+}
+
+/** grep 递归搜索 */
+function grepRecursive(projectRoot: string, dir: string, pattern: string): string[] {
+  const results: string[] = [];
+  const fullDir = resolve(projectRoot, dir);
+  if (!existsSync(fullDir)) return results;
+  const files = scanDirRecursive(fullDir);
+  for (const file of files) {
+    if (!file.endsWith('.ts')) continue;
+    try {
+      const content = readFileSync(file, 'utf-8');
+      if (new RegExp(pattern, 'g').test(content)) {
+        results.push(relative(projectRoot, file).replace(/\\/g, '/'));
+      }
+    } catch (_) { /* skip */ }
+  }
+  return results;
+}
+
+/** 递归扫描目录 */
+function scanDirRecursive(dir: string): string[] {
+  const results: string[] = [];
+  const stack = [dir];
+  const visited = new Set<string>();
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    try {
+      const entries = readdirSync(current, { withFileTypes: true });
+      for (const e of entries) {
+        const fp = resolve(current, e.name);
+        if (e.isDirectory()) {
+          if (!['node_modules', '__tests__', '.git', 'dist', '.claude'].includes(e.name)) stack.push(fp);
+        } else if (e.isFile()) {
+          results.push(fp);
+        }
+      }
+    } catch (_) { /* skip */ }
+  }
+  return results;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CK-09: before/after 回归安全扫描
+// ════════════════════════════════════════════════════════════════════
+
+function checkRegressionSafety(projectRoot: string, files: string[]): CheckResult {
+  const start = Date.now();
+  const violations: Violation[] = [];
+  const n = files.map(f => f.replace(/\\/g, '/'));
+
+  // 1. git diff — 提取实际被修改的函数
+  const changedFunctions = getChangedFunctions(projectRoot);
+  const changedFiles = getChangedFiles(projectRoot);
+
+  // 2. S2 方案解析 — 期望的改动范围（由调用方通过 state.global_memo 传入）
+  //    这里做基础检查：实际改动是否越界到未声明的文件
+  const declaredFiles = n;
+  for (const cf of changedFiles) {
+    const rel = cf.replace(/\\/g, '/');
+    const isDeclared = declaredFiles.some(f => rel.includes(f) || f.includes(rel));
+    if (!isDeclared && rel.endsWith('.ts') && !rel.includes('.test.ts') && !rel.includes('.spec.ts')) {
+      violations.push({
+        line: 1, file: rel,
+        message: `意外改动: "${rel}" 不在 S2 方案声明的修改文件列表中 → 可能扩大了改动范围`,
+      });
+    }
+  }
+
+  // 3. 检查是否有函数被删除
+  for (const fn of changedFunctions) {
+    if (fn.status === 'deleted') {
+      violations.push({
+        line: fn.line || 1, file: fn.file,
+        message: `函数删除: "${fn.name}" 在 ${fn.file} 中被删除 → 可能破坏上游调用方`,
+      });
+    }
+  }
+
+  // 4. 检查测试失败
+  try {
+    const testOutput = execSync('npx vitest run --reporter=json 2>&1 || true', {
+      cwd: projectRoot, timeout: 120000, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024,
+    });
+    // 简化: 搜索 "FAIL" 出现次数
+    const failCount = (testOutput.match(/FAIL\s+/g) || []).length;
+    if (failCount > 0) {
+      violations.push({
+        line: 1, file: 'vitest',
+        message: `测试回归: ${failCount} 个新增失败用例 → 修改破坏了原有功能`,
+      });
+    }
+  } catch (_) { /* vitest 不可用时不强求 */ }
+
+  return {
+    id: 'CK-09',
+    name: '回归安全扫描',
+    passed: violations.length === 0,
+    severity: violations.length > 0 ? 'fail' : 'pass',
+    violations,
+    durationMs: Date.now() - start,
+    cacheable: false,
+  };
+}
+
+/** 从 git diff 提取被修改文件的函数名 */
+interface ChangedFunction { name: string; file: string; line?: number; status: 'added' | 'deleted' | 'modified'; }
+function getChangedFunctions(projectRoot: string): ChangedFunction[] {
+  const results: ChangedFunction[] = [];
+  try {
+    const diff = execSync('git diff --unified=0 -- src/', {
+      cwd: projectRoot, encoding: 'utf-8', timeout: 10000,
+    });
+    const hunkRe = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@\s*(.*)$/gm;
+    let match;
+    while ((match = hunkRe.exec(diff)) !== null) {
+      const context = match[3] || '';
+      const funcMatch = context.match(/(?:function|async\s+function|const|let|var)\s+(\w+)/);
+      const className = context.match(/(?:class|interface)\s+(\w+)/);
+      const name = funcMatch?.[1] || className?.[1] || `(行${match[2]})`;
+      const status = diff.includes('-') && diff.includes('+') ? 'modified' :
+        diff.startsWith('+') ? 'added' : 'deleted';
+      results.push({ name, file: '', line: parseInt(match[2], 10), status });
+    }
+  } catch (_) { /* not in git repo */ }
+  return results;
+}
+
+function getChangedFiles(projectRoot: string): string[] {
+  try {
+    const status = execSync('git diff --name-only -- src/', {
+      cwd: projectRoot, encoding: 'utf-8', timeout: 10000,
+    }).trim();
+    return status.split('\n').filter(Boolean);
+  } catch (_) { return []; }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CK-10: 修改目的达成度验证
+// ════════════════════════════════════════════════════════════════════
+
+function checkIntentFulfillment(projectRoot: string, files: string[], s2Memo?: string): CheckResult {
+  const start = Date.now();
+  const violations: Violation[] = [];
+  const n = files.map(f => f.replace(/\\/g, '/'));
+
+  // 1. 解析 S2 方案中的修改目的
+  const intent = parseIntent(s2Memo || '');
+
+  // 2. 根据修改类型做针对性验证
+  switch (intent.type) {
+    case 'bug_fix':
+      // 验证异常路径是否仍然存在于代码中
+      if (intent.bugPattern) {
+        const stillExists = grepRecursive(projectRoot, 'src', intent.bugPattern);
+        if (stillExists.length > 0) {
+          violations.push({
+            file: stillExists[0] || n[0] || '',
+            message: `bug 未修复: 原始异常模式 "${intent.bugPattern}" 在 ${stillExists.length} 个文件中仍存在 → 修改未达到目的`,
+          });
+        }
+      }
+      // 验证修复是否附带测试
+      const changedTestFiles = getChangedFiles(projectRoot).filter(f => f.includes('.test.ts'));
+      if (changedTestFiles.length === 0) {
+        violations.push({
+          file: n[0] || '',
+          message: 'bug 修复未附带测试: 任何 bug 修复必须新增或修改至少 1 个测试用例',
+        });
+      }
+      break;
+
+    case 'feature':
+      if (intent.expectedFunction) {
+        const found = grepRecursive(projectRoot, 'src', intent.expectedFunction);
+        if (found.length === 0) {
+          violations.push({
+            file: n[0] || '',
+            message: `功能代码缺失: 预期新增函数/方法 "${intent.expectedFunction}" 未在代码中找到 → 修改未达到目的`,
+          });
+        }
+      }
+      break;
+
+    case 'refactor':
+      // 验证原有测试全部通过
+      try {
+        const testOut = execSync('npx vitest run --reporter=verbose 2>&1 || true', {
+          cwd: projectRoot, timeout: 120000, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024,
+        });
+        const failedTests = (testOut.match(/FAIL\s+/g) || []).length;
+        if (failedTests > 0) {
+          violations.push({
+            file: 'vitest',
+            message: `重构验证失败: ${failedTests} 个测试失败 → 行为未被保留`,
+          });
+        }
+      } catch (_) { /* skip */ }
+      break;
+
+    default:
+      // 无法识别意图类型 → 标记警告
+      violations.push({
+        file: n[0] || '',
+        message: '无法识别修改意图类型: S2 方案中未明确标注 bug_fix / feature / refactor，意图验证无法执行',
+      });
+  }
+
+  return {
+    id: 'CK-10',
+    name: '修改目的达成度验证',
+    passed: violations.length === 0,
+    severity: violations.length > 0 ? 'fail' : 'pass',
+    violations,
+    durationMs: Date.now() - start,
+    cacheable: false,
+  };
+}
+
+/** 从 S2 memo 中解析修改意图 */
+interface ParsedIntent {
+  type: 'bug_fix' | 'feature' | 'refactor' | 'unknown';
+  description: string;
+  bugPattern?: string;
+  expectedFunction?: string;
+}
+
+function parseIntent(s2Memo: string): ParsedIntent {
+  const memo = s2Memo.toLowerCase();
+  if (memo.includes('bug') || memo.includes('修复') || memo.includes('报错') || memo.includes('错误') || memo.includes('异常')) {
+    // 尝试提取 bug 模式
+    const patternMatch = memo.match(/异常[^:：]*[：:]\s*(.+)|bug[^:：]*[：:]\s*(.+)|修复[^:：]*[：:]\s*(.+)/i);
+    return { type: 'bug_fix', description: s2Memo.slice(0, 100), bugPattern: (patternMatch?.[1] || patternMatch?.[2] || patternMatch?.[3] || '').trim() };
+  }
+  if (memo.includes('新增') || memo.includes('功能') || memo.includes('feature') || memo.includes('添加')) {
+    const fnMatch = memo.match(/(?:新增|添加|实现)(?:函数|方法|模块)?[：:]?\s*(\w+)/i);
+    return { type: 'feature', description: s2Memo.slice(0, 100), expectedFunction: fnMatch?.[1]?.trim() };
+  }
+  if (memo.includes('重构') || memo.includes('refactor') || memo.includes('重写') || memo.includes('整理')) {
+    return { type: 'refactor', description: s2Memo.slice(0, 100) };
+  }
+  return { type: 'unknown', description: s2Memo.slice(0, 100) };
+}
 
 function isCommentLine(line: string): boolean {
   const trimmed = line.trim();
@@ -834,18 +1423,23 @@ if (isMainModule) {
 
 // 导出供测试和编程调用
 export {
+  checkGlobalSurvey,
   checkNineLayerPipeline,
   checkPFCThinScheduler,
   checkFGHouseholdSpec,
   checkUUIDAnnotationChain,
   checkMeetingEntityPoints,
   checkSQLiteSaveCalls,
+  checkSystemicPattern,
   checkHighRiskDependencyScan,
   checkASTIfBranchCount,
+  checkRegressionSafety,
+  checkIntentFulfillment,
   buildSummary,
   buildCacheable,
   MEETING_ENTITY_CHECKPOINTS,
   PATCH_IF_THRESHOLD,
   HIGH_RISK_FILES,
+  FG_REDLINE_TITLES,
 };
 export type { CheckResult, Violation, CheckerOutput, CheckerSummary, CacheableData };

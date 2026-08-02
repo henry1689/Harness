@@ -1,0 +1,6 @@
+{
+  "file": "src/app/knowledge/KnowledgeContextBuilder.ts",
+  "error": "Command failed: git checkout -- \"src/app/knowledge/KnowledgeContextBuilder.ts\"\nfatal: Unable to create 'D:/tools/wenstar-cc/.git/index.lock': File exists.\n\nAnother git process seems to be running in this repository, or the lock file may be stale\n",
+  "reason": "中高风险文件 \"src/app/knowledge/KnowledgeContextBuilder.ts\" 无有效令牌",
+  "timestamp": "2026-07-30T20:32:13.644Z"
+}

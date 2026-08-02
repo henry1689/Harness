@@ -8,15 +8,17 @@
  * 用法:
  *   node D:/AI文件/harness/.claude/harness-verify-startup.cjs
  *
- * 检查项（共 8 项）:
+ * 检查项（共 10 项）:
  *   1. 用户级 settings.json hooks 已注册
- *   2. PreToolUse hook 脚本存在且可执行
+ *   2. PreToolUse hook 脚本存在且可执行（含绝对路径识别）
  *   3. PostToolUse hook 脚本存在且可执行
- *   4. 数据目录结构完整（tokens/breaker/audit/sessions/）
+ *   4. 数据目录结构完整（tokens/breaker/audit/sessions/sentinel/）
  *   5. self_guard_checker.ts 可执行
  *   6. SelfGuard MCP 配置存在
  *   7. GlobalWatchdog 快照文件正常
- *   8. 模拟一次完整的 Read → Discipline + Write → DENY 链路
+ *   8. 模拟完整的 Read → Discipline + Write → DENY 链路（绝对路径+相对路径）
+ *   9. 🆕 哨兵三态验证（STANDARD/SENTINEL/LOCKDOWN + 豁免令牌）
+ *  10. 🆕 HTTP MCP Server 健康检查 + REST API 端点
  *
  * 退出码:
  *   0 — 全部通过
@@ -317,53 +319,246 @@ for (const dir of watcherDirs) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 8. 端到端链路验证小结
+// 8. 端到端链路验证 — 绝对路径 + 相对路径 + 保护区
 // ═══════════════════════════════════════════════════════════════
-console.log(`\n${BOLD}[8/8] 端到端链路验证${RESET}`);
+console.log(`\n${BOLD}[8/10] 端到端链路验证${RESET}`);
 
 // 清理测试残留
 try {
   const breakerDir = path.join(DATA_DIR, 'breaker');
   if (fs.existsSync(breakerDir)) {
-    for (const f of fs.readdirSync(breakerDir)) {
-      fs.unlinkSync(path.join(breakerDir, f));
-    }
+    for (const f of fs.readdirSync(breakerDir)) { fs.unlinkSync(path.join(breakerDir, f)); }
   }
   const discFile = path.join(DATA_DIR, 'sessions', 'discipline.json');
   if (fs.existsSync(discFile)) fs.unlinkSync(discFile);
 } catch {}
 
-console.log(`  ${CYAN}链路追踪:${RESET}`);
-console.log(`  ${CYAN}  Claude Code Edit/Write → PreToolUse hook → harness-pre-check.cjs →${RESET}`);
-console.log(`  ${CYAN}    → T1 保护区拦截 (Protected zone)${RESET}`);
-console.log(`  ${CYAN}    → T2 低风险放行 (.md/.test.ts/.config/)${RESET}`);
-console.log(`  ${CYAN}    → T3 写操作：多维Token校验 (flow_id+files+uuid+expiry+consumed)${RESET}`);
-console.log(`  ${CYAN}    → T4 无Token → DENY → 提示走 MCP harness_run_flow${RESET}`);
-console.log(`  ${CYAN}    → T5 批量限流 (≤3文件)${RESET}`);
-console.log(`  ${CYAN}    → T6 OS身份兜底${RESET}`);
-console.log(`  ${CYAN}  Claude Code Read/Grep → PreToolUse hook → Discipline token 自动签发${RESET}`);
-console.log(`  ${CYAN}  Claude Code Edit/Write 完成 → PostToolUse hook → 令牌强制消费+审计${RESET}`);
+// 测试：绝对路径 Read
+const tmpIn = path.join(DATA_DIR, 'tmp_verify.json');
+try {
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "D:/AI文件/harness/src/FlowEngine.ts"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"allow"')) ok('  绝对路径 Read: ✅ ALLOW');
+  else if (result.includes('"deny"')) fail('  绝对路径 Read: 错误地返回了 deny');
+  else fail('  绝对路径 Read: 无法解析结果');
+} catch (e) { fail(`  绝对路径 Read 失败: ${e.message}`); }
+
+// 测试：绝对路径 Write
+try {
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "D:/AI文件/harness/src/StageRunner.ts", old_string:"a", new_string:"b"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"deny"') && result.includes('Pipeline')) ok('  绝对路径 Write: ✅ DENY (无Token)');
+  else fail('  绝对路径 Write: 未正确拦截');
+} catch (e) { fail(`  绝对路径 Write 失败: ${e.message}`); }
+
+// 测试：保护区绝对路径
+try {
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "D:/AI文件/harness/.claude/settings.json", old_string:"a", new_string:"b"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"deny"') && result.includes('Protected')) ok('  保护区绝对路径: ✅ DENY (Protected)');
+  else fail('  保护区绝对路径: 未正确拦截');
+} catch (e) { fail(`  保护区绝对路径 失败: ${e.message}`); }
+
+// 测试：非 Harness 文件
+try {
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "C:/Users/henry/test.txt", old_string:"a", new_string:"b"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"allow"')) ok('  非Harness文件: ✅ ALLOW (不拦截)');
+  else fail('  非Harness文件: 错误拦截');
+} catch (e) { fail(`  非Harness文件 失败: ${e.message}`); }
+
+try { if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn); } catch {}
+
+// 清理残留
+try {
+  const breakerDir = path.join(DATA_DIR, 'breaker');
+  if (fs.existsSync(breakerDir)) {
+    for (const f of fs.readdirSync(breakerDir)) { fs.unlinkSync(path.join(breakerDir, f)); }
+  }
+  const discFile = path.join(DATA_DIR, 'sessions', 'discipline.json');
+  if (fs.existsSync(discFile)) fs.unlinkSync(discFile);
+} catch {}
 
 // ═══════════════════════════════════════════════════════════════
-// 总结
+// 9. 🆕 哨兵三态验证
 // ═══════════════════════════════════════════════════════════════
-console.log(`\n${BOLD}${'═'.repeat(54)}${RESET}`);
-console.log(`${BOLD}  验证结果: ${passed} 通过  ${warnings} 警告  ${errors} 错误${RESET}`);
-console.log(`${BOLD}${'═'.repeat(54)}${RESET}`);
+console.log(`\n${BOLD}[9/10] 哨兵三态验证 (STANDARD → SENTINEL → LOCKDOWN)${RESET}`);
 
-if (errors > 0) {
-  console.log(`\n${RED}${BOLD}🔴 管控体系存在致命缺陷！${RESET}`);
-  console.log(`${RED}   请修复以上 ${errors} 个错误后重新运行此脚本。${RESET}`);
-  console.log(`${RED}   在错误修复前，Harness 文件可能缺乏强制保护。${RESET}\n`);
-  process.exit(2);
-} else if (warnings > 0) {
-  console.log(`\n${YELLOW}${BOLD}⚠️  管控体系基本就绪，但存在 ${warnings} 个警告。${RESET}`);
-  console.log(`${YELLOW}   核心拦截功能正常，建议检查警告项。${RESET}\n`);
-  process.exit(1);
-} else {
-  console.log(`\n${GREEN}${BOLD}✅ 全部 ${passed} 项检查通过。SelfGuard 管控体系就绪。${RESET}`);
-  console.log(`${GREEN}${BOLD}╔══════════════════════════════════════════════╗${RESET}`);
-  console.log(`${GREEN}${BOLD}║  🔒 读自由  │  🔴 写锁死  │  🛡️ 永锁保护区 ║${RESET}`);
-  console.log(`${GREEN}${BOLD}╚══════════════════════════════════════════════╝${RESET}\n`);
-  process.exit(0);
+const SENTINEL_DIR = 'D:/AI文件/harness/data/sentinel';
+const STATE_FILE = path.join(SENTINEL_DIR, 'state.json');
+const OVERRIDE_DIR = path.join(SENTINEL_DIR, 'overrides');
+
+// 重置哨兵状态
+try {
+  if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);
+  if (!fs.existsSync(SENTINEL_DIR)) fs.mkdirSync(SENTINEL_DIR, { recursive: true });
+  if (!fs.existsSync(OVERRIDE_DIR)) fs.mkdirSync(OVERRIDE_DIR, { recursive: true });
+} catch {}
+
+// 9a. STANDARD 模式：Read 应自动放行
+try {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({level:0, mode:0, reason:"验证-STANDARD"}), 'utf-8');
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "src/FlowEngine.ts"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"allow"')) ok('  STANDARD Read: ✅ ALLOW (自动纪律令牌)');
+  else fail('  STANDARD Read: 未放行');
+} catch (e) { fail(`  STANDARD Read 失败: ${e.message}`); }
+
+// 9b. SENTINEL 模式：无纪律令牌 Read 应被拒绝
+try {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({level:1, mode:1, reason:"验证-SENTINEL"}), 'utf-8');
+  // 清理纪律令牌
+  const discFile = path.join(DATA_DIR, 'sessions', 'discipline.json');
+  if (fs.existsSync(discFile)) fs.unlinkSync(discFile);
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "src/FlowEngine.ts"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"deny"') && result.includes('SENTINEL')) ok('  SENTINEL Read(无令牌): ✅ DENY');
+  else fail('  SENTINEL Read(无令牌): 未拦截');
+} catch (e) { fail(`  SENTINEL Read 失败: ${e.message}`); }
+
+// 9c. LOCKDOWN 模式：Write 应被封死
+try {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({level:2, mode:2, reason:"验证-LOCKDOWN"}), 'utf-8');
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "src/FlowEngine.ts", old_string:"a", new_string:"b"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"deny"') && result.includes('LOCKDOWN')) ok('  LOCKDOWN Write: ✅ DENY');
+  else fail('  LOCKDOWN Write: 未封死');
+} catch (e) { fail(`  LOCKDOWN Write 失败: ${e.message}`); }
+
+// 9d. LOCKDOWN + 豁免令牌：Read 应被豁免放行
+try {
+  fs.writeFileSync(path.join(OVERRIDE_DIR, 'verify-ovr.json'), JSON.stringify({
+    override_id:'verify-ovr', created_at:new Date().toISOString(), expires_at:new Date(Date.now()+600000).toISOString(),
+    files:['src/FlowEngine.ts'], reason:'验证豁免', consumed:false, usage_count:0
+  }), 'utf-8');
+  fs.writeFileSync(tmpIn, JSON.stringify({file_path: "src/FlowEngine.ts"}), 'utf-8');
+  const result = execSync(`node "${PRE_CHECK}" < "${tmpIn}"`, { encoding: 'utf-8', timeout: 5000, cwd: 'D:/AI文件/harness' });
+  if (result.includes('"allow"') && result.includes('豁免')) ok('  LOCKDOWN+豁免 Read: ✅ ALLOW');
+  else fail('  LOCKDOWN+豁免 Read: 未放行');
+} catch (e) { fail(`  LOCKDOWN+豁免 Read 失败: ${e.message}`); }
+
+// 重置为标准模式 + 清理
+try {
+  fs.writeFileSync(STATE_FILE, JSON.stringify({level:0, mode:0, reason:"验证完成-恢复STANDARD"}), 'utf-8');
+  const overrides = path.join(SENTINEL_DIR, 'overrides');
+  if (fs.existsSync(overrides)) {
+    for (const f of fs.readdirSync(overrides)) { try { fs.unlinkSync(path.join(overrides, f)); } catch {} }
+  }
+  if (fs.existsSync(tmpIn)) fs.unlinkSync(tmpIn);
+  if (fs.existsSync(discFile)) fs.unlinkSync(discFile);
+  ok('  哨兵状态已恢复 STANDARD');
+} catch {}
+
+// ═══════════════════════════════════════════════════════════════
+// 10. 🆕 HTTP MCP Server + REST API
+// ═══════════════════════════════════════════════════════════════
+console.log(`\n${BOLD}[10/10] HTTP MCP Server 端点验证${RESET}`);
+
+const HTTP_PORT = 18770;
+const http = require('http');
+
+function httpGet(path) {
+  return new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${HTTP_PORT}${path}`, { timeout: 3000 }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve({ status: res.statusCode, data }));
+    }).on('error', reject);
+  });
 }
+
+function httpPost(path, body) {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify(body);
+    const req = http.request(`http://127.0.0.1:${HTTP_PORT}${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) }, timeout: 3000
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve({ status: res.statusCode, data }));
+    });
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
+  });
+}
+
+(async () => {
+  try {
+    const health = await httpGet('/health');
+    if (health.status === 200) {
+      const j = JSON.parse(health.data);
+      ok(`GET /health: ${j.status} (sentinel=${j.sentinel}, v=${j.version})`);
+    } else {
+      warn(`GET /health: HTTP ${health.status}`);
+    }
+  } catch (e) {
+    warn(`GET /health: 无法连接 (${e.message}) — 确认 SelfGuard MCP Server 已启动`);
+  }
+
+  try {
+    const status = await httpGet('/sentinel/status');
+    if (status.status === 200) {
+      const j = JSON.parse(status.data);
+      ok(`GET /sentinel/status: mode=${j.mode_name}, level=${j.level}`);
+    } else {
+      warn(`GET /sentinel/status: HTTP ${status.status}`);
+    }
+  } catch (e) {
+    warn(`GET /sentinel/status: 无法连接`);
+  }
+
+  try {
+    const rpc = await httpPost('/mcp', { jsonrpc:'2.0', method:'tools/call', params:{ name:'sentinel_status', arguments:{} }, id:1 });
+    if (rpc.status === 200) {
+      const j = JSON.parse(rpc.data);
+      const text = j.result?.content?.[0]?.text || '';
+      ok(`POST /mcp (sentinel_status): ${text.includes('STANDARD') ? '✅' : '⚠️'} MCP JSON-RPC 正常`);
+    } else {
+      warn(`POST /mcp: HTTP ${rpc.status}`);
+    }
+  } catch (e) {
+    warn(`POST /mcp: 无法连接`);
+  }
+
+  // 链路追踪
+  console.log(`\n  ${CYAN}链路追踪 (v4.0-sentinel):${RESET}`);
+  console.log(`  ${CYAN}  ┌─ 哨兵层 (Hook 级)${RESET}`);
+  console.log(`  ${CYAN}  │  STANDARD: 读自由(自动令牌) 写锁死(需流水线令牌)${RESET}`);
+  console.log(`  ${CYAN}  │  SENTINEL: 读需声明(禁用自动令牌) 写锁死 全量审计${RESET}`);
+  console.log(`  ${CYAN}  │  LOCKDOWN: 全禁(读/写均拒绝) 仅限一次性豁免令牌${RESET}`);
+  console.log(`  ${CYAN}  ├─ Hook 层 (PreToolUse/PostToolUse)${RESET}`);
+  console.log(`  ${CYAN}  │  T1 保护区 → T2 低风险 → T3 哨兵检查 → T4 令牌校验${RESET}`);
+  console.log(`  ${CYAN}  │  T5 批量限流(≤3) → T6 OS兜底 → PostToolUse审计${RESET}`);
+  console.log(`  ${CYAN}  ├─ MCP 层 (stdio + HTTP 双传输)${RESET}`);
+  console.log(`  ${CYAN}  │  10 个 MCP Tools + 6 个 REST API 端点${RESET}`);
+  console.log(`  ${CYAN}  │  SSE 事件推送 /events → 外部仪表盘实时订阅${RESET}`);
+  console.log(`  ${CYAN}  └─ 监控层 (GlobalWatchdog 10s 旁路扫描)${RESET}`);
+
+  // ── 总结 ──
+  console.log(`\n${BOLD}${'═'.repeat(54)}${RESET}`);
+  console.log(`${BOLD}  验证结果: ${passed} 通过  ${warnings} 警告  ${errors} 错误${RESET}`);
+  console.log(`${BOLD}${'═'.repeat(54)}${RESET}`);
+
+  if (errors > 0) {
+    console.log(`\n${RED}${BOLD}🔴 管控体系存在致命缺陷！${RESET}`);
+    console.log(`${RED}   请修复以上 ${errors} 个错误后重新运行此脚本。${RESET}`);
+    console.log(`${RED}   在错误修复前，Harness 文件可能缺乏强制保护。${RESET}\n`);
+    process.exit(2);
+  } else if (warnings > 0) {
+    console.log(`\n${YELLOW}${BOLD}⚠️  管控体系基本就绪，但存在 ${warnings} 个警告。${RESET}`);
+    console.log(`${YELLOW}   核心拦截 + 哨兵功能正常，建议检查警告项。${RESET}\n`);
+    process.exit(1);
+  } else {
+    console.log(`\n${GREEN}${BOLD}✅ 全部 ${passed} 项检查通过。SelfGuard 哨兵管控体系就绪。${RESET}`);
+    console.log(`${GREEN}${BOLD}╔════════════════════════════════════════════════════╗${RESET}`);
+    console.log(`${GREEN}${BOLD}║  🔒 读自由  │  🔴 写锁死  │  🛡️ 永锁保护区      ║${RESET}`);
+    console.log(`${GREEN}${BOLD}║  STANDARD → SENTINEL → LOCKDOWN 哨兵三态     ║${RESET}`);
+    console.log(`${GREEN}${BOLD}║  stdio + HTTP MCP 双传输  |  :18770 REST API  ║${RESET}`);
+    console.log(`${GREEN}${BOLD}╚════════════════════════════════════════════════════╝${RESET}\n`);
+    process.exit(0);
+  }
+})().catch(e => {
+  fail(`验证脚本异常: ${e.message}`);
+  process.exit(2);
+});

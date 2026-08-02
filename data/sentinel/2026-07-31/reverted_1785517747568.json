@@ -1,0 +1,8 @@
+{
+  "file": "src/webui/server-chat-routes.ts",
+  "risk": "mid",
+  "reason": "🚫 中高风险文件 \"src/webui/server-chat-routes.ts\" 未经授权被修改 (风险: mid, 令牌: 未找到)",
+  "hash": "9c3bc22",
+  "attempts": 1,
+  "timestamp": "2026-07-31T17:09:07.228Z"
+}

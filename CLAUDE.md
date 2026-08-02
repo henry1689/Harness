@@ -29,7 +29,7 @@ SelfGuard 是独立 MCP 服务，不在本项目中。Claude Code 通过 `.claud
 
 **每次修改 Harness 文件前，AI 必须先调用 `check_harness_change` 工具。**
 
-SelfGuard 十四条自护铁律全维度评审通过后才能进入编码。
+SelfGuard 十三条自护铁律全维度评审通过后才能进入编码。
 
 ## 开发命令
 

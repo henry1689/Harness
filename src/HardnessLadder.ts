@@ -1,0 +1,432 @@
+/**
+ * HardnessLadder — Harness 硬度阶梯 v1.0
+ * ========================================
+ * 定义 Harness 从轻量到高强度的四级进化路径。
+ *
+ * 每一级定义了：
+ *   - 准入条件（从低一级升级需要满足什么）
+ *   - 能力清单（本级拥有什么能力）
+ *   - YAML 特征（本级 YAML 包含什么级别的规则）
+ *
+ * 升级由 EvolutionEngine 自动检测和提议，人工确认后执行。
+ */
+
+// ════════════════════════════════════════════════════════════════════
+// 硬度等级
+// ════════════════════════════════════════════════════════════════════
+
+export type HardnessLevel = 'L1' | 'L2' | 'L3' | 'L4';
+
+export interface HardnessLevelDef {
+  level: HardnessLevel;
+  name: string;
+  description: string;
+  /** 本级的核心能力 */
+  capabilities: string[];
+  /** CK 检查项数量 */
+  ckCheckCount: number;
+  /** 设计标准数量 */
+  standardCount: number;
+  /** S4.5 通过阈值 */
+  passThreshold: number;
+  /** 允许的最大 S3 重试次数 */
+  maxS3Retries: number;
+  /** 收敛最大轮次（超限转人工） */
+  maxConvergenceRounds: number;
+  /** 是否自动生成规则 */
+  autoRuleGeneration: boolean;
+  /** 是否跨项目经验迁移 */
+  crossProjectLearning: boolean;
+  /** 是否预判式拦截 */
+  predictiveInterception: boolean;
+  /** 是否零人工干预 */
+  zeroHumanIntervention: boolean;
+}
+
+/** 四级硬度定义 */
+export const HARDNESS_LEVELS: Record<HardnessLevel, HardnessLevelDef> = {
+  L1: {
+    level: 'L1',
+    name: '轻量级 · 基础闸门',
+    description: '手动定义的固定规则 + 被动回滚。规则由人编写，YAML 手动维护。Sentinel 兜底回滚。',
+    capabilities: [
+      'S1-S7 状态机流水线',
+      '12 项 CK 本地硬校验',
+      '23 条设计标准评分',
+      'Sentinel 文件哨兵回滚',
+      'SelfLearner 日度分析报告',
+    ],
+    ckCheckCount: 12,
+    standardCount: 23,
+    passThreshold: 98,
+    maxS3Retries: 6,
+    maxConvergenceRounds: 3,
+    autoRuleGeneration: false,
+    crossProjectLearning: false,
+    predictiveInterception: false,
+    zeroHumanIntervention: false,
+  },
+
+  L2: {
+    level: 'L2',
+    name: '中度级 · 自适应进化',
+    description: '从违规日志中自动发现模式、生成规则建议。YAML 自动追加检查条款。阈值根据收敛历史自适应调整。',
+    capabilities: [
+      'L1 全部能力',
+      '违规模式自动聚类与发现',
+      'YAML 自动追加检查条款',
+      '自适应阈值调整（基于项目收敛历史）',
+      '新增设计标准自动建议',
+      '风险等级自动升级（文件/目录级）',
+      'Sentinel 批量攻击检测',
+    ],
+    ckCheckCount: 15,
+    standardCount: 28,
+    passThreshold: 99,
+    maxS3Retries: 5,
+    maxConvergenceRounds: 3,
+    autoRuleGeneration: true,
+    crossProjectLearning: false,
+    predictiveInterception: false,
+    zeroHumanIntervention: false,
+  },
+
+  L3: {
+    level: 'L3',
+    name: '强度级 · 跨项目智能',
+    description: '跨项目经验迁移。修改前预判风险。YAML 自动生成新阶段。多项目共享违规模式知识库。',
+    capabilities: [
+      'L2 全部能力',
+      '跨项目违规模式知识库',
+      '修改前风险预判（输入意图→预测违规概率）',
+      'YAML 自动生成新 Stage',
+      '多项目统一规则同步',
+      'Claude 行为模式分析（识别"打补丁倾向"）',
+    ],
+    ckCheckCount: 18,
+    standardCount: 35,
+    passThreshold: 100,
+    maxS3Retries: 4,
+    maxConvergenceRounds: 3,
+    autoRuleGeneration: true,
+    crossProjectLearning: true,
+    predictiveInterception: true,
+    zeroHumanIntervention: false,
+  },
+
+  L4: {
+    level: 'L4',
+    name: '高强度级 · 自治司法',
+    description: '全自动规则进化。零人工干预的自治系统。预先阻止已知违规模式，而非事后回滚。YAML 自我重写。',
+    capabilities: [
+      'L3 全部能力',
+      '全自动规则进化（无需人工确认）',
+      '零人工干预流水线',
+      '预判式拦截（在 Claude 动手前阻止）',
+      'YAML 自我重写与版本管理',
+      '多项目联合防御网络',
+      '对抗性测试自动生成',
+    ],
+    ckCheckCount: 22,
+    standardCount: 40,
+    passThreshold: 100,
+    maxS3Retries: 3,
+    maxConvergenceRounds: 2,
+    autoRuleGeneration: true,
+    crossProjectLearning: true,
+    predictiveInterception: true,
+    zeroHumanIntervention: true,
+  },
+};
+
+// ════════════════════════════════════════════════════════════════════
+// 升级条件
+// ════════════════════════════════════════════════════════════════════
+
+export interface UpgradeCondition {
+  /** 条件描述 */
+  description: string;
+  /** 当前是否满足 */
+  met: boolean;
+  /** 当前进度（如 "34/50 事件"） */
+  progress: string;
+}
+
+export interface UpgradePath {
+  from: HardnessLevel;
+  to: HardnessLevel;
+  /** 升级条件清单 */
+  conditions: UpgradeCondition[];
+  /** 是否全部满足 */
+  allMet: boolean;
+  /** 预计距离满足还需要的天数（粗略估算） */
+  estimatedDaysRemaining: number | null;
+}
+
+/**
+ * 评估当前是否满足从 fromLevel 升级到下一级的条件。
+ *
+ * @param fromLevel 当前硬度
+ * @param stats 统计数据快照
+ * @returns 升级路径评估结果
+ */
+export function evaluateUpgrade(
+  fromLevel: HardnessLevel,
+  stats: HardnessStats,
+): UpgradePath | null {
+  const levels: HardnessLevel[] = ['L1', 'L2', 'L3', 'L4'];
+  const idx = levels.indexOf(fromLevel);
+  if (idx < 0 || idx >= levels.length - 1) return null;
+
+  const to = levels[idx + 1] as HardnessLevel;
+
+  switch (fromLevel) {
+    case 'L1': return evaluateL1ToL2(stats);
+    case 'L2': return evaluateL2ToL3(stats);
+    case 'L3': return evaluateL3ToL4(stats);
+    default: return null;
+  }
+}
+
+/** 累计数据快照 */
+export interface HardnessStats {
+  /** 累计哨兵回滚事件数 */
+  totalSentinelReverts: number;
+  /** 累计哨兵拦截放行数 */
+  totalSentinelAllowed: number;
+  /** 累计哨兵错误数 */
+  totalSentinelErrors: number;
+  /** 累计审计事件数 */
+  totalAuditEvents: number;
+  /** 发现的违规模式种类数 */
+  uniqueViolationPatterns: number;
+  /** 自生成的设计标准数 */
+  autoGeneratedStandards: number;
+  /** 自生成的 YAML 规则条款数 */
+  autoGeneratedRules: number;
+  /** 收敛平均轮次 */
+  avgConvergenceRounds: number;
+  /** 人工干预率（人工旁路次数 / 总收敛次数，0-1） */
+  humanInterventionRate: number;
+  /** 跨项目共享的规则数 */
+  crossProjectRules: number;
+  /** 预判准确率（预判违规 / 实际违规，0-1） */
+  predictiveAccuracy: number;
+  /** 注册的受管制项目数 */
+  registeredProjects: number;
+  /** 当前硬度等级 */
+  currentLevel: HardnessLevel;
+  /** 数据起始日期 */
+  dataSince: string;
+  /** 最近 7 天每日平均事件数 */
+  dailyAvgEvents7d: number;
+}
+
+function evaluateL1ToL2(stats: HardnessStats): UpgradePath {
+  const conditions: UpgradeCondition[] = [
+    {
+      description: '累计 Sentinel 回滚事件 ≥ 50 次',
+      met: stats.totalSentinelReverts >= 50,
+      progress: `${stats.totalSentinelReverts}/50`,
+    },
+    {
+      description: '发现的独立违规模式 ≥ 5 种',
+      met: stats.uniqueViolationPatterns >= 5,
+      progress: `${stats.uniqueViolationPatterns}/5`,
+    },
+    {
+      description: '收敛平均轮次 ≤ 2.5（系统基本稳定）',
+      met: stats.avgConvergenceRounds <= 2.5,
+      progress: `${stats.avgConvergenceRounds.toFixed(1)}/2.5`,
+    },
+    {
+      description: '至少 1 个自生成标准通过了人工审核',
+      met: stats.autoGeneratedStandards >= 1,
+      progress: `${stats.autoGeneratedStandards}/1`,
+    },
+    {
+      description: '近 7 天日均事件 > 5（有足够数据支撑进化）',
+      met: stats.dailyAvgEvents7d > 5,
+      progress: `${stats.dailyAvgEvents7d.toFixed(1)}/5`,
+    },
+  ];
+
+  const allMet = conditions.every(c => c.met);
+
+  // 估算剩余天数：取最慢的条件
+  let estimatedDaysRemaining: number | null = null;
+  if (!allMet && stats.dailyAvgEvents7d > 0) {
+    const needReverts = Math.max(0, 50 - stats.totalSentinelReverts);
+    const needPatterns = Math.max(0, 5 - stats.uniqueViolationPatterns);
+    const daysByReverts = stats.dailyAvgEvents7d > 0 ? needReverts / (stats.dailyAvgEvents7d * 0.6) : Infinity;
+    const daysByPatterns = stats.dailyAvgEvents7d > 0 ? needPatterns / (stats.dailyAvgEvents7d * 0.15) : Infinity;
+    estimatedDaysRemaining = Math.ceil(Math.min(daysByReverts, daysByPatterns));
+  }
+
+  return {
+    from: 'L1',
+    to: 'L2',
+    conditions,
+    allMet,
+    estimatedDaysRemaining: allMet ? null : estimatedDaysRemaining,
+  };
+}
+
+function evaluateL2ToL3(stats: HardnessStats): UpgradePath {
+  const conditions: UpgradeCondition[] = [
+    {
+      description: '累计 Sentinel 事件 ≥ 200 次',
+      met: stats.totalSentinelReverts + stats.totalSentinelAllowed >= 200,
+      progress: `${stats.totalSentinelReverts + stats.totalSentinelAllowed}/200`,
+    },
+    {
+      description: '注册受管制项目 ≥ 2 个',
+      met: stats.registeredProjects >= 2,
+      progress: `${stats.registeredProjects}/2`,
+    },
+    {
+      description: '自生成标准 ≥ 5 条',
+      met: stats.autoGeneratedStandards >= 5,
+      progress: `${stats.autoGeneratedStandards}/5`,
+    },
+    {
+      description: '自生成 YAML 规则条款 ≥ 8 条',
+      met: stats.autoGeneratedRules >= 8,
+      progress: `${stats.autoGeneratedRules}/8`,
+    },
+    {
+      description: '跨项目共享规则 ≥ 3 条',
+      met: stats.crossProjectRules >= 3,
+      progress: `${stats.crossProjectRules}/3`,
+    },
+    {
+      description: '人工干预率 ≤ 20%',
+      met: stats.humanInterventionRate <= 0.2,
+      progress: `${(stats.humanInterventionRate * 100).toFixed(0)}%/20%`,
+    },
+  ];
+
+  const allMet = conditions.every(c => c.met);
+
+  let estimatedDaysRemaining: number | null = null;
+  if (!allMet && stats.dailyAvgEvents7d > 0) {
+    const totalNeeded = Math.max(0, 200 - (stats.totalSentinelReverts + stats.totalSentinelAllowed));
+    estimatedDaysRemaining = Math.ceil(totalNeeded / Math.max(1, stats.dailyAvgEvents7d));
+  }
+
+  return { from: 'L2', to: 'L3', conditions, allMet, estimatedDaysRemaining };
+}
+
+function evaluateL3ToL4(stats: HardnessStats): UpgradePath {
+  const conditions: UpgradeCondition[] = [
+    {
+      description: '累计 Sentinel 事件 ≥ 500 次',
+      met: stats.totalSentinelReverts + stats.totalSentinelAllowed >= 500,
+      progress: `${stats.totalSentinelReverts + stats.totalSentinelAllowed}/500`,
+    },
+    {
+      description: '自生成标准 ≥ 15 条',
+      met: stats.autoGeneratedStandards >= 15,
+      progress: `${stats.autoGeneratedStandards}/15`,
+    },
+    {
+      description: '自生成 YAML 规则条款 ≥ 20 条',
+      met: stats.autoGeneratedRules >= 20,
+      progress: `${stats.autoGeneratedRules}/20`,
+    },
+    {
+      description: '人工干预率 ≤ 10%',
+      met: stats.humanInterventionRate <= 0.1,
+      progress: `${(stats.humanInterventionRate * 100).toFixed(0)}%/10%`,
+    },
+    {
+      description: '预判准确率 ≥ 80%',
+      met: stats.predictiveAccuracy >= 0.8,
+      progress: `${(stats.predictiveAccuracy * 100).toFixed(0)}%/80%`,
+    },
+    {
+      description: '注册受管制项目 ≥ 3 个',
+      met: stats.registeredProjects >= 3,
+      progress: `${stats.registeredProjects}/3`,
+    },
+    {
+      description: '最近 30 天零次因规则缺失导致的安全事件',
+      met: stats.totalSentinelErrors === 0, // 简化：0 错误
+      progress: `${stats.totalSentinelErrors}/0`,
+    },
+  ];
+
+  const allMet = conditions.every(c => c.met);
+
+  return {
+    from: 'L3',
+    to: 'L4',
+    conditions,
+    allMet,
+    estimatedDaysRemaining: null, // L4 太远，不估算
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 工具函数
+// ════════════════════════════════════════════════════════════════════
+
+/** 获取当前硬度等级定义 */
+export function getLevelDef(level: HardnessLevel): HardnessLevelDef {
+  return HARDNESS_LEVELS[level];
+}
+
+/** 获取下一级 */
+export function getNextLevel(level: HardnessLevel): HardnessLevel | null {
+  const levels: HardnessLevel[] = ['L1', 'L2', 'L3', 'L4'];
+  const idx = levels.indexOf(level);
+  return idx >= 0 && idx < levels.length - 1 ? levels[idx + 1] : null;
+}
+
+/** 计算升级进度百分比 (0-100) */
+export function getUpgradeProgress(path: UpgradePath): number {
+  if (path.allMet) return 100;
+  const met = path.conditions.filter(c => c.met).length;
+  return Math.round((met / path.conditions.length) * 100);
+}
+
+/** 生成升级路线图的人类可读摘要 */
+export function formatUpgradeReport(path: UpgradePath): string {
+  const progress = getUpgradeProgress(path);
+  const fromDef = HARDNESS_LEVELS[path.from];
+  const toDef = HARDNESS_LEVELS[path.to];
+
+  const lines = [
+    `# Harness 进化路线图`,
+    '',
+    `## 当前: ${fromDef.level} · ${fromDef.name}`,
+    '',
+    `> ${fromDef.description}`,
+    '',
+    `## 目标: ${toDef.level} · ${toDef.name}`,
+    '',
+    `> ${toDef.description}`,
+    '',
+    `### 升级进度: ${progress}%`,
+    '',
+    `| 条件 | 状态 | 进度 |`,
+    `|------|:--:|------|`,
+  ];
+
+  for (const c of path.conditions) {
+    lines.push(`| ${c.description} | ${c.met ? '✅' : '⬜'} | ${c.progress} |`);
+  }
+
+  lines.push('');
+
+  if (path.allMet) {
+    lines.push('### 🎉 所有条件已满足！可以升级。');
+    lines.push('');
+    lines.push(`升级后将获得: ${toDef.capabilities.join('、')}`);
+  } else if (path.estimatedDaysRemaining !== null) {
+    lines.push(`### ⏳ 预计还需 ${path.estimatedDaysRemaining} 天（基于近 7 天数据速率）`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}

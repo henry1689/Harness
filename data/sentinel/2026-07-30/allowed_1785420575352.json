@@ -1,0 +1,6 @@
+{
+  "file": "src/webui/chat.ts",
+  "risk": "high",
+  "reason": "令牌有效 (run_id: sentinel_e2e)",
+  "timestamp": "2026-07-30T14:09:35.348Z"
+}

@@ -1,0 +1,8 @@
+{
+  "file": "src/webui/chat.ts",
+  "risk": "high",
+  "reason": "中高风险文件 \"src/webui/chat.ts\" 无有效令牌",
+  "hash": "726923e",
+  "attempts": 1,
+  "timestamp": "2026-07-31T13:57:12.533Z"
+}

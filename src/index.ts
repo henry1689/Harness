@@ -65,17 +65,22 @@ export type { SlimStageContext } from './RulesLazyLoader.js';
 
 // ── 本地硬校验脚本（导出核心函数供外部调用） ──
 export {
+  checkGlobalSurvey,
   checkNineLayerPipeline,
   checkPFCThinScheduler,
   checkFGHouseholdSpec,
   checkUUIDAnnotationChain,
   checkMeetingEntityPoints,
   checkSQLiteSaveCalls,
+  checkSystemicPattern,
   checkHighRiskDependencyScan,
   checkASTIfBranchCount,
+  checkRegressionSafety,
+  checkIntentFulfillment,
   MEETING_ENTITY_CHECKPOINTS,
   PATCH_IF_THRESHOLD,
   HIGH_RISK_FILES,
+  FG_REDLINE_TITLES,
 } from './main_harness_checker.js';
 export type {
   CheckResult,
@@ -84,6 +89,44 @@ export type {
   CheckerSummary,
   CacheableData,
 } from './main_harness_checker.js';
+
+// ── S4.5 收敛闸门 ──
+export { DESIGN_STANDARDS, getStandardById, getStandardsByCategory, getCKToStandardMapping } from './DesignStandards.js';
+export type { DesignStandard, StandardCategory } from './DesignStandards.js';
+
+export { computeComplianceScore, isCompliancePassed } from './ComplianceScorer.js';
+
+export { evaluate as convergenceEvaluate, getConvergenceHistory, getCurrentConvergenceRound } from './ConvergenceGate.js';
+export type { ConvergenceGateConfig } from './ConvergenceGate.js';
+
+// ── 自学习引擎 ──
+export { analyze as selfLearn } from './SelfLearner.js';
+
+// ── 自进化引擎 ──
+export { EvolutionEngine } from './EvolutionEngine.js';
+export type {
+  EvolutionEngineConfig,
+  EvolutionStatus,
+  ObservedEvent,
+  ViolationPattern,
+  RuleUpgrade,
+} from './EvolutionEngine.js';
+
+export {
+  HARDNESS_LEVELS,
+  evaluateUpgrade,
+  getLevelDef,
+  getNextLevel,
+  getUpgradeProgress,
+  formatUpgradeReport,
+} from './HardnessLadder.js';
+export type {
+  HardnessLevel as EvolutionHardnessLevel,
+  HardnessLevelDef,
+  HardnessStats,
+  UpgradePath,
+  UpgradeCondition,
+} from './HardnessLadder.js';
 
 // ── 类型 ──
 export type {
@@ -106,6 +149,10 @@ export type {
   RunMode,
   WhitelistKey,
   AfterAction,
+  StandardComplianceScore,
+  GapItem,
+  ComplianceReport,
+  ConvergenceEntry,
 } from './types.js';
 
 export {

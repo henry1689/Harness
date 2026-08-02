@@ -1,0 +1,8 @@
+{
+  "file": "src/webui/chat.ts",
+  "risk": "high",
+  "reason": "中高风险文件 \"src/webui/chat.ts\" 无有效令牌",
+  "diff": "unknown",
+  "dryRun": true,
+  "timestamp": "2026-07-30T14:08:40.091Z"
+}

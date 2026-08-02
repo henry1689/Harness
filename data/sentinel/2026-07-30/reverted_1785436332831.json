@@ -1,0 +1,7 @@
+{
+  "file": "src/m4/household/EntityContextBuilder.ts",
+  "risk": "high",
+  "reason": "中高风险文件 \"src/m4/household/EntityContextBuilder.ts\" 无有效令牌",
+  "hash": "d176e6a",
+  "timestamp": "2026-07-30T18:32:12.542Z"
+}

@@ -1,0 +1,7 @@
+{
+  "file": "src/webui/chat/retrieval-stage.ts",
+  "risk": "mid",
+  "reason": "中高风险文件 \"src/webui/chat/retrieval-stage.ts\" 无有效令牌",
+  "hash": "af1d688",
+  "timestamp": "2026-07-30T20:32:13.629Z"
+}

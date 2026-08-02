@@ -23,8 +23,8 @@
 import type {
   FlowConfig,
   StageConfig,
-  FlowRunState,
   StageResult,
+  FlowRunState,
   FlowStatus,
   GateResolution,
   TriggerContext,
@@ -49,8 +49,12 @@ export interface FlowEngineOptions {
   onHumanGate?: HumanGateCallback;
   /** 委托评审函数（delegate runner 必须） */
   delegateReviewFn?: DelegateReviewFn;
+  /** 🔴 按阶段分派的委托评审函数（优先于 delegateReviewFn） */
+  delegateReviewFnMap?: Map<string, DelegateReviewFn>;
   /** 项目根目录 */
   projectRoot?: string;
+  /** 🔴 自动批准 human gate（MCP 无头模式，跳过人工确认） */
+  autoApproveHumanGate?: boolean;
 }
 
 /** 流水线执行结果 */
@@ -84,11 +88,17 @@ export class FlowEngine {
   private _paused = false;
 
   constructor(options: FlowEngineOptions = {}) {
+    // 🔴 自动批准模式：构造一个始终返回 'approved' 的回调
+    const humanCallback = options.autoApproveHumanGate
+      ? async (_stage: StageConfig, _result: StageResult): Promise<'approved'> => 'approved'
+      : options.onHumanGate;
+
     this.gateController = new GateController({
-      onHumanGate: options.onHumanGate,
+      onHumanGate: humanCallback ?? undefined,
     });
     this.stageRunner = new StageRunner({
       delegateReviewFn: options.delegateReviewFn,
+      delegateReviewFnMap: options.delegateReviewFnMap,
       projectRoot: options.projectRoot || process.cwd(),
     });
   }
@@ -451,6 +461,8 @@ export class FlowEngine {
   // ════════════════════════════════════════════════════════════════
 
   private initRunState(runId: string, context: TriggerContext): FlowRunState {
+    // 🔴 projectRoot 优先从 TriggerContext 取值，其次 FlowEngine 构造选项，最后当前目录
+    const projectRoot = context.projectRoot || this.stageRunner.getProjectRoot();
     return {
       run_id: runId,
       flow_id: this.config!.flow_id,
@@ -459,6 +471,9 @@ export class FlowEngine {
       jump_count: 0,
       stage_retry_count: 0,
       s3_retry_count: 0,
+      convergence_round: 0,
+      convergence_history: [],
+      project_root: projectRoot,
       stage_results: new Map(),
       global_memo: '',
       started_at: new Date().toISOString(),

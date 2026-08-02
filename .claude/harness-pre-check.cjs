@@ -64,6 +64,7 @@ var LOW_RISK_SUFFIXES = ['.test.ts', '.spec.ts', '.d.ts'];
 var LOW_RISK_EXTENSIONS = ['.md','.sql','.cjs','.mjs','.html','.css','.scss','.less','.env','.gitignore','.lock','.sh','.ps1','.bat'];
 
 var AUDIT_DIR = path.resolve(__dirname, '..', 'data', 'audit', 'selfguard');
+var HEARTBEAT_FILE = path.resolve(__dirname, '..', 'data', 'heartbeat.json');
 var TOKEN_DIR = path.resolve(__dirname, '..', 'data', 'tokens');
 var BREAKER_DIR = path.resolve(__dirname, '..', 'data', 'breaker');
 var SESSION_DIR = path.resolve(__dirname, '..', 'data', 'sessions');
@@ -122,28 +123,42 @@ function run() {
   isReadOnly = isGrep || (!input.old_string && !input.new_string && !input.content);
 
   // ── SCOPE CHECK: Normalize absolute paths to project-relative ──
-  // 🔴 防止绝对路径绕过作用域检查（如 C:/tools/wenstar-cc/src/webui/chat.ts）
+  // 🔴 核心：识别文件是否属于 D:\AI文件\harness 管控域
+  var HARNESS_ROOT = 'D:/AI文件/harness';
+  var HR_NORM = HARNESS_ROOT.replace(/\\/g, '/') + '/';
   var isHarnessFile = false;
 
-  // 规范化：将已知项目根目录前缀剥离为相对路径
-  var PROJECT_ROOTS = ['wenstar-cc', 'wenstar_os', 'WenstarOSTianquan'];
-  for (var pi = 0; pi < PROJECT_ROOTS.length; pi++) {
-    var rootMarker = '/' + PROJECT_ROOTS[pi] + '/';
-    var bsMarker = '\\' + PROJECT_ROOTS[pi] + '\\';
-    var idx = n.indexOf(rootMarker);
-    if (idx === -1) idx = n.indexOf(bsMarker);
-    if (idx !== -1) {
-      // 剥离到项目根目录的相对路径
-      n = n.slice(idx + rootMarker.length);
-      break;
-    }
+  // 1. 如果路径是 HARNESS_ROOT 下的绝对路径 → 剥离前缀
+  if (n.toUpperCase().indexOf(HR_NORM.toUpperCase()) === 0) {
+    n = n.slice(HR_NORM.length);
+    isHarnessFile = true;
   }
 
+  // 2. 如果路径已经是相对于 HARNESS_ROOT 的相对路径
   if (n.indexOf('src/') === 0 || n.indexOf('data/') === 0 || n.indexOf('.claude/') === 0) {
     isHarnessFile = true;
   }
+
+  // 3. 兼容旧版 wenstar-cc 项目根目录（历史遗留，保留向前兼容）
+  if (!isHarnessFile) {
+    var PROJECT_ROOTS = ['wenstar-cc', 'wenstar_os', 'WenstarOSTianquan'];
+    for (var pi = 0; pi < PROJECT_ROOTS.length; pi++) {
+      var rootMarker = '/' + PROJECT_ROOTS[pi] + '/';
+      var bsMarker = '\\' + PROJECT_ROOTS[pi] + '\\';
+      var idx = n.indexOf(rootMarker);
+      if (idx === -1) idx = n.indexOf(bsMarker);
+      if (idx !== -1) {
+        n = n.slice(idx + rootMarker.length);
+        if (n.indexOf('src/') === 0 || n.indexOf('data/') === 0 || n.indexOf('.claude/') === 0) {
+          isHarnessFile = true;
+        }
+        break;
+      }
+    }
+  }
+
   // For Grep, if the search path is a Harness directory
-  if (isGrep && (n.indexOf('src/') === 0 || n.indexOf('data/') === 0 || n.indexOf('.claude/') === 0 || n.indexOf('harness') !== -1)) {
+  if (isGrep && (n.indexOf('src/') === 0 || n.indexOf('data/') === 0 || n.indexOf('.claude/') === 0 || n.toLowerCase().indexOf('harness') !== -1)) {
     isHarnessFile = true;
   }
   if (!isHarnessFile) return { decision: 'allow' };
@@ -159,7 +174,52 @@ function run() {
   // T2: 低风险 → allow
   if (isLowRisk(n)) return { decision: 'allow' };
 
-  // ── 🔴 READ-ONLY TOOLS (Read/Grep): Discipline check + bypass logging ──
+  // ══════════════════════════════════════════════════════════
+  // 🆕 哨兵模式检查 (v4.0 — sentinel state 由 MCP Server 维护)
+  // ══════════════════════════════════════════════════════════
+  var sentinel = readSentinelState();
+  var SENTINEL_LEVEL = sentinel.level || 0; // 0=STANDARD, 1=SENTINEL, 2=LOCKDOWN
+
+  // ── LOCKDOWN (level 2): 全禁 ──
+  if (SENTINEL_LEVEL >= 2) {
+    // 检查一次性豁免令牌
+    var override = checkSentinelOverride(n);
+    if (override) {
+      // 豁免有效 → 放行（在 PostToolUse 消费豁免）
+      console.error('[Harness] 🔑 SENTINEL OVERRIDE: ' + n + ' (override: ' + override.override_id + ')');
+      // 对于写操作，仍需检查流水线令牌
+      if (isReadOnly) {
+        // 读操作：豁免直接放行
+        return { decision: 'allow',
+          description: '[SelfGuard] 🔑 LOCKDOWN豁免放行(Read): ' + n + ' — 一次性豁免令牌 ' + override.override_id + ' 有效期内' };
+      }
+      // 写操作：豁免 + 仍需流水线令牌（继续走下面逻辑）
+      console.error('[Harness] 🔑 LOCKDOWN override allows write attempt on ' + n + ' — pipeline token still required.');
+    } else {
+      // 无豁免 → 直接拒绝
+      incrementSentinelDenial(n);
+      console.error('[Harness] ☠️ LOCKDOWN DENY: ' + n + ' — 哨兵封禁中，无有效豁免令牌');
+      return { decision: 'deny',
+        reason: '☠️ SENTINEL LOCKDOWN: 哨兵封禁模式激活中。所有 Harness 文件操作被拒绝。\n原因: ' + (sentinel.reason || '安全事件/系统维护') + '\n\n唯一放行方式: 通过 SelfGuard MCP 获取一次性豁免令牌 (sentinel_override)\n  POST http://127.0.0.1:18770/sentinel/override\n  MCP: sentinel_override { files: ["' + n + '"], reason: "..." }' };
+    }
+  }
+
+  // ── SENTINEL (level 1): 读需显式声明，禁用自动令牌 ──
+  if (SENTINEL_LEVEL >= 1 && isReadOnly) {
+    var disc = checkDisciplineToken();
+    if (!disc) {
+      // SENTINEL 模式下不自动创建纪律令牌 → 拒绝读取
+      console.error('[Harness] 🟡 SENTINEL DENY Read: ' + n + ' — 哨兵模式要求读取前先获取纪律令牌');
+      return { decision: 'deny',
+        reason: '🟡 SENTINEL: 哨兵模式要求所有读操作先获取纪律令牌。\n' +
+          '请通过 MCP harness_init_discipline 或 POST http://127.0.0.1:18770/mcp 获取纪律令牌后重试。\n' +
+          '原因: ' + (sentinel.reason || '敏感时期/外部审计') };
+    }
+    // 纪律令牌存在 → 放行
+    return { decision: 'allow' };
+  }
+
+  // ── READ-ONLY TOOLS (Read/Grep): Discipline check + bypass logging ──
   if (isReadOnly) {
     var disc = checkDisciplineToken();
     if (!disc) {
@@ -233,6 +293,24 @@ function run() {
   }
 
   var riskLabel = isHigh ? 'HIGH' : 'MID';
+
+  // 🔴 MCP 存活检测 — 读心跳文件（纯文件系统，<1ms）
+  var mcpAlive = false;
+  try {
+    if (fs.existsSync(HEARTBEAT_FILE)) {
+      var hb = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf-8'));
+      mcpAlive = (Date.now() - (hb.ts || 0)) < 15000; // 15秒内有心跳 = 存活
+    }
+  } catch (_) { /* 心跳不可读，按离线处理 */ }
+
+  var autoStartNote = mcpAlive
+    ? '\n\n✅ Harness MCP Server 在线 (端口 8765)。请调用 harness_run_flow 走流水线获取令牌。'
+    : '\n\n⚠️ Harness Streamable HTTP MCP 未启动。启动方法:\n' +
+      '  1. 打开 PowerShell 管理员窗口\n' +
+      '  2. 执行: schtasks /run /tn HarnessMCP\n' +
+      '  3. 等待 5 秒后重试\n' +
+      '  MCP 地址: http://127.0.0.1:8765';
+
   var reason = riskLabel + '-RISK FILE: ' + n + '\n\n' +
     'YAML FLOW ENFORCEMENT: Pipeline review REQUIRED.\n' +
     (rejectResult > 0 ? 'Reject #' + rejectResult + '/' + (isHigh ? '3' : '5') + '. At max, cooldown lockout triggers.\n\n' : '\n') +
@@ -241,7 +319,8 @@ function run() {
     'IMPORTANT: Pipeline S1/S2 stages require HUMAN approval. You (the user) must\n' +
     'be present to approve the analysis and solution before coding begins.\n' +
     'Human gate timeout or lack of approval = pipeline ABORT = NO token issued.\n\n' +
-    'Pipeline issues one-time token ONLY after ALL stages (including human gates) pass.\nOverride: reply "disable Harness free mode" (at your own risk).';
+    'Pipeline issues one-time token ONLY after ALL stages (including human gates) pass.\nOverride: reply "disable Harness free mode" (at your own risk).' +
+    autoStartNote;
 
   return { decision: 'deny', reason: reason };
 }
@@ -454,5 +533,72 @@ function archiveViolation(file) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(d, 'violation_' + Date.now() + '.json'),
       JSON.stringify({ timestamp: new Date().toISOString(), event: 'PROTECTED_ZONE_HIT', file: file }, null, 2));
+  } catch (_) {}
+}
+
+/* ── 🆕 哨兵模式辅助函数 (v4.0) ── */
+
+/**
+ * 读取哨兵状态（MCP Server 维护，Hook 只读）
+ * 状态文件: D:/AI文件/harness/data/sentinel/state.json
+ */
+function readSentinelState() {
+  try {
+    var sentinelFile = 'D:/AI文件/harness/data/sentinel/state.json';
+    if (!fs.existsSync(sentinelFile)) return { level: 0, mode: 'STANDARD', reason: '默认' };
+    var raw = fs.readFileSync(sentinelFile, 'utf-8');
+    var state = JSON.parse(raw);
+    // 检查 TTL 过期
+    if (state.expires_at && Date.now() > new Date(state.expires_at).getTime() && state.level < 2) {
+      return { level: 0, mode: 'STANDARD', reason: 'TTL已过期' };
+    }
+    return { level: state.level || state.mode || 0, mode: state.mode === 0 ? 'STANDARD' : state.mode === 1 ? 'SENTINEL' : 'LOCKDOWN', reason: state.reason || '', expires_at: state.expires_at };
+  } catch (_) {
+    return { level: 0, mode: 'STANDARD', reason: '读取失败降级' };
+  }
+}
+
+/**
+ * 检查是否有活跃的一次性豁免令牌
+ * 豁免目录: D:/AI文件/harness/data/sentinel/overrides/
+ */
+function checkSentinelOverride(filePath) {
+  try {
+    var overrideDir = 'D:/AI文件/harness/data/sentinel/overrides';
+    if (!fs.existsSync(overrideDir)) return null;
+    var now = Date.now();
+    var files = fs.readdirSync(overrideDir);
+    for (var i = 0; i < files.length; i++) {
+      if (!files[i].endsWith('.json')) continue;
+      try {
+        var raw = fs.readFileSync(path.join(overrideDir, files[i]), 'utf-8');
+        var ov = JSON.parse(raw);
+        if (ov.consumed) continue;
+        if (now > new Date(ov.expires_at).getTime()) continue;
+        var norm = String(filePath).replace(/\\/g, '/');
+        var matched = false;
+        for (var j = 0; j < (ov.files || []).length; j++) {
+          var of = String(ov.files[j]).replace(/\\/g, '/');
+          if (of === '*' || norm.indexOf(of) !== -1) { matched = true; break; }
+        }
+        if (matched) return ov;
+      } catch (_) {}
+    }
+    return null;
+  } catch (_) { return null; }
+}
+
+/**
+ * 记录哨兵拒绝事件
+ */
+function incrementSentinelDenial(filePath) {
+  try {
+    var denialDir = path.join(AUDIT_DIR, 'sentinel_denials');
+    if (!fs.existsSync(denialDir)) fs.mkdirSync(denialDir, { recursive: true });
+    var today = new Date().toISOString().slice(0, 10);
+    var dd = path.join(denialDir, today);
+    if (!fs.existsSync(dd)) fs.mkdirSync(dd, { recursive: true });
+    fs.writeFileSync(path.join(dd, 'denial_' + Date.now() + '.json'),
+      JSON.stringify({ timestamp: new Date().toISOString(), event: 'SENTINEL_DENIAL', file: filePath, level: 'LOCKDOWN' }, null, 2));
   } catch (_) {}
 }

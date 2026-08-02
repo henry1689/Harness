@@ -11,7 +11,7 @@ flow_name: WenStarOS TS内核缺陷修复&架构重构流水线
 version: 2.0
 max_jump_limit: 10
 max_stage_retries: 5
-max_s3_retries: 3
+max_s3_retries: 6
 global_memo_key: wenstaros_arch_global_constraint
 global_arch_constraint: |
   # 全局不可突破架构铁律（每阶段启动自动注入）
@@ -93,6 +93,20 @@ stages:
          (b) 逐条对照11条红线输出触碰判定表（格式：红线编号 | 红线内容 | 是否触碰 | 判定依据）；
          (c) 未输出触碰判定表则 S2 人审闸门不得放行，直接退回 S1 补全；
       8. 本阶段仅分析，禁止输出任何修改代码、禁止写入任何文件。
+      🔴【S1 硬性前置条件——CK-00 本地校验，不通过则 S2 直接驳回】
+      9. 必须执行: npx tsx D:/AI文件/harness/src/main_harness_checker.ts --project-root <根目录> --files "<文件列表>" --stage S1
+         - CK-00 输出必须包含: 全量 import 牵连清单（谁引用了待改文件）
+         - CK-00 输出必须包含: 6 大耦合点逐点检测结果
+         - CK-00 输出必须包含: FG 11 条红线逐条触碰判定表（若改动涉及 FG/会晤/角色/户籍/UUID）
+         - 上述三项任一为空 → S2 human gate 自动驳回，不得放行
+      🔴【S1 举一反三——是共性问题还是个性特例】
+      10. 必须执行: npx tsx D:/AI文件/harness/src/main_harness_checker.ts --project-root <根目录> --files "<文件列表>" --stage S4
+          （CK-06.5 全仓库同类模式扫描）
+         - 对每个待修改的函数/方法/API 调用做全仓 grep
+         - 如果在其他文件中发现同类模式 → 共性问题，S2 方案必须覆盖全部
+         - 如果未发现同类模式 → 个性特例，S2 方案标明判定依据
+         - 例: 修改 FamilyGraph 的 updateRelation 方法 → 全仓搜索 .updateRelation( 调用
+           → 若 M4/M5/Engine 中也有调用 → 必须一起修复
     tool_whitelist:
       read_file: true
       list_dir: true
@@ -252,6 +266,44 @@ stages:
       read_file: true
       write_file: false
       run_modify_script: false
+    gate_type: auto
+    next_stage: S4.5_Convergence_Gate
+    runner_mode: delegate
+
+  # ====================== S4.5 设计标准合规收敛闸门 ======================
+  - stage_id: S4.5_Convergence_Gate
+    stage_name: 设计标准合规收敛门控
+    work_manual: |
+      🔴【收敛门控——S4结果与19条设计标准反复对比直到达标】
+
+      本阶段自动执行，ConvergenceGate.evaluate() 接管：
+      1. 重新运行 CK-00~CK-10 全部 11 项本地硬校验
+      2. 汇总 S4 委托评审（11维度）违规清单
+      3. 映射到 22 条设计标准（DS-01~DS-22）逐条打分
+      4. 计算加权综合合规得分（0-100）
+
+      🔴 通过/驳回规则（v2.6 升级——每条标准必须 100 分，满分才放行）：
+      - 每条标准 ≥100 分 且 加权总分 ≥100% → 自动放行 S5
+      - 任一条标准 <100 分（且 <3 轮）→ 返回 S3，附带逐条差距分析
+      - 第 3 轮仍未达标 → 自动转交用户确认：用户选择放行/继续修改/终止
+      - 相邻两轮分数下降超 3 分 → 立即中止（越改越差）
+
+      🔴【差距分析格式】
+      本轮得分: XX% | 目标: 90% | 差距: XX%
+      不及格标准:
+        DS-XX [标准名]: XX分 → 需提升 XX分 | 改进建议: ...
+
+      🔴【收敛趋势报告】
+      第1轮→第2轮→...→当前轮: 逐轮得分趋势
+
+      🔴【注意】
+      - 得分数值精确到小数点后 1 位
+      - S3 回流时必须聚焦修复差距分析中的具体标准
+      - 不得扩大改动范围到已达标的标准
+    tool_whitelist:
+      read_file: true
+      run_command: true
+      write_file: false
     gate_type: condition
     next_stage_pass: S5_Compile_Test
     next_stage_reject: S3_Code_Implement
@@ -317,7 +369,16 @@ stages:
         npx vitest run
       失败 → 打回 S3
 
-      第三步：数据库落盘检索（grep 本地执行，可缓存）
+      第三步：意图验证（CK-09 + CK-10 本地硬校验）🔴 新增
+        npx tsx D:/AI文件/harness/src/main_harness_checker.ts \
+          --project-root <项目根目录> \
+          --files "<逗号分隔的修改文件列表>" \
+          --stage S6
+        - CK-09 回归安全: 检查是否有意外改动/遗漏改动/新增失败用例/被删除函数
+        - CK-10 意图达成: 检查 bug 是否真正修复 / feature 是否真正实现 / refactor 行为是否保留
+        - 任一 CK 失败 → 打回 S3（这场修改没有达到它声称的目的）
+
+      第四步：数据库落盘检索（grep 本地执行，可缓存）
         grep -rn "\.save()\|scheduleFlush" <项目根目录>/src/
       检查修改文件涉及的持久化路径是否有 save/flush 调用缺失
       失败 → 打回 S3

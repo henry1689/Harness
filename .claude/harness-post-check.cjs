@@ -55,6 +55,13 @@ function run() {
   if (!fp) { console.log(JSON.stringify({ description: '' })); return; }
   var n = String(fp).replace(/\\/g, '/');
 
+  // 🔴 路径归一化：将绝对路径 D:/AI文件/harness/xxx → 相对路径 src/xxx
+  // 保证与 token 哈希一致（token 由 MCP 签发时使用相对路径）
+  var HARNESS_ROOT = 'D:/AI文件/harness';
+  if (n.toUpperCase().indexOf(HARNESS_ROOT.toUpperCase() + '/') === 0) {
+    n = n.slice(HARNESS_ROOT.length + 1);
+  }
+
   var isSourceFile = /\.ts$/.test(n) && !/\.test\.ts$|\.spec\.ts$|\.d\.ts$/.test(n);
   var isConfigFile = /\.yaml$|\.json$/.test(n) && !/\.test\./.test(n);
 

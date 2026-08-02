@@ -18,7 +18,7 @@ describe('FlowConfigLoader', () => {
     expect(config.flow_id).toBe('wenstaros_core_repair_flow');
     expect(config.version).toBe('2');  // YAML 2.0 → Number → String('2')
     expect(config.max_jump_limit).toBe(10);
-    expect(config.stages).toHaveLength(7);
+    expect(config.stages).toHaveLength(8);
 
     // 验证 global_arch_constraint 被正确解析
     expect(config.global_arch_constraint.length).toBeGreaterThan(100);
@@ -68,22 +68,33 @@ describe('FlowConfigLoader', () => {
     expect(s2.work_manual).toContain('不允许空缺、模糊、省略');
   });
 
-  it('验证 S4 条件门控配置', () => {
+  it('验证 S4 自动门控配置（改为 auto → S4.5）', () => {
     const config = loadFlowConfig('wenstaros_core_repair_flow.yaml');
     const s4 = config.stages[3];
 
     expect(s4.stage_id).toBe('S4_Arch_Review');
-    expect(s4.gate_type).toBe('condition');
+    expect(s4.gate_type).toBe('auto');  // S4 改为 auto，不再做条件判定
     expect(s4.runner_mode).toBe('delegate');
-    expect(s4.next_stage_pass).toBe('S5_Compile_Test');
-    expect(s4.next_stage_reject).toBe('S3_Code_Implement');
+    expect(s4.next_stage).toBe('S4.5_Convergence_Gate');  // 流入 S4.5 收敛闸门
     expect(s4.tool_whitelist.write_file).toBe(false);
     expect(s4.tool_whitelist.read_file).toBe(true);
   });
 
+  it('验证 S4.5 收敛闸门配置', () => {
+    const config = loadFlowConfig('wenstaros_core_repair_flow.yaml');
+    const s45 = config.stages[4];
+
+    expect(s45.stage_id).toBe('S4.5_Convergence_Gate');
+    expect(s45.gate_type).toBe('condition');
+    expect(s45.runner_mode).toBe('delegate');
+    expect(s45.next_stage_pass).toBe('S5_Compile_Test');
+    expect(s45.next_stage_reject).toBe('S3_Code_Implement');
+    expect(s45.tool_whitelist.write_file).toBe(false);
+  });
+
   it('验证 S7 最终阶段配置', () => {
     const config = loadFlowConfig('wenstaros_core_repair_flow.yaml');
-    const s7 = config.stages[6];
+    const s7 = config.stages[7];  // 索引从 6 → 7（因插入 S4.5）
 
     expect(s7.stage_id).toBe('S7_Change_Archive');
     expect(s7.gate_type).toBe('auto');

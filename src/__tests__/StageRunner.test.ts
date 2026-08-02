@@ -31,6 +31,8 @@ function makeState(overrides: Partial<FlowRunState> = {}): FlowRunState {
     jump_count: 0,
     stage_retry_count: 0,
     s3_retry_count: 0,
+    convergence_round: 0,
+    convergence_history: [],
     stage_results: new Map(),
     global_memo: '',
     started_at: new Date().toISOString(),

@@ -1,0 +1,7 @@
+{
+  "file": "src/app/knowledge/KnowledgeContextBuilder.ts",
+  "error": "unknown",
+  "reason": "中高风险文件 \"src/app/knowledge/KnowledgeContextBuilder.ts\" 无有效令牌",
+  "attempts": 1,
+  "timestamp": "2026-08-01T03:04:58.419Z"
+}

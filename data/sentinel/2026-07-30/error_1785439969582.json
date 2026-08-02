@@ -1,0 +1,6 @@
+{
+  "file": "src/m4/household/EntityContextBuilder.ts",
+  "error": "Command failed: git checkout -- \"src/m4/household/EntityContextBuilder.ts\"\nfatal: Unable to create 'D:/tools/wenstar-cc/.git/index.lock': File exists.\n\nAnother git process seems to be running in this repository, or the lock file may be stale\n",
+  "reason": "中高风险文件 \"src/m4/household/EntityContextBuilder.ts\" 无有效令牌",
+  "timestamp": "2026-07-30T19:32:49.343Z"
+}

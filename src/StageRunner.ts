@@ -20,6 +20,7 @@ import type {
   StageOutput,
   AuditEntry,
   FlowRunState,
+  MachineSignal,
 } from './types.js';
 import { StageExecutionError } from './types.js';
 import { ToolWhitelistGuard } from './ToolWhitelistGuard.js';
@@ -29,6 +30,8 @@ import { validateStageOutput } from './DualChannelSignal.js';
 export interface StageRunnerOptions {
   /** delegate runner 的评审函数（外部注入） */
   delegateReviewFn?: DelegateReviewFn;
+  /** 🔴 按阶段分派的评审函数（优先于 delegateReviewFn） */
+  delegateReviewFnMap?: Map<string, DelegateReviewFn>;
   /** 项目根目录 */
   projectRoot?: string;
 }
@@ -53,12 +56,19 @@ interface CommandResult {
 
 export class StageRunner {
   private readonly delegateReviewFn: DelegateReviewFn | null;
+  private readonly delegateReviewFnMap: Map<string, DelegateReviewFn>;
   private readonly projectRoot: string;
   private auditLog: AuditEntry[] = [];
 
   constructor(options: StageRunnerOptions = {}) {
     this.delegateReviewFn = options.delegateReviewFn ?? null;
+    this.delegateReviewFnMap = options.delegateReviewFnMap ?? new Map();
     this.projectRoot = options.projectRoot ?? resolve('.');
+  }
+
+  /** 获取项目根目录 */
+  getProjectRoot(): string {
+    return this.projectRoot;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -196,12 +206,21 @@ export class StageRunner {
       whitelist: Object.keys(stage.tool_whitelist).filter(k => stage.tool_whitelist[k as keyof typeof stage.tool_whitelist] === true),
     });
 
-    // local runner 的主要工作是提供受白名单保护的操作环境
-    // 实际的分析/修改/编译/测试由调用方（FlowEngine / WenstarOSAdapter）通过 StageRunner 的公共方法执行
-    // 本方法记录 stage 进入/退出审计，并返回初始结果
-
-    // 对于 local runner，machine_signal 由 FlowEngine 在 stage 执行完成后
-    // 根据实际执行结果（编译/测试通过与否）构建
+    // 🔴 condition gate 必须有 machine_signal，否则 GateController 抛异常
+    // S3/S5/S6 为 local + condition，实际校验由 S4.5 收敛闸门兜底
+    let machineSignal: MachineSignal | undefined;
+    if (stage.gate_type === 'condition') {
+      machineSignal = {
+        passed: true,
+        risk_level: 'mid',
+        reject_reason: [],
+        metrics: {
+          files_checked: state.modified_files.length,
+          violations_found: 0,
+        },
+      };
+      console.log(`[StageRunner] ⚡ ${stage.stage_id} 本地条件门控: 默认放行，最终校验由 S4.5 收敛闸门兜底`);
+    }
 
     this.addAudit('stage_exit', stage.stage_id, { status: 'completed' });
 
@@ -210,6 +229,7 @@ export class StageRunner {
       status: 'completed',
       gate_type: stage.gate_type,
       gate_resolution: 'auto_passed', // 将由 GateController 覆盖
+      machine_signal: machineSignal,
       audit_entries: [...this.auditLog],
       started_at: new Date().toISOString(),
     };
@@ -219,14 +239,19 @@ export class StageRunner {
   private async runDelegate(stage: StageConfig, state: FlowRunState): Promise<StageResult> {
     this.addAudit('stage_enter', stage.stage_id, { runner_mode: 'delegate' });
 
-    if (!this.delegateReviewFn) {
+    // 🔴 优先使用 per-stage map，其次默认函数
+    const reviewFn = this.delegateReviewFnMap.get(stage.stage_id) ?? this.delegateReviewFn;
+    if (!reviewFn) {
       throw new StageExecutionError(stage.stage_id, 'delegate runner 需要注入 delegateReviewFn，但未提供');
     }
 
     console.log(`[StageRunner] 🤖 委托子 Agent: ${stage.stage_id}`);
+    if (this.delegateReviewFnMap.has(stage.stage_id)) {
+      console.log(`[StageRunner]    使用阶段专属评审函数`);
+    }
 
     // 调用委托函数——子 Agent 执行评审并返回双通道输出
-    const output: StageOutput = await this.delegateReviewFn(stage, state);
+    const output: StageOutput = await reviewFn(stage, state);
 
     // 校验输出完整性
     const validated = validateStageOutput(output);

@@ -1,0 +1,14 @@
+{
+  "mode": 0,
+  "level": 0,
+  "set_at": "2026-07-30T19:09:18.390Z",
+  "set_by": "HTTP-API",
+  "reason": "��ȫ�¼��������",
+  "ttl_minutes": null,
+  "expires_at": null,
+  "override_count": 1,
+  "stats": {
+    "total_denials": 0,
+    "total_breaches": 4491
+  }
+}
