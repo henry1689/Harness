@@ -139,7 +139,7 @@ mcpServer.registerTool(
     const { FlowEngine } = await import('../src/FlowEngine.js');
     const { classifyFiles, isTrivialChange } = await import('../src/RiskClassifier.js');
     const { review } = await import('../src/DelegateReviewer.js');
-    const { convergenceEvaluate } = await import('../src/ConvergenceGate.js');
+    const { evaluate: convergenceEvaluate } = await import('../src/ConvergenceGate.js');
 
     const risk = classifyFiles(files);
     const trivial = isTrivialChange(msg, files);
@@ -539,11 +539,7 @@ async function handleSentinelCheck(req: IncomingMessage, res: ServerResponse): P
       return;
     }
 
-    // 令牌有效 → 消费它
-    token.consumed = true;
-    token.consumed_at = new Date().toISOString();
-    writeFileSync(tokenPath, JSON.stringify(token, null, 2), 'utf-8');
-
+    // 令牌有效 → 返回放行（不在此处消费，由 git pre-commit hook 负责消费）
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       allowed: true, risk,

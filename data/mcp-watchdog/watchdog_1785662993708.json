@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-08-02T09:29:53.706Z",
+  "event": "child_exit",
+  "pid": 36552,
+  "restart_count": 0,
+  "consecutive_fails": 0,
+  "detail": {
+    "code": 143,
+    "signal": null
+  }
+}

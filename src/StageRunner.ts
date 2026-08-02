@@ -117,11 +117,23 @@ export class StageRunner {
 
       this.addAudit('stage_exit', stage.stage_id, { error: errorMsg });
 
+      // 🔴 condition gate 异常时也生成默认 machine_signal，避免 GateController 抛裸异常
+      let machineSignal: MachineSignal | undefined;
+      if (stage.gate_type === 'condition') {
+        machineSignal = {
+          passed: false,
+          risk_level: 'high',
+          reject_reason: [`Stage 执行异常: ${errorMsg}`],
+          metrics: { files_checked: 0, violations_found: 1 },
+        };
+      }
+
       return {
         stage_id: stage.stage_id,
         status: 'rejected',
         gate_type: stage.gate_type,
         gate_resolution: 'condition_rejected',
+        machine_signal: machineSignal,
         audit_entries: this.auditLog,
         started_at: startTime,
         completed_at: new Date().toISOString(),

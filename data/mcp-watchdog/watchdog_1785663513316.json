@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-08-02T09:38:33.315Z",
+  "event": "child_exit",
+  "pid": 8308,
+  "restart_count": 0,
+  "consecutive_fails": 0,
+  "detail": {
+    "code": 1,
+    "signal": null
+  }
+}

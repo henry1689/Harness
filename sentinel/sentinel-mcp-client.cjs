@@ -159,7 +159,8 @@ async function checkFile(filePath, opts = {}) {
   // 2) 降级：直接读本地令牌文件
   const token = checkTokenLocal(n);
   if (token) {
-    consumeTokenLocal(n, token);
+    // 🔴 不在此处消费令牌——令牌在 git pre-commit hook 中一次性消费。
+    //    Sentinel 只负责验证令牌有效性，允许文件编辑。
     return {
       allowed: true, risk,
       reason: `✅ 令牌有效 (run: ${token.run_id}, risk: ${token.risk_level})`,

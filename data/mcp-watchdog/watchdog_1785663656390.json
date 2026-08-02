@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-08-02T09:40:56.390Z",
+  "event": "health_check_fail",
+  "pid": 38152,
+  "restart_count": 1,
+  "consecutive_fails": 0,
+  "detail": {
+    "heartbeat_age_ms": 99731,
+    "pid": 40200
+  }
+}
