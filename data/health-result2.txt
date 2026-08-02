@@ -1,0 +1,12 @@
+=== Harness Health Check ===
+
+  [OK] MCP Port 8765: listening
+  [OK] MCP HTTP /sentinel/check: {}
+  [OK] Heartbeat freshness: 2s ago, PID 26752
+  [OK] Token directory: 0 tokens
+  [FAIL] Sentinel process: Not found: Not running
+  [OK] PM2 daemon: harness-mcp=online, harness-sentinel=online
+warning: in the working copy of 'LOCAL_PRODUCTIZATION_STATUS.md', LF will be replaced by CRLF the next time Git touches it
+  [OK] Project git clean: clean
+
+=== Result: 6/7 checks passed ===

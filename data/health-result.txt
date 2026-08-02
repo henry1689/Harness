@@ -1,0 +1,18 @@
+=== Harness Health Check ===
+
+  [FAIL] MCP Port 8765: Command failed: netstat -ano | findstr 8765
+  [FAIL] Heartbeat freshness: Stale: 613s old
+  [OK] Token directory: 0 tokens
+  [FAIL] Sentinel process: Not found: Not running
+  [FAIL] PM2 daemon: Missing apps
+warning: in the working copy of 'LOCAL_PRODUCTIZATION_STATUS.md', LF will be replaced by CRLF the next time Git touches it
+  [OK] Project git clean: clean
+
+=== Result: 2/6 checks passed ===
+
+=== Auto-fix ===
+  [FIX] Kill stale harness processes: done
+  [FIX] PM2 resurrect: done
+  [FIX] PM2 start ecosystem: done
+
+Re-running health check...
