@@ -1,0 +1,18 @@
+#!/bin/sh
+# Harness Git pre-commit hook
+# This hook delegates to Harness gate for high-risk file checking.
+#
+# Installation:
+#   Copy this file to: .git/hooks/pre-commit
+#   Or use: node scripts/harness-gate.cjs directly
+
+HARNESS_ROOT="D:/AI文件/harness"
+node "$HARNESS_ROOT/scripts/harness-gate.cjs"
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+  echo "[Harness] pre-commit blocked by harness-gate.cjs"
+  exit $RESULT
+fi
+
+exit 0

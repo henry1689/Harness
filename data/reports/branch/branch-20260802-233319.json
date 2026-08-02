@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_v4_branch_preparation",
+  "generated_at": "2026-08-02T15:33:19.000Z",
+  "target_branch": "feature/harness-v4-project-brain",
+  "initial_git": {
+    "branch": "main",
+    "head_commit": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "dirty": true,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/docs/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+      "?? data/e2e-result.txt",
+      "?? data/logs/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/* (14 files)",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs"
+    ],
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测",
+      "abd0127 chore: 从版本控制移除运行时数据(tokens/alerts/audit)"
+    ]
+  },
+  "change_classification": {
+    "p0_expected_changes": [
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs",
+      "?? hooks/pre-commit",
+      "?? hooks/pre-commit.template"
+    ],
+    "report_artifacts": [
+      "?? data/reports/baseline/",
+      "?? data/reports/health/",
+      "?? data/reports/recovery/",
+      "?? data/docs/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+      "?? data/e2e-result.txt",
+      "?? data/logs/",
+      "?? data/sentinel/2026-08-02/* (14 runtime event files)"
+    ],
+    "core_logic_changes": [],
+    "unexpected_changes": [],
+    "notes": [
+      " M data/heartbeat.json — runtime heartbeat file modified by PM2 daemon, not a logic change",
+      "All P0 scripts are new untracked files, not modifying any existing code",
+      "Zero core logic changes detected — src/, mcp/, sentinel/, data/flows/, ecosystem.config.cjs, package.json, tsconfig.json all untouched"
+    ]
+  },
+  "branch_action": {
+    "action": "created",
+    "command": "git checkout -b feature/harness-v4-project-brain",
+    "exit_code": 0,
+    "duration_ms": 111,
+    "stdout_tail": "Switched to a new branch 'feature/harness-v4-project-brain'",
+    "stderr_tail": ""
+  },
+  "final_git": {
+    "branch": "feature/harness-v4-project-brain",
+    "head_commit": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "dirty": true,
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/docs/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+      "?? data/e2e-result.txt",
+      "?? data/logs/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/* (14 files)",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs"
+    ]
+  },
+  "post_health_check": {
+    "command": "node scripts/defense-health-check.cjs",
+    "exit_code": 0,
+    "duration_ms": 0,
+    "health_report_json": "data/reports/health/health-20260802-233319.json",
+    "health_report_md": "data/reports/health/health-20260802-233319.md",
+    "defense_matrix": {
+      "pm2_guard": "PASS",
+      "mcp_gate": "PASS",
+      "sentinel": "PASS",
+      "git_hook": "PASS",
+      "overall": "PASS"
+    }
+  },
+  "summary": {
+    "overall_status": "PASS",
+    "warnings": [
+      "工作区有未提交改动 (dirty=true)，包括 P0 脚本和报告产物。建议在开始 v4 开发前由架构师确认是否需要提交。",
+      "data/heartbeat.json 被 PM2 daemon 持续修改 (运行时状态文件)"
+    ],
+    "critical_findings": [],
+    "recommendations": [
+      "架构师审查后，可选择 git add + git commit 将 P0 脚本和 hook 模板提交到 v4 分支",
+      "data/ 目录下运行时文件建议继续保留在 .gitignore 中，不提交",
+      "分支已建立，防线全部 PASS，可以开始 v4.0 ProjectBrain 改造"
+    ]
+  }
+}

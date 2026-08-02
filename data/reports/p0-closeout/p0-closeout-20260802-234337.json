@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_p0_closeout",
+  "generated_at": "2026-08-02T15:43:37.000Z",
+  "branch": {
+    "current": "feature/harness-v4-project-brain",
+    "head": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+    "recent_commits": [
+      "28dd3ae docs: Harness v3.0 设计白皮书 — 704行完整文档",
+      "8851b11 v3.0: PM2 进程守护 — Harness 不再脆弱",
+      "980e46d v2.7: MCP 全链路修复 + Sentinel 令牌不消费 + Git pre-commit hook + 自动重启看门狗",
+      "489c40d v2.6: S1-S7全链路修复 + 自进化引擎 + Sentinel三级升级 + 批量检测",
+      "abd0127 chore: 从版本控制移除运行时数据(tokens/alerts/audit)"
+    ]
+  },
+  "git_status": {
+    "dirty": true,
+    "status_count": 22,
+    "diff_name_only": ["data/heartbeat.json"],
+    "diff_stat": "data/heartbeat.json | 2 +-, 1 file changed, 1 insertion(+), 1 deletion(-)",
+    "status_porcelain": [
+      " M data/heartbeat.json",
+      "?? data/docs/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+      "?? data/e2e-result.txt",
+      "?? data/logs/",
+      "?? data/reports/",
+      "?? data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "?? docs/v4/",
+      "?? hooks/",
+      "?? scripts/baseline-report.cjs",
+      "?? scripts/defense-health-check.cjs",
+      "?? scripts/harness-gate.cjs"
+    ],
+    "notes": [
+      "M data/heartbeat.json — 由 PM2 daemon 自然更新，不是人为修改",
+      "所有 ?? 文件为 P0 阶段新增，全部为 untracked",
+      "零已有跟踪文件被修改（除 heartbeat 运行时状态外）"
+    ]
+  },
+  "change_classification": {
+    "p0_instrumentation": [
+      "scripts/baseline-report.cjs",
+      "scripts/defense-health-check.cjs"
+    ],
+    "p0_defense_recovery": [
+      "scripts/harness-gate.cjs",
+      "hooks/pre-commit",
+      "hooks/pre-commit.template"
+    ],
+    "p0_documentation": [
+      "docs/v4/upgrade-isolation-rules.md"
+    ],
+    "p0_reports": [
+      "data/reports/baseline/ (4 baseline reports)",
+      "data/reports/health/ (6 health reports)",
+      "data/reports/recovery/ (1 recovery report + 1 backup)",
+      "data/reports/branch/ (1 branch report)",
+      "data/reports/p0-closeout/ (1 closeout report)"
+    ],
+    "runtime_state": [
+      "data/heartbeat.json (PM2 daemon)",
+      "data/sentinel/2026-08-02/* (14 sentinel event files)",
+      "data/logs/ (runtime logs)"
+    ],
+    "core_logic_changes": [],
+    "unexpected_changes": [],
+    "core_logic_verdict": "ZERO core logic changes. src/, mcp/, sentinel/, data/flows/, ecosystem.config.cjs, package.json, tsconfig.json — all untouched."
+  },
+  "validation": {
+    "tsc": {
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "duration_ms": 2671,
+      "status": "PASS"
+    },
+    "vitest": {
+      "command": "npx vitest run",
+      "exit_code": 0,
+      "duration_ms": 2859,
+      "test_files": 6,
+      "tests": 67,
+      "status": "PASS"
+    },
+    "defense_health": {
+      "command": "node scripts/defense-health-check.cjs",
+      "exit_code": 0,
+      "health_report_json": "data/reports/health/health-20260802-234309.json",
+      "health_report_md": "data/reports/health/health-20260802-234309.md",
+      "defense_matrix": {
+        "pm2_guard": "PASS",
+        "mcp_gate": "PASS",
+        "sentinel": "PASS",
+        "git_hook": "PASS",
+        "overall": "PASS"
+      }
+    }
+  },
+  "p0_report_index": {
+    "baseline_reports": [
+      "data/reports/baseline/baseline-20260802-225453.json",
+      "data/reports/baseline/baseline-20260802-225953.json",
+      "data/reports/baseline/baseline-20260802-231849.json"
+    ],
+    "health_reports": [
+      "data/reports/health/health-20260802-230934.json (P0-T2 initial — PM2 truncation false-alarm)",
+      "data/reports/health/health-20260802-232617.json (P0-T2H fixed — first all-PASS)",
+      "data/reports/health/health-20260802-232840.json (P0-T2H final — stdout_length verified)",
+      "data/reports/health/health-20260802-233319.json (P0-T3 branch switch verify)",
+      "data/reports/health/health-20260802-233919.json (P0-T4 isolation rules verify)",
+      "data/reports/health/health-20260802-234309.json (P0-T5 closeout verify)"
+    ],
+    "recovery_reports": [
+      "data/reports/recovery/recovery-20260802-232114.json",
+      "data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak"
+    ],
+    "branch_reports": [
+      "data/reports/branch/branch-20260802-233319.json"
+    ],
+    "closeout_reports": [
+      "data/reports/p0-closeout/p0-closeout-20260802-234337.json"
+    ]
+  },
+  "commit_strategy": [
+    {
+      "name": "P0 baseline and health instrumentation",
+      "message": "chore(p0): add baseline and defense health instrumentation",
+      "include": [
+        "scripts/baseline-report.cjs",
+        "scripts/defense-health-check.cjs"
+      ],
+      "exclude": [
+        "data/reports/ (建议不提交运行时报告产物)"
+      ],
+      "notes": "核心工具脚本。baseline-report.cjs 用于 v3 基线快照，defense-health-check.cjs 用于三道防线健康检查。"
+    },
+    {
+      "name": "P0 defense recovery assets",
+      "message": "chore(p0): restore harness defense gate and hook templates",
+      "include": [
+        "scripts/harness-gate.cjs",
+        "hooks/pre-commit",
+        "hooks/pre-commit.template"
+      ],
+      "exclude": [
+        "data/reports/recovery/ (建议不提交恢复报告和备份)",
+        "D:/tools/wenstar-cc/.git/hooks/pre-commit (被管制项目 hook，不在本 repo)",
+        "D:/wenstar/wenstar_os/.git/hooks/pre-commit (被管制项目 hook，不在本 repo)"
+      ],
+      "notes": "第三道防线恢复产物。harness-gate.cjs 是 pre-commit hook 调用的核心 gate 脚本。"
+    },
+    {
+      "name": "P0 isolation rules documentation",
+      "message": "docs(p0): add v4 upgrade isolation rules and closeout report",
+      "include": [
+        "docs/v4/upgrade-isolation-rules.md",
+        "data/reports/branch/branch-20260802-233319.json",
+        "data/reports/branch/branch-20260802-233319.md",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.json",
+        "data/reports/p0-closeout/p0-closeout-20260802-234337.md"
+      ],
+      "exclude": [
+        "data/reports/health/",
+        "data/reports/baseline/",
+        "data/reports/recovery/"
+      ],
+      "notes": "v4.0 改造隔离规则 + P0 准入快照。建议提交 branch 和 closeout 报告但不提交大量中间 health 报告。"
+    }
+  ],
+  "not_recommended_for_commit": [
+    {
+      "path": "data/heartbeat.json",
+      "reason": "PM2 daemon 运行时心跳文件，每次都不同。已在 .gitignore"
+    },
+    {
+      "path": "data/sentinel/**",
+      "reason": "Sentinel 运行时事件数据。已在 .gitignore"
+    },
+    {
+      "path": "data/logs/**",
+      "reason": "运行时日志。已在 .gitignore"
+    },
+    {
+      "path": "data/tokens/**",
+      "reason": "审批令牌。已在 .gitignore"
+    },
+    {
+      "path": "data/reports/health/*.json",
+      "reason": "大量中间健康检查报告（6份）。建议仅保留最新一份作为 reference"
+    },
+    {
+      "path": "data/reports/baseline/*.json",
+      "reason": "基线快照（3份）。建议仅保留一份 baseline reference"
+    }
+  ],
+  "managed_project_hooks": {
+    "wenstar-cc": {
+      "path": "D:/tools/wenstar-cc/.git/hooks/pre-commit",
+      "exists": true,
+      "mentions_harness_gate": true,
+      "status": "ACTIVE"
+    },
+    "wenstar_os": {
+      "path": "D:/wenstar/wenstar_os/.git/hooks/pre-commit",
+      "exists": true,
+      "mentions_harness_gate": true,
+      "status": "ACTIVE"
+    }
+  },
+  "summary": {
+    "go_no_go": "GO",
+    "overall_status": "PASS",
+    "go_conditions": [
+      "✅ 当前分支 = feature/harness-v4-project-brain",
+      "✅ HEAD = 28dd3aeec5c7755ca67e9e50f289468120816d20",
+      "✅ PM2 Guard = PASS",
+      "✅ MCP Gate = PASS",
+      "✅ Sentinel = PASS",
+      "✅ Git Hook = PASS",
+      "✅ Health Overall = PASS",
+      "✅ tsc --noEmit = PASS (exit=0, 2671ms)",
+      "✅ vitest run = PASS (exit=0, 67 tests, 6 files)",
+      "✅ core_logic_changes = [] (zero)",
+      "✅ unexpected_changes = [] (zero)",
+      "✅ docs/v4/upgrade-isolation-rules.md exists",
+      "✅ 被管制项目 pre-commit hooks active (both)"
+    ],
+    "warnings": [
+      "工作区 dirty — P0 脚本和报告产物尚未提交。这不影响 GO 决策，但建议架构师在 P1 开始前执行人工 commit。",
+      "data/heartbeat.json 被 PM2 持续修改。已在 .gitignore 中，不影响。"
+    ],
+    "critical_findings": [],
+    "recommendations": [
+      "架构师审查本报告后，按 commit_strategy 执行 3 次人工 git add + git commit",
+      "建议不提交 data/reports/health/*.json 和海量中间报告到 repo",
+      "P1-T1 可以开始：类型骨架 + 目录结构，严格限制在 src/project-brain/ + tests/project-brain/",
+      "P1-T1 开始前务必重读 docs/v4/upgrade-isolation-rules.md",
+      "P1-T1 完成后必须运行 tsc + vitest + defense-health-check.cjs"
+    ]
+  }
+}

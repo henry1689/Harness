@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_baseline",
+  "generated_at": "2026-08-02T14:56:33.945Z",
+  "duration_ms": 7369,
+  "harness": {
+    "root": "D:\\AI文件\\harness",
+    "git": {
+      "commit": "28dd3aeec5c7755ca67e9e50f289468120816d20",
+      "branch": "main",
+      "dirty": true,
+      "status_porcelain": [
+        "M data/heartbeat.json",
+        "?? data/docs/HARNESS-V4-UPGRADE-WHITEPAPER.md.md",
+        "?? data/e2e-result.txt",
+        "?? data/logs/",
+        "?? data/reports/",
+        "?? data/sentinel/2026-08-02/allowed_1785671071172.json",
+        "?? data/sentinel/2026-08-02/allowed_1785671123024.json",
+        "?? data/sentinel/2026-08-02/allowed_1785671123027.json",
+        "?? data/sentinel/2026-08-02/error_1785671088449.json",
+        "?? data/sentinel/2026-08-02/error_1785671088530.json",
+        "?? data/sentinel/2026-08-02/error_1785672009576.json",
+        "?? data/sentinel/2026-08-02/error_1785675053833.json",
+        "?? data/sentinel/2026-08-02/error_1785675105131.json",
+        "?? data/sentinel/2026-08-02/error_1785675105475.json",
+        "?? data/sentinel/2026-08-02/reverted_1785671087577.json",
+        "?? data/sentinel/2026-08-02/reverted_1785672008974.json",
+        "?? data/sentinel/2026-08-02/reverted_1785675053034.json",
+        "?? data/sentinel/2026-08-02/reverted_1785675103976.json",
+        "?? scripts/baseline-report.cjs"
+      ]
+    },
+    "runtime": {
+      "node_version": "v22.15.0",
+      "npm_version": "10.9.2",
+      "platform": "win32",
+      "arch": "x64",
+      "cwd": "D:\\AI文件\\harness"
+    },
+    "package": {
+      "name": "harness",
+      "version": "2.0.0",
+      "typescript_version": "^5.7.0",
+      "vitest_version": "^3.0.0",
+      "pm2_version": "not in package.json",
+      "ok": true
+    }
+  },
+  "checks": {
+    "git_ok": {
+      "ok": true,
+      "message": "Git 仓库正常, branch=main"
+    },
+    "package_json_ok": {
+      "ok": true,
+      "message": "package.json 正常, version=2.0.0"
+    },
+    "tsc_no_emit": {
+      "ok": true,
+      "command": "npx tsc --noEmit",
+      "exit_code": 0,
+      "duration_ms": 2535,
+      "stdout_tail": "",
+      "stderr_tail": "",
+      "message": "编译通过"
+    },
+    "vitest_run": {
+      "ok": true,
+      "command": "npx vitest run",
+      "exit_code": 0,
+      "duration_ms": 2712,
+      "stdout_tail": "...(truncated, showing last 8000 chars)\nis 完成 → gate: auto\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m自由裸奔模式\u001b[2m > \u001b[22m\u001b[2m单文件低风险但无 trivial 信号 → 仍走流水线\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S1_Problem_Analysis → gate: auto → auto_passed\n[ToolWhitelistGuard] 🔓 已停用 (S1_Problem_Analysis), 放行 0, 拦截 0\n[ToolWhitelistGuard] 🔒 已激活 (S2_Solution_Design), 4 条规则\n[StageRunner] ▶ S2_Solution_Design (重构技术方案撰写&架构合规校验) [local/human]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m自由裸奔模式\u001b[2m > \u001b[22m\u001b[2m单文件低风险但无 trivial 信号 → 仍走流水线\n\u001b[22m\u001b[39m[StageRunner] ✓ S2_Solution_Design 完成 → gate: human\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m自由裸奔模式\u001b[2m > \u001b[22m\u001b[2m单文件低风险但无 trivial 信号 → 仍走流水线\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S2_Solution_Design → gate: human → human_timeout\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb684_y4yw.json (6 条记录, 1.9KB)\n[ToolWhitelistGuard] 🔓 已停用 (S2_Solution_Design), 放行 0, 拦截 0\n[FlowEngine] ⏹ 流水线已中止\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb684_y4yw.json (7 条记录, 2.1KB)\n[FlowEngine] ⏹ human gate human_timeout → 流水线中止\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mchat.ts 修改应触发全流程\n\u001b[22m\u001b[39m\n[FlowEngine] 🚀 流水线启动: WenStarOS TS内核缺陷修复&架构重构流水线 (run_msbxb68q_yx6c)\n[FlowEngine]    风险: high | 文件: src/webui/chat.ts\n[ToolWhitelistGuard] 🔒 已激活 (S1_Problem_Analysis), 8 条规则\n[StageRunner] ▶ S1_Problem_Analysis (问题定位&模块牵连风险盘点) [local/auto]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mchat.ts 修改应触发全流程\n\u001b[22m\u001b[39m[StageRunner] ✓ S1_Problem_Analysis 完成 → gate: auto\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mchat.ts 修改应触发全流程\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S1_Problem_Analysis → gate: auto → auto_passed\n[ToolWhitelistGuard] 🔓 已停用 (S1_Problem_Analysis), 放行 0, 拦截 0\n[ToolWhitelistGuard] 🔒 已激活 (S2_Solution_Design), 4 条规则\n[StageRunner] ▶ S2_Solution_Design (重构技术方案撰写&架构合规校验) [local/human]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mchat.ts 修改应触发全流程\n\u001b[22m\u001b[39m[StageRunner] ✓ S2_Solution_Design 完成 → gate: human\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mchat.ts 修改应触发全流程\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S2_Solution_Design → gate: human → human_timeout\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb68q_yx6c.json (6 条记录, 1.9KB)\n[ToolWhitelistGuard] 🔓 已停用 (S2_Solution_Design), 放行 0, 拦截 0\n[FlowEngine] ⏹ 流水线已中止\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb68q_yx6c.json (7 条记录, 2.1KB)\n[FlowEngine] ⏹ human gate human_timeout → 流水线中止\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\n\u001b[22m\u001b[39m\n[FlowEngine] 🚀 流水线启动: WenStarOS TS内核缺陷修复&架构重构流水线 (run_msbxb69g_bya8)\n[FlowEngine]    风险: high | 文件: src/webui/chat.ts\n[ToolWhitelistGuard] 🔒 已激活 (S1_Problem_Analysis), 8 条规则\n[StageRunner] ▶ S1_Problem_Analysis (问题定位&模块牵连风险盘点) [local/auto]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\n\u001b[22m\u001b[39m[StageRunner] ✓ S1_Problem_Analysis 完成 → gate: auto\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S1_Problem_Analysis → gate: auto → auto_passed\n[ToolWhitelistGuard] 🔓 已停用 (S1_Problem_Analysis), 放行 0, 拦截 0\n[ToolWhitelistGuard] 🔒 已激活 (S2_Solution_Design), 4 条规则\n[StageRunner] ▶ S2_Solution_Design (重构技术方案撰写&架构合规校验) [local/human]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\n\u001b[22m\u001b[39m[StageRunner] ✓ S2_Solution_Design 完成 → gate: human\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m高风险文件\u001b[2m > \u001b[22m\u001b[2mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S2_Solution_Design → gate: human → human_timeout\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb69g_bya8.json (6 条记录, 1.9KB)\n[ToolWhitelistGuard] 🔓 已停用 (S2_Solution_Design), 放行 0, 拦截 0\n[FlowEngine] ⏹ 流水线已中止\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb69g_bya8.json (7 条记录, 2.1KB)\n[FlowEngine] ⏹ human gate human_timeout → 流水线中止\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m状态机确定性\u001b[2m > \u001b[22m\u001b[2mauto gate 自动累加 jump_count\n\u001b[22m\u001b[39m\n[FlowEngine] 🚀 流水线启动: WenStarOS TS内核缺陷修复&架构重构流水线 (run_msbxb69y_3o42)\n[FlowEngine]    风险: high | 文件: src/webui/chat.ts\n[ToolWhitelistGuard] 🔒 已激活 (S1_Problem_Analysis), 8 条规则\n[StageRunner] ▶ S1_Problem_Analysis (问题定位&模块牵连风险盘点) [local/auto]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m状态机确定性\u001b[2m > \u001b[22m\u001b[2mauto gate 自动累加 jump_count\n\u001b[22m\u001b[39m[StageRunner] ✓ S1_Problem_Analysis 完成 → gate: auto\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m状态机确定性\u001b[2m > \u001b[22m\u001b[2mauto gate 自动累加 jump_count\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S1_Problem_Analysis → gate: auto → auto_passed\n[ToolWhitelistGuard] 🔓 已停用 (S1_Problem_Analysis), 放行 0, 拦截 0\n[ToolWhitelistGuard] 🔒 已激活 (S2_Solution_Design), 4 条规则\n[StageRunner] ▶ S2_Solution_Design (重构技术方案撰写&架构合规校验) [local/human]\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m状态机确定性\u001b[2m > \u001b[22m\u001b[2mauto gate 自动累加 jump_count\n\u001b[22m\u001b[39m[StageRunner] ✓ S2_Solution_Design 完成 → gate: human\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2m状态机确定性\u001b[2m > \u001b[22m\u001b[2mauto gate 自动累加 jump_count\n\u001b[22m\u001b[39m[FlowEngine] 🎯 S2_Solution_Design → gate: human → human_timeout\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb69y_3o42.json (6 条记录, 1.9KB)\n[ToolWhitelistGuard] 🔓 已停用 (S2_Solution_Design), 放行 0, 拦截 0\n[FlowEngine] ⏹ 流水线已中止\n[AuditLogger] 📝 审计日志已持久化: D:\\AI文件\\harness\\data\\audit\\2026-08-02\\run_msbxb69y_3o42.json (7 条记录, 2.1KB)\n[FlowEngine] ⏹ human gate human_timeout → 流水线中止\n\n\u001b[90mstdout\u001b[2m | src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22m\u001b[2mFlowEngine\u001b[2m > \u001b[22m\u001b[2mabort 中止\u001b[2m > \u001b[22m\u001b[2m中止后状态正确\n\u001b[22m\u001b[39m[FlowEngine] ⏹ 流水线已中止\n\n[FlowEngine] 🚀 流水线启动: WenStarOS TS内核缺陷修复&架构重构流水线 (run_msbxb6ak_es5p)\n[FlowEngine]    风险: high | 文件: src/webui/chat.ts\n[FlowEngine] 流水线已中止，停止跳转\n\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m自由裸奔模式\u001b[2m > \u001b[22m低风险微小修改应跳过流水线\u001b[32m 4\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m自由裸奔模式\u001b[2m > \u001b[22m单文件低风险但无 trivial 信号 → 仍走流水线\u001b[32m 25\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m高风险文件\u001b[2m > \u001b[22mchat.ts 修改应触发全流程\u001b[32m 26\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m高风险文件\u001b[2m > \u001b[22mS4 delegate 评审驳回 → 回退到 S3 确认循环机制\u001b[32m 19\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m状态机确定性\u001b[2m > \u001b[22mauto gate 自动累加 jump_count\u001b[32m 21\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22m熔断检查\u001b[2m > \u001b[22m模拟超过 max_jump_limit 时的熔断行为\u001b[32m 1\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m src/__tests__/FlowEngine.test.ts\u001b[2m > \u001b[22mFlowEngine\u001b[2m > \u001b[22mabort 中止\u001b[2m > \u001b[22m中止后状态正确\u001b[32m 1\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m6 passed\u001b[39m\u001b[22m\u001b[90m (6)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m67 passed\u001b[39m\u001b[22m\u001b[90m (67)\u001b[39m\n\u001b[2m   Start at \u001b[22m 22:56:31\n\u001b[2m   Duration \u001b[22m 1.16s\u001b[2m (transform 578ms, setup 0ms, collect 1.48s, tests 242ms, environment 2ms, prepare 1.88s)\u001b[22m\n\n",
+      "stderr_tail": "",
+      "message": "测试全部通过"
+    },
+    "pm2_jlist": {
+      "ok": false,
+      "command": "pm2 jlist",
+      "exit_code": 0,
+      "duration_ms": 0,
+      "stdout_tail": "[]",
+      "stderr_tail": "",
+      "message": "0 个进程"
+    },
+    "mcp_port_8765": {
+      "ok": false,
+      "listening": false,
+      "exit_code": 1,
+      "raw": "",
+      "message": "端口 8765 未监听"
+    },
+    "heartbeat": {
+      "ok": false,
+      "exists": true,
+      "path": "D:\\AI文件\\harness\\data\\heartbeat.json",
+      "last_modified": "2026-08-02T12:53:18.425Z",
+      "age_seconds": 7395,
+      "fresh": false,
+      "message": "Heartbeat 过期 (7395s 前)",
+      "content": {
+        "ts": 1785675198425,
+        "port": 8765,
+        "pid": 15972
+      }
+    }
+  },
+  "pm2": {
+    "available": true,
+    "processes": []
+  },
+  "mcp": {
+    "port": 8765,
+    "listening": false
+  },
+  "data_dirs": {
+    "tokens": {
+      "path": "D:\\AI文件\\harness\\data\\tokens",
+      "exists": true,
+      "file_count": 1,
+      "json_count": 1,
+      "latest_modified": "2026-08-02T12:20:19.675Z",
+      "consumed_guess_count": 0,
+      "expired_guess_count": 1
+    },
+    "audit": {
+      "path": "D:\\AI文件\\harness\\data\\audit",
+      "exists": true,
+      "file_count": 171,
+      "json_count": 171,
+      "latest_modified": "2026-08-02T14:56:32.154Z"
+    },
+    "sentinel": {
+      "path": "D:\\AI文件\\harness\\data\\sentinel",
+      "exists": true,
+      "file_count": 838,
+      "json_count": 838,
+      "latest_modified": "2026-08-02T12:51:45.475Z",
+      "last_24h_event_guess_count": 146
+    },
+    "logs": {
+      "path": "D:\\AI文件\\harness\\data\\logs",
+      "exists": true,
+      "file_count": 4,
+      "json_count": 0,
+      "latest_modified": "2026-08-02T12:51:45.476Z"
+    }
+  },
+  "managed_projects": [
+    {
+      "name": "wenstar-cc",
+      "root": "D:/tools/wenstar-cc",
+      "exists": true,
+      "git": {
+        "is_repo": true,
+        "commit": "6f3045cd4aa5fdf98b96dc30c83b335c7a5733e6",
+        "branch": "main",
+        "dirty": true,
+        "status_porcelain": [
+          "M LOCAL_PRODUCTIZATION_STATUS.md",
+          " M src/app/yuyao-memory/YuyaoMemoryService.ts",
+          " M src/webui/chat.ts",
+          " M src/webui/chat/persistence-stage.ts",
+          " M src/webui/chat/retrieval-stage.ts",
+          " M src/webui/server-memory-routes.ts",
+          " M src/webui/server.ts",
+          "?? scripts/memory-namespace-isolation-smoke.cjs",
+          "?? scripts/memory-scope-static-check.cjs",
+          "?? src/app/yuyao-memory/memoryScope.ts"
+        ]
+      }
+    },
+    {
+      "name": "wenstar_os",
+      "root": "D:/wenstar/wenstar_os",
+      "exists": true,
+      "git": {
+        "is_repo": true,
+        "commit": "27d7c281d910a8923c73e5b1b14d835202919aa4",
+        "branch": "main",
+        "dirty": true,
+        "status_porcelain": [
+          "M common/base_mcp_harris.py",
+          " M common/harris_core_v2.py",
+          " M domain_tianquan/TIANQUAN_DOMAIN_SPEC.md",
+          " M domain_yaoling/cache/tianquan_offline_queue.json",
+          " M domain_yaoling/closed_loop.py",
+          " M domain_yaoling/mcp_harris_l.py",
+          " M domain_yaoling/tianquan_cache.py",
+          " M domain_yaoling/workflow_executor.py",
+          " M global_bus_main.py",
+          "?? common/address_timeline.py",
+          "?? common/global_uid.py"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "overall_status": "FAIL",
+    "pass_count": 8,
+    "fail_count": 4,
+    "warn_count": 3,
+    "skipped_count": 0,
+    "critical_findings": [
+      "PM2 进程: 0 个进程",
+      "MCP 端口 8765: 端口 8765 未监听",
+      "harness-mcp 进程不在线",
+      "harness-sentinel 进程不在线"
+    ],
+    "warnings": [
+      "Heartbeat: Heartbeat 过期 (7395s 前)",
+      "被管制项目有未提交变更: wenstar-cc",
+      "被管制项目有未提交变更: wenstar_os"
+    ]
+  },
+  "errors": []
+}

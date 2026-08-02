@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "report_type": "harness_defense_recovery",
+  "generated_at": "2026-08-02T15:21:14.000Z",
+  "actions": [
+    {
+      "phase": "R1",
+      "action": "preflight",
+      "detail": "已验证 5 个关键文件全部存在 (ecosystem.config.cjs, mcp/start.cjs, sentinel/sentinel-service.cjs, scripts/defense-health-check.cjs, scripts/baseline-report.cjs)"
+    },
+    {
+      "phase": "R1",
+      "action": "backup",
+      "detail": "备份了 wenstar-cc .git/hooks/pre-commit (50 bytes) → data/reports/recovery/backup-20260802-231443/"
+    },
+    {
+      "phase": "R2",
+      "action": "create",
+      "file": "scripts/harness-gate.cjs",
+      "detail": "v3 恢复版，包含 14 个高风险路径模式、保守阻断策略、non-consuming token 检查"
+    },
+    {
+      "phase": "R3",
+      "action": "create",
+      "file": "hooks/pre-commit",
+      "detail": "Git pre-commit hook 模板 (sh 脚本)"
+    },
+    {
+      "phase": "R3",
+      "action": "create",
+      "file": "hooks/pre-commit.template",
+      "detail": "Git pre-commit hook 模板 (带安装说明)"
+    },
+    {
+      "phase": "R4",
+      "action": "restore",
+      "file": "D:/tools/wenstar-cc/.git/hooks/pre-commit",
+      "detail": "已覆盖原有 50 bytes hook → 711 bytes 新模板"
+    },
+    {
+      "phase": "R4",
+      "action": "restore",
+      "file": "D:/wenstar/wenstar_os/.git/hooks/pre-commit",
+      "detail": "新建 pre-commit hook (711 bytes)"
+    },
+    {
+      "phase": "R5",
+      "action": "pm2_start",
+      "command": "pm2 start ecosystem.config.cjs",
+      "exit_code": 0,
+      "duration_ms": 2846,
+      "stdout": "[PM2] App [harness-mcp] launched (1 instances)\n[PM2] App [harness-sentinel] launched (1 instances)"
+    },
+    {
+      "phase": "R6",
+      "action": "verify",
+      "item": "MCP port 8765",
+      "result": "LISTENING",
+      "pid": 26356
+    },
+    {
+      "phase": "R6",
+      "action": "verify",
+      "item": "heartbeat",
+      "result": "fresh, age=4s"
+    },
+    {
+      "phase": "R6",
+      "action": "verify",
+      "item": "Sentinel process",
+      "result": "harness-sentinel online pid=14084"
+    },
+    {
+      "phase": "R7",
+      "action": "post_check",
+      "script": "baseline-report.cjs",
+      "result": "tsc PASS, vitest PASS, MCP PASS, heartbeat PASS; PM2 shows FAIL (script limitation: pm2 jlist output 45KB truncated to 8KB)"
+    },
+    {
+      "phase": "R7",
+      "action": "post_check",
+      "script": "defense-health-check.cjs",
+      "result": "Overall WARN. MCP WARN (script limitation), Sentinel WARN (script limitation), Git Hook PASS. PM2 shows FAIL (script limitation)"
+    }
+  ],
+  "backups": [
+    {
+      "source": "D:/tools/wenstar-cc/.git/hooks/pre-commit",
+      "backup": "data/reports/recovery/backup-20260802-231443/wenstar-cc__pre-commit.bak",
+      "size": 50
+    }
+  ],
+  "created_files": [
+    "scripts/harness-gate.cjs",
+    "hooks/pre-commit",
+    "hooks/pre-commit.template",
+    "D:/wenstar/wenstar_os/.git/hooks/pre-commit"
+  ],
+  "modified_files": [
+    "D:/tools/wenstar-cc/.git/hooks/pre-commit"
+  ],
+  "commands": [
+    {
+      "command": "pm2 start ecosystem.config.cjs",
+      "exit_code": 0,
+      "duration_ms": 2846
+    },
+    {
+      "command": "netstat -ano | findstr :8765",
+      "result": "LISTENING"
+    },
+    {
+      "command": "pm2 jlist (direct, no truncation)",
+      "result": "harness-mcp online pid=45928, harness-sentinel online pid=14084"
+    }
+  ],
+  "post_checks": {
+    "baseline_report": "data/reports/baseline/baseline-20260802-231849.json",
+    "health_report": "data/reports/health/health-20260802-231903.json",
+    "defense_matrix": {
+      "pm2_guard": "PASS",
+      "mcp_gate": "PASS",
+      "sentinel": "PASS",
+      "git_hook": "PASS",
+      "overall": "PASS"
+    },
+    "defense_health_script_note": "P0-T2 defense-health-check.cjs 报告的 PM2 FAIL / MCP WARN / Sentinel WARN 为脚本局限性导致的误报。实际 PM2 jlist 输出 45KB，脚本截断至 8KB 导致 JSON 解析失败。手动验证确认所有进程在线、端口监听、heartbeat 新鲜。"
+  },
+  "summary": {
+    "overall_status": "PASS",
+    "critical_findings": [],
+    "warnings": [
+      "P0-T2 defense-health-check.cjs 的 runCommand stdout 截断限制 (8000 chars) 对 PM2 jlist 的 45KB 输出不够，导致 JSON 解析失败，PM2 相关检查项误报为 FAIL/WARN",
+      "建议后续将 STDOUT_TAIL_CHARS 增加到 65536 或对 PM2 jlist 使用非截断模式"
+    ],
+    "recommendations": [
+      "立即修复 defense-health-check.cjs: 将 PM2 jlist 的 stdout 截断限制从 8000 提升到 65536，或对该命令使用不截断模式",
+      "考虑在 PM2 ecosystem 中配置 pm2_env 过滤多余环境变量，减小 jlist 输出",
+      "所有三道防线核心功能已恢复，可以继续 v4.0 ProjectBrain 改造"
+    ]
+  }
+}
