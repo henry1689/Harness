@@ -7,7 +7,9 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "harness:integrity": "node scripts/harness-integrity-check.cjs --check",
+    "harness:integrity:write": "node scripts/harness-integrity-check.cjs --write"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -23,6 +23,9 @@ var fs = require('fs');
 var path = require('path');
 var os = require('os');
 
+
+// P4-C Batch 2: DiffScopeGuard runtime enforcement for Claude pre-check hook
+var diffScope = require('../src/project-brain/diff-scope-runtime.cjs');
 /* ── 保护区 ── */
 var PROTECTED = [
   '.claude/settings.json', '.claude/harness', '.claude/workflows', '.claude/hooks'
@@ -255,6 +258,18 @@ function run() {
   var token = checkPassToken(n, input);
   if (token && token.passed) {
     // 令牌有效 → 通过，更新计数器
+    // P4-C Batch 2: DiffScopeGuard runtime enforcement.
+    // The token must cover the current write target and all files visible in this hook input.
+    var scopeFiles = uniqueNormalizedFiles([n].concat(allModified || []));
+    var scopeResult = diffScope.evaluateTokenScope(token, scopeFiles, { mode: 'strict' });
+    if (!scopeResult.allowed) {
+      console.error('[Harness] DiffScopeGuard rejected token scope for pre-check target: ' + n);
+      console.error(diffScope.formatScopeResult(scopeResult));
+      return { decision: 'deny',
+        reason: 'DIFF SCOPE GUARD: token scope does not cover requested write set.\n' + diffScope.formatScopeResult(scopeResult)
+      };
+    }
+
     token.usage_count = (token.usage_count || 0) + 1;
     if (token.usage_count > 1) {
       // 已被使用 → 拒绝（防止令牌复用）
@@ -326,6 +341,23 @@ function run() {
 }
 
 /* ── (三) 多维令牌校验 ── */
+function uniqueNormalizedFiles(files) {
+  var seen = {};
+  var out = [];
+  files = files || [];
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    if (!f) continue;
+    var n = normalize(String(f).replace(/\\/g, '/'));
+    if (!n) continue;
+    if (!seen[n]) {
+      seen[n] = true;
+      out.push(n);
+    }
+  }
+  return out;
+}
+
 function checkPassToken(filePath, input) {
   try {
     if (!fs.existsSync(TOKEN_DIR)) return null;
