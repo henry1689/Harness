@@ -336,6 +336,30 @@ function checkPassToken(filePath, input) {
     var token = JSON.parse(raw);
     var now = Date.now();
 
+    // 🔴 P4-AB: Token v2 HMAC 签名验证 (优先检查)
+    if (token.version === 2) {
+      try {
+        var tv = require('../src/security/token-verify.cjs');
+        if (tv.isTokenSecretAvailable()) {
+          var v2Result = tv.verifyTokenV2(token, filePath, { now: new Date(now) });
+          if (!v2Result.allowed) {
+            console.error('[Harness] Token v2 rejected: ' + v2Result.reason + ' (file: ' + filePath + ')');
+            if (v2Result.reason === 'token_invalid_signature' || v2Result.reason === 'token_expired') {
+              try { fs.unlinkSync(tp); } catch (_) {}
+            }
+            return null;
+          }
+        } else {
+          // secret 不可用 → fail-close for v2
+          console.error('[Harness] 🔴 Token v2 requires HARNESS_TOKEN_SECRET but it is not available');
+          return null;
+        }
+      } catch (e) {
+        console.error('[Harness] Token v2 verification error: ' + e.message);
+        return null;
+      }
+    }
+
     // 1. 过期检查
     if (now > (token.expires_at || 0)) {
       try { fs.unlinkSync(tp); } catch (_) {}

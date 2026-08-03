@@ -86,7 +86,15 @@ function classifyRisk(filePath) {
   return 'mid';
 }
 
-// ── 令牌检查（本地文件系统，与 Hook 完全相同）─
+// ── 令牌检查（本地文件系统，与 Hook 完全相同）──
+
+// 🔴 P4-AB: 加载 Token v2 验证模块
+let tokenVerify = null;
+try {
+  tokenVerify = require('../src/security/token-verify.cjs');
+} catch (_) {
+  console.error('[sentinel:client] ⚠️ Token v2 验证模块加载失败，仅支持 v1 令牌');
+}
 
 function checkTokenLocal(filePath) {
   try {
@@ -97,6 +105,31 @@ function checkTokenLocal(filePath) {
     const raw = fs.readFileSync(tp, 'utf-8');
     const token = JSON.parse(raw);
     const now = Date.now();
+
+    // 🔴 P4-AB: Token v2 HMAC 签名验证
+    if (token.version === 2) {
+      if (!tokenVerify || !tokenVerify.isTokenSecretAvailable()) {
+        console.error('[sentinel:client] 🔴 Token v2 需要验证但 secret 不可用，拒绝令牌');
+        return null;
+      }
+      const result = tokenVerify.verifyTokenV2(token, filePath, { now: new Date(now) });
+      if (!result.allowed) {
+        console.error(`[sentinel:client] 🔴 Token v2 验证失败: ${result.reason} (file: ${filePath})`);
+        // 过期或签名无效 → 删除无效令牌文件
+        if (result.reason === 'token_expired' || result.reason === 'token_invalid_signature') {
+          try { fs.unlinkSync(tp); } catch (_) {}
+        }
+        return null;
+      }
+      return token;
+    }
+
+    // ── Legacy v1 token (P4-AB: 高风险文件拒绝 v1) ──
+    if (tokenVerify && tokenVerify.isHighRiskForWeakToken(filePath)) {
+      console.error('[sentinel:client] ⚠️ 高风险文件拒绝 legacy v1 令牌: ' + filePath);
+      return null;
+    }
+
     if (now > (token.expires_at || 0)) { try { fs.unlinkSync(tp); } catch (_) {} return null; }
     if (token.consumed) return null;
     if (token.caller_uuid && token.caller_uuid !== 'sg-mcp-v3-00000000-0000-0000-0000-000000000001') return null;
