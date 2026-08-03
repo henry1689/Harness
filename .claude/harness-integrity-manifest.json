@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "algorithm": "sha256",
+  "generated_at": "2026-08-03T10:48:59.503Z",
+  "files": {
+    ".claude/harness-pre-check.cjs": "def987bd965d9a3c1750af6379d9c6bdf04071809f4f20b77a1a3d3178c8a098",
+    ".claude/harness-post-check.cjs": "713eb99dc44a114b7c5fed69a994909400e95d989e676a96a3e335b0d8e49f1c",
+    ".claude/harness-verify-startup.cjs": "6f71028eb986959a338a30cfc5fce26a7c8543f8fe8a71b044b4a970e98d993c",
+    ".claude/harness-auto-start.cjs": "38dbf1f5f268c74769757ad1f3f36e8252cc32f156f30c63dd1a96f35dba3379",
+    "scripts/harness-gate.cjs": "ba2d40388506ab1057f717a6c6633fddc88cf2a7cab9c13a45b20f9fe39ce3eb",
+    "src/project-brain/diff-scope-runtime.cjs": "02d126cc6b529334d7fe548b5b6952d281ccbf975d5e933f0bb23da8d356ad65"
+  }
+}
