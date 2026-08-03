@@ -24,6 +24,9 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+// P4-C: DiffScopeGuard runtime enforcement for CJS gate
+const diffScope = require('../src/project-brain/diff-scope-runtime.cjs');
+
 // 🔴 P4-AB: Token v2 HMAC 验证模块
 let tokenVerify = null;
 try {
@@ -291,6 +294,16 @@ function main() {
       }
 
       // 通过所有检查 → 此文件有有效 token
+      // P4-C: DiffScopeGuard runtime enforcement.
+      // The token must cover not only this high-risk file, but the whole staged diff.
+      const scopeResult = diffScope.evaluateTokenScope(token, stagedFiles, { mode: 'strict' });
+      if (!scopeResult.allowed) {
+        console.error('[Harness Gate] DiffScopeGuard rejected token scope for file: ' + stagedFile);
+        console.error(diffScope.formatScopeResult(scopeResult));
+        continue;
+      }
+
+      // Passed token + HMAC + strength + full staged scope checks.
       covered = true;
       break;
     }
