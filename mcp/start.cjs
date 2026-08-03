@@ -1,20 +1,23 @@
 /**
- * Harness MCP Server 启动脚本 v2.0 — 带自动重启
- * ==================================================
- * v2.0 更新:
+ * Harness MCP Server 启动脚本 v3.0 — 编译前置验证 + 自动重启
+ * ============================================================
+ * v3.0 (P4-AB) 更新:
+ *   - 🔒 启动前强制 tsc --noEmit 编译验证 — 杜绝 MCP 运行旧代码
  *   - 🔄 子进程崩溃自动重启（指数退避：1s→2s→4s→8s→16s→32s，最大 32s）
- *   - 💓 健康检测：每 30s 检查心跳文件是否更新，超时 90s 强制杀死重启
+ *   - 💓 健康检测：每 30s 检查心跳文件是否更新，超时 300s 强制杀死重启
  *   - 📊 重启计数器 + 审计日志
+ *   - 🚫 编译失败 → 拒绝启动 (exit code > 0)
  *
  * 使用方式:
  *   node mcp/start.cjs                     → 默认端口 8765
  *   node mcp/start.cjs --port 9999         → 自定义端口
  *   node mcp/start.cjs --root D:/tools/wenstar-cc  → 指定项目根目录
+ *   node mcp/start.cjs --skip-tsc          → 跳过编译检查 (仅调试用)
  */
 
 'use strict';
 
-const { fork } = require('child_process');
+const { fork, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -22,10 +25,12 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 let port = '8765';
 let projectRoot = process.cwd();
+let skipTsc = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--port' && args[i + 1]) port = args[++i];
   else if (args[i] === '--root' && args[i + 1]) projectRoot = args[++i];
+  else if (args[i] === '--skip-tsc') skipTsc = true;
 }
 
 // 🚀 找到 tsx（兼容 exports 字段屏蔽）
@@ -190,13 +195,64 @@ function startHealthCheck(currentChild) {
   return timer;
 }
 
+// ── 编译前置验证 (P4-AB) ──
+// 确保 MCP 不会运行旧代码：启动前强制 tsc 编译检查
+
+function runTscCompileCheck() {
+  if (skipTsc) {
+    console.error('[harness-start] ⚠️ --skip-tsc 已指定，跳过编译检查（仅调试用，生产环境禁止）');
+    return;
+  }
+
+  console.error('[harness-start] 🔍 编译前置验证: npx tsc --noEmit ...');
+  const harnessRoot = path.resolve(__dirname, '..');
+
+  const result = spawnSync('npx', ['tsc', '--noEmit'], {
+    cwd: harnessRoot,
+    stdio: 'pipe',
+    shell: true,
+    timeout: 60_000,
+    encoding: 'utf-8',
+  });
+
+  if (result.status !== 0) {
+    const stderr = (result.stderr || '').trim();
+    const stdout = (result.stdout || '').trim();
+    console.error('[harness-start] ╔══════════════════════════════════════╗');
+    console.error('[harness-start] ║  🔴 STARTUP BLOCKED                  ║');
+    console.error('[harness-start] ║  TypeScript 编译失败                   ║');
+    console.error('[harness-start] ║  MCP 拒绝启动 — 请修复编译错误后重试   ║');
+    console.error('[harness-start] ╚══════════════════════════════════════╝');
+    if (stderr) {
+      console.error('[harness-start] ── tsc stderr ──');
+      // 只打印前 50 行，避免刷屏
+      const lines = stderr.split('\n').slice(0, 50);
+      lines.forEach(l => console.error('[harness-start]   ' + l));
+      if (stderr.split('\n').length > 50) console.error('[harness-start]   ... (truncated)');
+    }
+    if (stdout) {
+      console.error('[harness-start] ── tsc stdout ──');
+      const lines = stdout.split('\n').slice(0, 30);
+      lines.forEach(l => console.error('[harness-start]   ' + l));
+    }
+    auditLog('tsc_check_failed', { exitCode: result.status, error: (stderr || stdout).slice(0, 500) });
+    process.exit(result.status ?? 1);
+  }
+
+  console.error('[harness-start] ✅ 编译验证通过');
+}
+
 // ── 启动 ──
 
 console.error(`[harness-start] ╔══════════════════════════════════════════╗`);
-console.error(`[harness-start] ║  Harness MCP Server 启动器 v2.0         ║`);
+console.error(`[harness-start] ║  Harness MCP Server 启动器 v3.0 (P4-AB) ║`);
+console.error(`[harness-start] ║  编译验证: ✅ (tsc --noEmit)            ║`);
 console.error(`[harness-start] ║  自动重启: ✅ (退避: 1s→32s)           ║`);
-console.error(`[harness-start] ║  健康检查: ✅ (每30s, 超时90s)        ║`);
+console.error(`[harness-start] ║  健康检查: ✅ (每30s, 超时300s)        ║`);
 console.error(`[harness-start] ╚══════════════════════════════════════════╝`);
+
+// 🔴 P4-AB: 先跑编译验证，通过后再启动 MCP
+runTscCompileCheck();
 
 const child = startChild();
 const healthTimer = startHealthCheck(child);
