@@ -24,6 +24,14 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+// 🔴 P4-AB: Token v2 HMAC 验证模块
+let tokenVerify = null;
+try {
+  tokenVerify = require('../src/security/token-verify.cjs');
+} catch (_) {
+  // P4-AB 前期可能还未安装 — 降级为仅 v1 检查
+}
+
 // ============================================================================
 // 0. 配置
 // ============================================================================
@@ -262,6 +270,25 @@ function main() {
 
       // 3. 检查文件绑定
       if (!tokenCoversFile(token, stagedFile)) continue;
+
+      // 🔴 4. P4-AB: Token v2 HMAC 签名验证
+      if (token.version === 2) {
+        if (!tokenVerify || !tokenVerify.isTokenSecretAvailable()) {
+          console.error('[Harness Gate] 🔴 Token v2 需要 secret 但不可用，跳过此令牌');
+          continue;
+        }
+        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong' });
+        if (!v2Result.allowed) {
+          console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
+          continue;
+        }
+      }
+
+      // 🔴 5. P4-AB: 高风险文件提交不接受 weak token
+      if (token.token_strength === 'weak') {
+        console.error(`[Harness Gate] ⚠️ Weak token 不可用于高风险文件提交: ${stagedFile}`);
+        continue;
+      }
 
       // 通过所有检查 → 此文件有有效 token
       covered = true;
