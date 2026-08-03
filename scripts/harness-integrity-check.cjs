@@ -21,9 +21,13 @@ function toPosix(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
+function normalizeForIntegrityHash(buf) {
+  return buf.toString('utf8').replace(/\r\n/g, '\n');
+}
+
 function sha256File(abs) {
-  var buf = fs.readFileSync(abs);
-  return crypto.createHash('sha256').update(buf).digest('hex');
+  var content = normalizeForIntegrityHash(fs.readFileSync(abs));
+  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
 function loadManifest() {
@@ -158,5 +162,6 @@ module.exports = {
   MANIFEST_PATH: MANIFEST_PATH,
   buildManifest: buildManifest,
   verifyManifest: verifyManifest,
-  sha256File: sha256File
+  sha256File: sha256File,
+  normalizeForIntegrityHash: normalizeForIntegrityHash
 };
