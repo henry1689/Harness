@@ -14,8 +14,11 @@ data/heartbeat.json
 data/logs/
 data/sentinel/
 
-# Generated health check reports
-data/reports/health/
+# Generated reports
+data/reports/
+
+# MCP watchdog snapshots
+data/mcp-watchdog/watchdog_*.json
 
 # Atomic write residues
 *.tmp
