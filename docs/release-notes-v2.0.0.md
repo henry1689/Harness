@@ -79,6 +79,3 @@ Before publishing or tagging the release, run:
 npm run typecheck
 npm test
 npm run harness:integrity
-
-q
-q
