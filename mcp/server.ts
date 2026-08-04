@@ -24,6 +24,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readdirSync, writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { execSync, fork } from 'node:child_process';
 
 // @modelcontextprotocol/sdk 1.30+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -33,6 +34,9 @@ import { z } from 'zod';
 // Harness 自进化引擎
 import { EvolutionEngine } from '../src/EvolutionEngine.js';
 import { getUpgradeProgress } from '../src/HardnessLadder.js';
+
+// P5: ProjectBrain 感知层 — IntentSpec 构建 + DiffScopeGuard
+import { buildIntentSpec } from '../src/project-brain/intent-builder.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Harness 基础设施保护区（与 harness-pre-check.cjs 保持同步）
@@ -73,10 +77,49 @@ const evolutionEngine = new EvolutionEngine({
   dataDir: resolve(import.meta.dirname!, '..', 'data'),
   projectRoot: PROJECT_ROOT,
   currentLevel: 'L1',
-  pollIntervalMs: 60_000,    // 每 60 秒增量扫描
-  analysisIntervalMs: 3600_000, // 每小时全量分析
+  pollIntervalMs: 30_000,       // P5: 每 30 秒增量扫描（原 60s）
+  analysisIntervalMs: 600_000,  // P5: 每 10 分钟全量分析（原 1h）
 });
 evolutionEngine.start();
+
+// P5: S3 编译自检 — condition gate 前置检查
+async function s3CompileCheck(_stageId: string, projectRoot: string): Promise<{ passed: boolean; reason?: string }> {
+  try {
+    execSync('npx tsc --noEmit', {
+      cwd: projectRoot,
+      timeout: 60_000,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    return { passed: true };
+  } catch (err: any) {
+    const stderr = (err.stderr?.toString?.() || err.message || '').slice(0, 500);
+    return { passed: false, reason: `S3 tsc 编译检查未通过: ${stderr}` };
+  }
+}
+
+// P5: DelegateReviewer CJS 入口 — fork 独立子进程执行 S4 评审
+async function forkedReview(stage: any, state: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const runnerPath = resolve(import.meta.dirname!, '..', 'scripts', 'review-runner.cjs');
+    const child = fork(runnerPath, [], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'], timeout: 120_000 });
+
+    const payload = JSON.stringify({ stage, state });
+    child.stdin?.write(payload);
+    child.stdin?.end();
+
+    let result: any = null;
+    child.on('message', (msg: any) => { result = msg; });
+    child.on('close', (code) => {
+      if (result) {
+        resolve(result);
+      } else {
+        reject(new Error(`review-runner exited code ${code} with no result`));
+      }
+    });
+    child.on('error', (err) => reject(err));
+  });
+}
 
 const mcpServer = new McpServer({
   name: 'harness',
@@ -144,6 +187,15 @@ mcpServer.registerTool(
     const risk = classifyFiles(files);
     const trivial = isTrivialChange(msg, files);
 
+    // P5: ProjectBrain — 构建 IntentSpec 用于 DiffScopeGuard
+    const intentSpec = buildIntentSpec({
+      title: msg?.slice(0, 80) || 'Unnamed intent',
+      description: msg || '',
+      files,
+      projectRoot: PROJECT_ROOT,
+    });
+    console.error(`[harness-mcp] IntentSpec: ${intentSpec.id} | risk: ${risk} | scope: ${intentSpec.scope.allowed_paths.length} allowed, ${intentSpec.scope.forbidden_paths.length} forbidden`);
+
     // 自由裸奔
     if (risk === 'low' && trivial) {
       return {
@@ -151,15 +203,23 @@ mcpServer.registerTool(
           type: 'text' as const,
           text: JSON.stringify({
             success: true, mode: 'free', risk, files,
+            intent_id: intentSpec.id,
             message: '🆓 低风险微小修改，跳过流水线。可直接修改，但请注意遵守系统不变量。',
           }, null, 2),
         }],
       };
     }
 
-    // 按阶段分派评审函数
+    // 按阶段分派评审函数 — P5: S4 用 fork 独立子进程（真正 delegate）
     const delegateFnMap = new Map();
-    delegateFnMap.set('S4_Arch_Review', async (stage: any, state: any) => review(stage, state));
+    delegateFnMap.set('S4_Arch_Review', async (stage: any, state: any) => {
+      try {
+        return await forkedReview(stage, state);
+      } catch (err) {
+        console.error('[harness-mcp] S4 fork 评审失败，降级为 in-process review:', (err as Error).message);
+        return review(stage, state);
+      }
+    });
     delegateFnMap.set('S4.5_Convergence_Gate', async (stage: any, state: any) => convergenceEvaluate(stage, state));
 
     const engine = new FlowEngine({
@@ -167,6 +227,7 @@ mcpServer.registerTool(
       delegateReviewFnMap: delegateFnMap,
       projectRoot: PROJECT_ROOT,
       autoApproveHumanGate: true,  // 🔴 MCP 无头模式 — S2 自动批准
+      conditionGateCheck: s3CompileCheck,  // 🔴 P5: S3 编译自检
     });
 
     const result = await engine.start(flowName, {
@@ -177,35 +238,27 @@ mcpServer.registerTool(
       projectRoot: PROJECT_ROOT,
     });
 
-    // 写入通行令牌
+    // P5: 签发 Token v2（HMAC 签名）
     if (result.success) {
       try {
+        const { TokenStore } = await import('../src/security/token-store.js');
         const tokenDir = resolve(import.meta.dirname!, '..', 'data', 'tokens');
-        if (!existsSync(tokenDir)) mkdirSync(tokenDir, { recursive: true });
-
-        const EXPIRY_MS = 2 * 60 * 60 * 1000;
-        const now = Date.now();
+        const store = new TokenStore({ tokenDir });
 
         for (const f of files) {
-          const hash = hashCode(f);
-          const tokenPath = resolve(tokenDir, hash + '.json');
-          writeFileSync(tokenPath, JSON.stringify({
-            file: f,
-            files: files,
-            passed: true,
-            consumed: false,
-            usage_count: 0,
+          store.issueToken({
+            token_strength: 'strong',
             run_id: result.run_id,
-            risk_level: risk,
-            caller_uuid: 'sg-mcp-v3-00000000-0000-0000-0000-000000000001',
-            issued_at: new Date(now).toISOString(),
-            expires_at: now + EXPIRY_MS,
-          }, null, 2), 'utf-8');
+            intent_id: intentSpec.id,
+            files: [f],
+            allowed_paths: [f],
+            forbidden_paths: intentSpec.scope.forbidden_paths,
+          });
         }
 
-        console.error(`[harness-mcp] 令牌已签发: ${files.length} 个文件, 有效期 2h`);
+        console.error(`[harness-mcp] Token v2 已签发: ${files.length} 个文件, intent: ${intentSpec.id}`);
       } catch (err) {
-        console.error('[harness-mcp] 令牌写入失败:', (err as Error).message);
+        console.error('[harness-mcp] Token v2 签发失败:', (err as Error).message);
       }
     }
 

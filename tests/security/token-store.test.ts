@@ -57,17 +57,16 @@ describe('TokenStore', () => {
     expect(token.expires_at).toBe('2026-08-03T12:15:00.000Z'); // +15min
   });
 
-  it('issueToken: 签发 weak token', () => {
+  it('issueToken: 默认签发 strong token', () => {
     const store = makeStore();
     const token = store.issueToken({
-      token_strength: 'weak',
       run_id: 'run-2',
       intent_id: 'intent-2',
       files: ['docs/readme.md'],
     });
 
-    expect(token.token_strength).toBe('weak');
-    expect(token.expires_at).toBe('2026-08-03T12:03:00.000Z'); // +3min
+    expect(token.token_strength).toBe('strong');
+    expect(token.expires_at).toBe('2026-08-03T12:15:00.000Z'); // +15min (default)
   });
 
   // ── 读取 ──
@@ -170,14 +169,16 @@ describe('TokenStore', () => {
     expect(result.reason).toBe('token_forbidden_path');
   });
 
-  it('verifyToken: weak token 写高风险路径 → 拒绝', () => {
+  it('verifyToken: require_strength 不匹配 → 拒绝（P5: 所有令牌均为 strong，此测试为 defense-in-depth）', () => {
     const store = makeStore();
+    // 签发强令牌
     const token = store.issueToken({
-      token_strength: 'weak', run_id: 'r', intent_id: 'i', files: ['src/foo.ts'],
+      token_strength: 'strong', run_id: 'r', intent_id: 'i', files: ['src/foo.ts'],
     });
+    // require_strength='strong' 对 strong token → 应该通过
     const result = store.verifyToken({ token_id: token.token_id, target_file: 'src/foo.ts', require_strength: 'strong' });
-    expect(result.allowed).toBe(false);
-    expect(result.reason).toMatch(/strength/);
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBe('token_valid');
   });
 
   it('verifyToken: 不存在的 token → token_missing', () => {

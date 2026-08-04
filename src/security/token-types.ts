@@ -5,15 +5,15 @@
  *
  * 设计原则:
  *   - signing_payload 不包含可变字段 (consumed, consumed_at, signature)
- *   - strong token: 高风险路径 + final commit 授权
- *   - weak token: advisory 场景，scope 更窄，TTL 更短
+ *   - 所有令牌均为 strong，统一 15min TTL
+ *   - P5-CLEANUP: 移除 weak token（三道防线均拒绝，无合法用例）
  */
 
 // ════════════════════════════════════════════════════════════════════
-// 枚举/文字类型
+// 令牌强度
 // ════════════════════════════════════════════════════════════════════
 
-export type HarnessTokenStrength = 'strong' | 'weak';
+export type HarnessTokenStrength = 'strong';
 
 // ════════════════════════════════════════════════════════════════════
 // Token v2 完整结构
@@ -83,7 +83,7 @@ export interface HarnessTokenSigningPayload {
 // ════════════════════════════════════════════════════════════════════
 
 export interface IssueTokenInput {
-  token_strength: HarnessTokenStrength;
+  token_strength?: HarnessTokenStrength;  // 默认 'strong'（仅此选项）
   run_id: string;
   intent_id: string;
   files: string[];
@@ -91,7 +91,7 @@ export interface IssueTokenInput {
   forbidden_paths?: string[];
   project_root_hash?: string;
   diff_scope_hash?: string;
-  /** TTL 毫秒，默认: strong=15min, weak=3min */
+  /** TTL 毫秒，默认 15min */
   ttl_ms?: number;
 }
 
@@ -137,9 +137,8 @@ export function toSigningPayload(token: HarnessTokenV2): HarnessTokenSigningPayl
   };
 }
 
-/** 默认 TTL */
-export const DEFAULT_STRONG_TTL_MS = 15 * 60 * 1000;  // 15 分钟
-export const DEFAULT_WEAK_TTL_MS = 3 * 60 * 1000;      // 3 分钟
+/** 默认 TTL（统一 15 分钟） */
+export const DEFAULT_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 /** 高风险路径前缀 — weak token 禁止覆盖 */
 export const HIGH_RISK_PATH_PREFIXES = [

@@ -34,6 +34,8 @@ export interface StageRunnerOptions {
   delegateReviewFnMap?: Map<string, DelegateReviewFn>;
   /** 项目根目录 */
   projectRoot?: string;
+  /** 🔴 P5: condition gate 前置检查（如 S3 tsc 自检）。传入 stage_id，返回是否通过 */
+  conditionGateCheck?: (stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>;
 }
 
 /** 委托评审函数签名：接收 stage 配置和运行状态，返回 StageOutput */
@@ -58,12 +60,14 @@ export class StageRunner {
   private readonly delegateReviewFn: DelegateReviewFn | null;
   private readonly delegateReviewFnMap: Map<string, DelegateReviewFn>;
   private readonly projectRoot: string;
+  private readonly conditionGateCheck: ((stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>) | null;
   private auditLog: AuditEntry[] = [];
 
   constructor(options: StageRunnerOptions = {}) {
     this.delegateReviewFn = options.delegateReviewFn ?? null;
     this.delegateReviewFnMap = options.delegateReviewFnMap ?? new Map();
     this.projectRoot = options.projectRoot ?? resolve('.');
+    this.conditionGateCheck = options.conditionGateCheck ?? null;
   }
 
   /** 获取项目根目录 */
@@ -218,20 +222,43 @@ export class StageRunner {
       whitelist: Object.keys(stage.tool_whitelist).filter(k => stage.tool_whitelist[k as keyof typeof stage.tool_whitelist] === true),
     });
 
-    // 🔴 condition gate 必须有 machine_signal，否则 GateController 抛异常
-    // S3/S5/S6 为 local + condition，实际校验由 S4.5 收敛闸门兜底
+    // 🔴 P5: condition gate 前置检查 — 修复 S3 无条件放行
+    // 原来所有 condition gate 的 local runner 都生成 passed=true，
+    // 导致编译错误推迟到 S4.5 才被发现。现在允许注册前置检查。
     let machineSignal: MachineSignal | undefined;
     if (stage.gate_type === 'condition') {
+      // 运行前置检查（如果注册了）
+      let preCheckPassed = true;
+      let preCheckReason = '';
+      if (this.conditionGateCheck) {
+        try {
+          const preCheck = await this.conditionGateCheck(
+            stage.stage_id,
+            this.projectRoot || process.cwd(),
+          );
+          preCheckPassed = preCheck.passed;
+          preCheckReason = preCheck.reason || '';
+        } catch (err) {
+          preCheckPassed = false;
+          preCheckReason = `conditionGateCheck 异常: ${(err as Error).message}`;
+        }
+      }
+
       machineSignal = {
-        passed: true,
-        risk_level: 'mid',
-        reject_reason: [],
+        passed: preCheckPassed,
+        risk_level: preCheckPassed ? 'mid' : 'high',
+        reject_reason: preCheckPassed ? [] : [preCheckReason || '前置检查未通过'],
         metrics: {
           files_checked: state.modified_files.length,
-          violations_found: 0,
+          violations_found: preCheckPassed ? 0 : 1,
         },
       };
-      console.log(`[StageRunner] ⚡ ${stage.stage_id} 本地条件门控: 默认放行，最终校验由 S4.5 收敛闸门兜底`);
+
+      if (preCheckPassed) {
+        console.log(`[StageRunner] ⚡ ${stage.stage_id} 本地条件门控: 前置检查通过 → 默认放行`);
+      } else {
+        console.log(`[StageRunner] 🚫 ${stage.stage_id} 本地条件门控: 前置检查未通过 → ${preCheckReason} → 回流 S4.5 兜底`);
+      }
     }
 
     this.addAudit('stage_exit', stage.stage_id, { status: 'completed' });

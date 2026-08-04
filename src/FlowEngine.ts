@@ -55,6 +55,8 @@ export interface FlowEngineOptions {
   projectRoot?: string;
   /** 🔴 自动批准 human gate（MCP 无头模式，跳过人工确认） */
   autoApproveHumanGate?: boolean;
+  /** 🔴 P5: condition gate 前置检查（如 S3 编译自检） */
+  conditionGateCheck?: (stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>;
 }
 
 /** 流水线执行结果 */
@@ -100,6 +102,7 @@ export class FlowEngine {
       delegateReviewFn: options.delegateReviewFn,
       delegateReviewFnMap: options.delegateReviewFnMap,
       projectRoot: options.projectRoot || process.cwd(),
+      conditionGateCheck: options.conditionGateCheck,
     });
   }
 

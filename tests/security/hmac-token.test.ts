@@ -66,7 +66,7 @@ describe('signTokenPayload / verifyTokenSignature', () => {
 
   it('修改 token_strength 后签名不匹配 → 拒绝', () => {
     const token = makeTestToken();
-    const tamperedToken = { ...token, token_strength: 'weak' as const };
+    const tamperedToken = { ...token, run_id: 'tampered-run-id' };
     expect(verifyTokenSignature(tamperedToken, TEST_SECRET)).toBe(false);
   });
 

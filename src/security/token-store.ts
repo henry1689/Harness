@@ -21,8 +21,7 @@ import type {
 } from './token-types.js';
 import {
   toSigningPayload,
-  DEFAULT_STRONG_TTL_MS,
-  DEFAULT_WEAK_TTL_MS,
+  DEFAULT_TOKEN_TTL_MS,
   HIGH_RISK_PATH_PREFIXES,
 } from './token-types.js';
 import { signTokenPayload, verifyTokenSignature, getTokenSecret } from './hmac-token.js';
@@ -67,8 +66,7 @@ export class TokenStore {
    */
   issueToken(input: IssueTokenInput): HarnessTokenV2 {
     const now = this._now();
-    const ttl = input.ttl_ms ??
-      (input.token_strength === 'strong' ? DEFAULT_STRONG_TTL_MS : DEFAULT_WEAK_TTL_MS);
+    const ttl = input.ttl_ms ?? DEFAULT_TOKEN_TTL_MS;
 
     const token_id = randomUUID();
     const nonce = randomUUID().replace(/-/g, '');
@@ -76,7 +74,7 @@ export class TokenStore {
     const token: Omit<HarnessTokenV2, 'signature'> = {
       version: 2,
       token_id,
-      token_strength: input.token_strength,
+      token_strength: input.token_strength ?? 'strong',
       run_id: input.run_id,
       intent_id: input.intent_id,
       issued_at: now.toISOString(),
@@ -167,14 +165,9 @@ export class TokenStore {
       }
     }
 
-    // 强度检查
+    // 强度检查 — 所有令牌均为 'strong'（P5-CLEANUP: weak token 已移除）
     if (request.require_strength === 'strong' && token.token_strength !== 'strong') {
       return { allowed: false, reason: 'token_strength_insufficient', token };
-    }
-
-    // 高风险文件必须 strong token
-    if (request.target_file && this.isHighRiskPath(request.target_file) && token.token_strength !== 'strong') {
-      return { allowed: false, reason: 'token_strength_insufficient_high_risk', token };
     }
 
     return { allowed: true, reason: 'token_valid', token };
