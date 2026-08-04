@@ -82,7 +82,7 @@ export async function evaluate(
   console.log(`[ConvergenceGate] 🔍 第 ${state.convergence_round + 1} 轮收敛评估`);
 
   // 1. 运行 CK-01~CK-08 本地硬校验
-  const ckResults: CheckResult[] = runCKChecks(projectRoot, state.modified_files);
+  const ckResults: CheckResult[] = runCKChecks(projectRoot, state.modified_files, state.global_memo);
 
   // 2. 读取 S4 DelegateReviewer 违规清单
   const reviewViolations = extractS4Violations(state);
@@ -154,7 +154,7 @@ export function getCurrentConvergenceRound(state: FlowRunState): number {
 // ════════════════════════════════════════════════════════════════════
 
 /** 运行 CK-00~CK-10 全部硬校验 */
-function runCKChecks(projectRoot: string, files: string[]): CheckResult[] {
+function runCKChecks(projectRoot: string, files: string[], globalMemo?: string): CheckResult[] {
   const results: CheckResult[] = [];
   try {
     results.push(
@@ -169,7 +169,7 @@ function runCKChecks(projectRoot: string, files: string[]): CheckResult[] {
       checkHighRiskDependencyScan(projectRoot, files),// CK-07
       checkASTIfBranchCount(projectRoot, files),      // CK-08
       checkRegressionSafety(projectRoot, files),      // CK-09: 回归安全
-      checkIntentFulfillment(projectRoot, files),     // CK-10: 意图达成
+      checkIntentFulfillment(projectRoot, files, globalMemo),     // CK-10: 意图达成
     );
   } catch (err) {
     console.error('[ConvergenceGate] CK 检查执行异常:', (err as Error).message);
