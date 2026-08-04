@@ -175,6 +175,18 @@ mcpServer.registerTool(
       return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: '未指定修改文件' }) }] };
     }
 
+    // P7-C6: 文件数量限制 + 路径遍历检测
+    const MAX_FILES = 200;
+    if (files.length > MAX_FILES) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `文件数 ${files.length} 超过上限 ${MAX_FILES}` }) }] };
+    }
+    const PATH_TRAVERSAL_RE = /\.\.\/|\.\.\\|^\/|^[A-Z]:\\|^[a-z]:\\/i;
+    for (const f of files) {
+      if (PATH_TRAVERSAL_RE.test(f)) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `禁止路径遍历: ${f}` }) }] };
+      }
+    }
+
     const flowName = flow || 'wenstaros_core_repair_flow.yaml';
     const msg = message || '';
 

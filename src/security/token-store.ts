@@ -105,10 +105,16 @@ export class TokenStore {
     const filePath = this.tokenPath(tokenId);
     if (!existsSync(filePath)) return null;
 
+    // P7-C5: 区分 JSON 解析失败 vs IO 错误（便于诊断）
     try {
       const raw = readFileSync(filePath, 'utf-8');
       return JSON.parse(raw) as HarnessTokenV2;
-    } catch {
+    } catch (err: any) {
+      if (err instanceof SyntaxError) {
+        console.error(`[TokenStore] 令牌文件损坏 (JSON 解析失败):`, filePath);
+      } else {
+        console.error(`[TokenStore] 读取令牌失败 (IO 错误): ${err.message || err}`);
+      }
       return null;
     }
   }
@@ -220,10 +226,23 @@ export class TokenStore {
     const finalPath = this.tokenPath(tokenId);
     const tempPath = finalPath + '.' + Date.now().toString(36) + '.tmp';
 
-    writeFileSync(tempPath, JSON.stringify(token, null, 2), {
-      encoding: 'utf-8',
-      flag: 'wx',  // 排他创建，防止并发覆盖
-    });
+    // P7-C4: EEXIST 时自动清理残留 temp 文件并重试一次
+    try {
+      writeFileSync(tempPath, JSON.stringify(token, null, 2), {
+        encoding: 'utf-8',
+        flag: 'wx',  // 排他创建，防止并发覆盖
+      });
+    } catch (err: any) {
+      if (err?.code === 'EEXIST') {
+        try { unlinkSync(tempPath); } catch (_) {}
+        writeFileSync(tempPath, JSON.stringify(token, null, 2), {
+          encoding: 'utf-8',
+          flag: 'wx',
+        });
+      } else {
+        throw err;
+      }
+    }
 
     renameSync(tempPath, finalPath);
   }

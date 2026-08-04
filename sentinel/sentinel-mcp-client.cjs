@@ -134,7 +134,11 @@ function checkTokenLocal(filePath) {
     if (token.consumed) return null;
     if (token.caller_uuid && token.caller_uuid !== 'sg-mcp-v3-00000000-0000-0000-0000-000000000001') return null;
     return token;
-  } catch (_) { return null; }
+  } catch (err) {
+    // P7-A4: 记录异常原因而非静默吞掉——便于诊断"正常业务流程中的 I/O 错误被误判为无令牌"
+    console.error(`[sentinel:client] checkTokenLocal 异常: ${err.message || err} (file: ${filePath})`);
+    return null;
+  }
 }
 
 function consumeTokenLocal(filePath, token) {

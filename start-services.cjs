@@ -111,29 +111,45 @@ function startSentinel() {
     const sentinelArgs = ['--project', WENSTAR_ROOT];
     if (dry) sentinelArgs.push('--dry');
 
-    const child = spawn('node', [sentinelPath, ...sentinelArgs], {
+    // P7-A3: 使用 fork 替代 spawn — 子进程退出时自动重启
+    const child = require('child_process').fork(sentinelPath, sentinelArgs, {
       cwd: HARNESS_DIR,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
       windowsHide: true,
     });
 
+    let hasStarted = false;
+    let sentinelFailCount = 0;
+
     child.stderr.on('data', (chunk) => {
       const msg = String(chunk);
       if (msg.includes('哨兵已就绪')) {
         console.log('[launcher]   ✅ Sentinel 启动成功');
-        resolve(child);
+        if (!hasStarted) {
+          hasStarted = true;
+          resolve(child);
+        }
       }
     });
 
     child.on('error', (err) => reject(err));
-    child.on('exit', (code) => {
-      if (code !== 0) console.error(`[launcher]   ❌ Sentinel 退出 (code: ${code})`);
+    child.on('exit', (code, signal) => {
+      if (signal === 'SIGTERM' || signal === 'SIGINT') {
+        console.log('[launcher] Sentinel 正常退出，不再重启');
+        return;
+      }
+      sentinelFailCount++;
+      const delay = Math.min(1000 * Math.pow(2, Math.min(sentinelFailCount, 5)), 32000);
+      console.error(`[launcher] ⚠️ Sentinel 异常退出 (code: ${code}), ${delay/1000}s 后重启 (重试: ${sentinelFailCount})`);
+      setTimeout(() => startSentinel(), delay);
     });
 
     setTimeout(() => {
-      resolve(child);
-      console.log('[launcher]   ⚠️ Sentinel PID:', child.pid);
+      if (!hasStarted) {
+        resolve(child);
+        console.log('[launcher]   ⚠️ Sentinel PID:', child.pid);
+      }
     }, 10000);
   });
 }

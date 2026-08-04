@@ -10,7 +10,7 @@
  *   - 存储路径: data/harness/memos/{run_id}_memo.md
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 
 /** 备忘录存储根目录 */
@@ -89,8 +89,11 @@ export class GlobalMemoStore {
       this.buildCombinedRules(),
     ].join('\n');
 
+    // P7-C3: 原子写 — temp + rename 防止写入中途崩溃留下损坏文件
     const filePath = join(MEMOS_DIR, `${this.runId}_memo.md`);
-    writeFileSync(filePath, content, 'utf-8');
+    const tempPath = filePath + '.' + Date.now().toString(36) + '.tmp';
+    writeFileSync(tempPath, content, { encoding: 'utf-8', flag: 'wx' });
+    renameSync(tempPath, filePath);
     this._memoContent = content;
 
     console.log(`[GlobalMemoStore] 💾 备忘录已持久化: ${filePath}`);

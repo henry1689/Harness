@@ -24,6 +24,7 @@ const { createWatcher } = require('./watcher.cjs');
 const { createRollback } = require('./rollback.cjs');
 const { checkFile } = require('./sentinel-mcp-client.cjs');
 const { createEscalation } = require('./escalation.cjs');
+const { loadRiskPolicy } = require('../scripts/risk-policy-loader.cjs');
 
 // ── 命令行参数 ──
 
@@ -61,8 +62,20 @@ if (!projectRoot) {
 }
 
 projectRoot = path.resolve(projectRoot);
-const watchDir = path.join(projectRoot, 'src');
 const auditDir = path.resolve(__dirname, '..', 'data', 'sentinel');
+
+// P7-A: 多目录监控 — Sentinel 现在覆盖 Harness 自身基础设施 + 被管控项目
+// 从统一风险策略 (risk-policy.json) 加载高风险目录，动态生成监测目标
+const riskPolicy = loadRiskPolicy(path.resolve(__dirname, '..', 'scripts'));
+const WATCH_ROOTS = [
+  'src/',         // 被管控项目源文件（必须）
+  '.claude/',     // P7: Harness 钩子脚本
+  'mcp/',         // P7: MCP 服务实现
+  'sentinel/',    // P7: 哨兵自身（防篡改）
+  'scripts/',     // P7: 关键防线脚本
+  'hooks/',       // P7: Git hooks
+  'data/flows/',  // P7: 流水线定义
+];
 
 if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
 
@@ -197,16 +210,17 @@ async function processFileChange(filePath, isBatchAlert) {
   }
 }
 
-/** 文件变更事件入口 */
+/** 文件变更事件入口 — P7: 支持多目录监控，不再强制补 src/ 前缀 */
 function onFileChanged(relPath) {
-  // 🔴 watcher 可能报告绝对路径（git checkout 触发）或相对路径，统一标准化
   let filePath = relPath.replace(/\\/g, '/');
   const normalizedProjectRoot = projectRoot.replace(/\\/g, '/');
   if (filePath.startsWith(normalizedProjectRoot + '/')) {
     filePath = filePath.slice(normalizedProjectRoot.length + 1);
   }
-  // 如果还不包含 src/ 前缀，补上
-  if (!filePath.startsWith('src/') && !filePath.startsWith('.claude/') && !filePath.startsWith('data/')) {
+  // 确认文件路径匹配已知的监控根目录之一（排除完全无关的路径）
+  const inWatchedDir = WATCH_ROOTS.some(r => filePath.startsWith(r.replace(/\\/g, '/')));
+  if (!inWatchedDir) {
+    // 不在已知监控目录中 → 尝试补 src/ 前缀（兼容 watcher 裸文件名）
     filePath = 'src/' + filePath;
   }
 
@@ -242,37 +256,58 @@ function archiveEvent(type, detail) {
   } catch (err) { console.error(`[sentinel] ⚠️ 审计归档失败: ${err.message}`); }
 }
 
-// ── 启动 ──
+// ── 启动（P7: 多目录监控）──
 
 console.error(`[sentinel] ╔══════════════════════════════════════════╗`);
-console.error(`[sentinel] ║  Harness 文件系统哨兵 v2.0               ║`);
-console.error(`[sentinel] ║  版本: v2.0 (批量检测 + Git锁重试)       ║`);
+console.error(`[sentinel] ║  Harness 文件系统哨兵 v2.1               ║`);
+console.error(`[sentinel] ║  版本: v2.1 (多目录监控 + P7安全加固)    ║`);
 console.error(`[sentinel] ║  项目: ${projectRoot.padEnd(34)}║`);
 console.error(`[sentinel] ║  模式: ${dryRun ? '干运行 DRY-RUN'.padEnd(34) : '实时回滚 LIVE'.padEnd(34)}║`);
+console.error(`[sentinel] ║  监控: ${WATCH_ROOTS.length} 个目录`.padEnd(46) + '║');
 console.error(`[sentinel] ╚══════════════════════════════════════════╝`);
 
-const watcher = createWatcher(watchDir, onFileChanged);
-watcher.start();
+// 为每个监控根目录创建独立 watcher
+const watchers = [];
+for (const root of WATCH_ROOTS) {
+  const fullPath = path.join(projectRoot, root);
+  if (!fs.existsSync(fullPath)) {
+    console.error(`[sentinel] ⚠️ 监控目录不存在，跳过: ${root}`);
+    continue;
+  }
+  try {
+    const w = createWatcher(fullPath, onFileChanged);
+    w.start();
+    watchers.push({ root, watcher: w });
+  } catch (err) {
+    console.error(`[sentinel] ⚠️ 无法监控 ${root}: ${err.message}`);
+  }
+}
 
-// ── 定期状态报告 ──
+if (watchers.length === 0) {
+  console.error('[sentinel] ❌ 没有任何可监控的目录，退出');
+  process.exit(1);
+}
+console.error(`[sentinel] ✅ 已启动 ${watchers.length}/${WATCH_ROOTS.length} 个监控器`);
+
+// ── 定期状态报告（P7: 汇总所有 watcher）──
 
 setInterval(() => {
   const uptime = Math.round((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
   const m = Math.floor(uptime / 60);
   const s = uptime % 60;
-  console.error(`[sentinel] 📊 运行 ${m}m${s}s | 事件: ${stats.events} | 放行: ${stats.allowed} | 回滚: ${stats.reverted} | 错误: ${stats.errors} | 批次: ${stats.batches} | 追踪: ${watcher.getTrackedCount()}`);
+  const totalTracked = watchers.reduce((sum, w) => sum + w.watcher.getTrackedCount(), 0);
+  console.error(`[sentinel] 📊 运行 ${m}m${s}s | 事件: ${stats.events} | 放行: ${stats.allowed} | 回滚: ${stats.reverted} | 错误: ${stats.errors} | 批次: ${stats.batches} | 监控: ${watchers.length}目录/${totalTracked}文件`);
 }, 300_000); // 每 5 分钟
 
 // ── 优雅退出 ──
 
 process.on('SIGINT', () => {
   console.error('[sentinel] 收到 SIGINT，退出...');
-  // 先处理残留批次
   if (batchQueue.length > 0) {
     console.error(`[sentinel] 处理残留批次: ${batchQueue.length} 个文件...`);
   }
   if (batchTimer) clearTimeout(batchTimer);
-  watcher.stop();
+  for (const w of watchers) w.watcher.stop();
   const uptime = Math.round((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
   console.error(`[sentinel] 运行 ${uptime}s, 共处理 ${stats.events} 个事件, ${stats.reverted} 次回滚, ${stats.batches} 个批次`);
   process.exit(0);
@@ -280,10 +315,10 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   if (batchTimer) clearTimeout(batchTimer);
-  watcher.stop();
+  for (const w of watchers) w.watcher.stop();
   process.exit(0);
 });
 
 // ── 进程存活信号 ──
 
-console.error(`[sentinel] ✅ 哨兵已就绪 v2.1 (PID: ${process.pid}, 批量窗口: ${BATCH_WINDOW_MS}ms, 升级模块: 激活)`);
+console.error(`[sentinel] ✅ 哨兵已就绪 v2.1 (PID: ${process.pid}, 批量窗口: ${BATCH_WINDOW_MS}ms, 监控: ${watchers.length} 个目录, 升级模块: 激活)`);

@@ -159,6 +159,7 @@ export class EvolutionEngine {
   private pendingUpgrades: RuleUpgrade[] = [];
   private appliedUpgrades: RuleUpgrade[] = [];
   private lastAnalysisAt: string | null = null;
+  private scanning = false;  // P7-C2: 并发互斥锁
 
   constructor(config: EvolutionEngineConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -182,13 +183,15 @@ export class EvolutionEngine {
     // 先做一次全量扫描
     this.scanDirectories();
 
-    // 定期增量扫描
+    // 定期增量扫描 — P7-C1: unref 防止阻止进程退出
     this.observerTimer = setInterval(() => this.scanDirectories(), this.config.pollIntervalMs);
+    this.observerTimer.unref();
 
     // 定期全量分析
     this.analysisTimer = setInterval(() => this.runFullAnalysis(), this.config.analysisIntervalMs);
+    this.analysisTimer.unref();
 
-    console.log(`[EvolutionEngine] 🧬 自进化引擎已启动 (L${this.config.currentLevel}, 轮询: ${this.config.pollIntervalMs / 1000}s, 分析: ${this.config.analysisIntervalMs / 3600000}h)`);
+    console.log(`[EvolutionEngine] 🧬 自进化引擎已启动 (L${this.config.currentLevel}, 轮询: ${this.config.pollIntervalMs / 1000}s, 分析: ${this.config.analysisIntervalMs / 3600000}h, unref: 是)`);
   }
 
   /** 停止观察 */
@@ -220,11 +223,20 @@ export class EvolutionEngine {
 
   /** 增量扫描数据目录 */
   private scanDirectories(): void {
-    const sentinelDir = join(this.config.dataDir, 'sentinel');
-    const auditDir = join(this.config.dataDir, 'audit');
-
-    this.scanSentinelDir(sentinelDir);
-    this.scanAuditDir(auditDir);
+    // P7-C2: 防止并发扫描导致状态重叠
+    if (this.scanning) {
+      console.warn('[EvolutionEngine] 前一次扫描未完成，跳过本轮');
+      return;
+    }
+    this.scanning = true;
+    try {
+      const sentinelDir = join(this.config.dataDir, 'sentinel');
+      const auditDir = join(this.config.dataDir, 'audit');
+      this.scanSentinelDir(sentinelDir);
+      this.scanAuditDir(auditDir);
+    } finally {
+      this.scanning = false;
+    }
   }
 
   private scanSentinelDir(dir: string): void {

@@ -38,6 +38,7 @@ import { ToolWhitelistGuard } from './ToolWhitelistGuard.js';
 import { GlobalMemoStore } from './GlobalMemoStore.js';
 import { AuditLogger } from './AuditLogger.js';
 import { RulesLazyLoader, type SlimStageContext } from './RulesLazyLoader.js';
+import { execSync } from 'node:child_process';
 
 // ════════════════════════════════════════════════════════════════════
 // 类型
@@ -526,6 +527,22 @@ export class FlowEngine {
     if (this.auditLogger) {
       this.auditLogger.logFlowAbort(errorMsg);
     }
+
+    // P7-B1: 尝试回滚 S3 阶段已修改的文件
+    const modifiedFiles = this.state?.modified_files;
+    const projectRoot = this.state?.project_root;
+    if (modifiedFiles && modifiedFiles.length > 0 && projectRoot) {
+      console.error(`[FlowEngine] ↩ 异常恢复: 尝试回滚 ${modifiedFiles.length} 个文件...`);
+      for (const f of modifiedFiles) {
+        try {
+          execSync(`git checkout -- "${f}"`, { cwd: projectRoot, timeout: 5000, stdio: 'pipe' });
+          console.error(`[FlowEngine]   ✓ 已回滚: ${f}`);
+        } catch (rollbackErr) {
+          console.error(`[FlowEngine]   ⚠️ 回滚失败: ${f} — ${(rollbackErr as Error).message}`);
+        }
+      }
+    }
+
     ToolWhitelistGuard.deactivate();
     return this.buildResult(false, 'error');
   }

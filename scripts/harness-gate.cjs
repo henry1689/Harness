@@ -139,6 +139,23 @@ function isTokenExpired(token) {
  * @returns {boolean}
  */
 function tokenCoversFile(token, stagedFile) {
+  const n = stagedFile.replace(/\\/g, '/');
+
+  // P7-B4: Token v2 的 allowed_paths 字段（优先检查）
+  if (Array.isArray(token.allowed_paths) && token.allowed_paths.length > 0) {
+    for (const p of token.allowed_paths) {
+      const tp = String(p).replace(/\\/g, '/');
+      // 精确匹配
+      if (tp === n) return true;
+      // 目录前缀: src/m5/ → 匹配 src/m5/file.ts
+      if (tp.endsWith('/') && n.startsWith(tp)) return true;
+      // 递归 glob: src/engine/** → 匹配所有子路径
+      if (tp.endsWith('/**') && n.startsWith(tp.slice(0, -3))) return true;
+      // 后缀匹配 /src/file.ts 匹配 src/file.ts
+      if (n.endsWith('/' + tp) || tp.endsWith('/' + n)) return true;
+    }
+  }
+
   // 检查 file (单文件)
   if (token.file) {
     const tf = String(token.file).replace(/\\/g, '/');

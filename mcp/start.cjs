@@ -182,6 +182,12 @@ function startHealthCheck(currentChild) {
       const age = Date.now() - hb.ts;
 
       if (age > HEARTBEAT_STALE_MS) {
+        // P7-C7: 先确认 PID 仍存活再强杀
+        try { process.kill(hb.pid, 0); } catch (_) {
+          console.error(`[harness-start] 🔴 心跳过期但 PID ${hb.pid} 已不存在，跳过健康检查`);
+          return;
+        }
+
         console.error(`[harness-start] 🔴 心跳过期 ${Math.round(age / 1000)}s ! MCP 服务器可能僵死。强制重启...`);
         auditLog('health_check_fail', { heartbeat_age_ms: age, pid: hb.pid });
 

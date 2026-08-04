@@ -81,6 +81,7 @@ export function vitestRunDir(dirPattern: string, options?: { cwd?: string; timeo
  * 注意：此命令会启动 HTTP 服务，调用方需自行管理进程生命周期。
  *
  * @returns 包含进程引用的结果（通过附加字段）
+ * @deprecated 自 v2.1.0 (P7-D) 标记 — 此函数是 WenStarOS 宿主专属命令，不属于 Harness 核心模块。将在 v3.0 移除，届时宿主项目需通过 RunnerModule 独立注册。
  */
 export function webuiStart(options?: { cwd?: string }): NativeCommandResult & { pid?: number } {
   // 使用 start.cjs 脚本启动
@@ -95,6 +96,7 @@ export function webuiStart(options?: { cwd?: string }): NativeCommandResult & { 
 /**
  * 数据库离线回填脚本 safe-backfill。
  * 修复 UUID 标注，验证数据兼容性。
+ * @deprecated 自 v2.1.0 (P7-D) — 同 webuiStart，属于宿主项目专属命令。
  */
 export function safeBackfill(options?: CommandOptions): NativeCommandResult {
   return run('node scripts/safe-backfill.cjs', {
