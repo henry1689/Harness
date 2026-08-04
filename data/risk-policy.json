@@ -1,0 +1,82 @@
+{
+  "_comment": "P6-SECURITY: 统一风险策略 — 所有防线组件的单一权威来源。修改此文件后所有防线自动生效，无需手动同步。",
+
+  "protected_paths": [
+    ".claude/settings.json",
+    ".claude/harness",
+    ".claude/workflows",
+    ".claude/hooks"
+  ],
+
+  "high_risk_files": [
+    "src/webui/chat.ts",
+    "src/webui/server.ts",
+    "src/m2/SQLiteAdapter.ts",
+    "src/m4/household/FamilyGraph.ts",
+    "src/m4/household/UUIDGatekeeper.ts",
+    "src/m5/DeepSeekLLMProvider.ts",
+    "src/engine/tianquan/prefrontal/PrefrontalCortex.ts"
+  ],
+
+  "high_risk_dirs": [
+    "src/m2/",
+    "src/m4/",
+    "src/m5/",
+    "src/engine/",
+    "src/core/",
+    "src/app/knowledge/",
+    "src/app/role/",
+    "src/app/fg/",
+    "src/hooks/"
+  ],
+
+  "harness_self_protect": [
+    "src/FlowEngine.ts",
+    "src/StageRunner.ts",
+    "src/GateController.ts",
+    "src/ConvergenceGate.ts",
+    "src/main_harness_checker.ts",
+    "mcp/",
+    "sentinel/",
+    "scripts/harness-gate.cjs",
+    "scripts/defense-health-check.cjs",
+    "data/flows/"
+  ],
+
+  "low_risk_prefixes": [
+    "src/config/",
+    "src/types/",
+    "src/cli/",
+    "src/__tests__/",
+    "src/common/",
+    "src/app/tools/",
+    "src/app/utils/",
+    "src/app/shared/",
+    "src/app/__tests__/"
+  ],
+
+  "low_risk_suffixes": [
+    ".test.ts",
+    ".spec.ts",
+    ".d.ts"
+  ],
+
+  "low_risk_extensions": [
+    ".json",
+    ".md",
+    ".sql",
+    ".yaml",
+    ".yml",
+    ".css",
+    ".html",
+    ".svg",
+    ".txt"
+  ],
+
+  "ignore_dirs": [
+    "node_modules",
+    "__tests__",
+    ".git",
+    "dist"
+  ]
+}

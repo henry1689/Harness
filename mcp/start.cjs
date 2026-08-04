@@ -70,6 +70,14 @@ const env = {
   HARNESS_PROJECT_ROOT: projectRoot,
 };
 
+// P6-SECURITY: 验证 HARNESS_TOKEN_SECRET 是否存在
+if (!env.HARNESS_TOKEN_SECRET || Buffer.byteLength(env.HARNESS_TOKEN_SECRET, 'utf8') < 32) {
+  console.error('[harness-start] ⚠️  HARNESS_TOKEN_SECRET 未设置或不足 32 字节');
+  console.error('[harness-start]    Token v2 HMAC 签名将不可用，所有防线将拒绝令牌');
+  console.error('[harness-start]    请设置环境变量: HARNESS_TOKEN_SECRET=<至少32字节的随机字符串>');
+  console.error('[harness-start]    生成: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
+
 // ── 自动重启状态 ──
 
 let restartCount = 0;
@@ -149,8 +157,8 @@ function startChild() {
     auditLog('child_error', { error: err.message });
   });
 
-  // 重置连续失败计数（启动成功）
-  consecutiveFails = 0;
+  // P6-FIX: 不在 fork() 返回时立即重置退避计数
+  // 退避计数在 health check 确认心跳正常后才重置
   return child;
 }
 
@@ -186,6 +194,12 @@ function startHealthCheck(currentChild) {
             currentChild.kill('SIGKILL');
           }
         } catch (_) {}
+      } else {
+        // P6-FIX: 心跳正常 → 子进程运行稳定 → 重置退避计数
+        if (consecutiveFails > 0) {
+          console.error(`[harness-start] ✅ 心跳正常 (${Math.round(age / 1000)}s) → 重置退避计数 (原: ${consecutiveFails})`);
+          consecutiveFails = 0;
+        }
       }
     } catch (err) {
       console.error(`[harness-start] ⚠️ 健康检查异常: ${err.message}`);

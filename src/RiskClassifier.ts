@@ -128,8 +128,11 @@ export function classifyFiles(filePaths: string[]): RiskLevel {
   return 'low';
 }
 
-/** 判断是否为微小修改（自由裸奔判定用） */
-export function isTrivialChange(message: string, filePaths: string[]): boolean {
+/** 判断是否为微小修改（自由裸奔判定用）。
+ *  P6-FIX: 增加项目根目录参数，对目标文件做实际大小检查，
+ *  防止 Agent 声称 "fix typo" 但实际修改大文件的绕过。
+ */
+export function isTrivialChange(message: string, filePaths: string[], projectRoot?: string): boolean {
   // 所有文件必须是低风险
   if (filePaths.some(fp => classifyFile(fp) !== 'low')) {
     return false;
@@ -141,6 +144,23 @@ export function isTrivialChange(message: string, filePaths: string[]): boolean {
 
   // 文件数不超过 1 个
   if (filePaths.length > 1) return false;
+
+  // P6-FIX: 检查文件实际大小，超过阈值的文件不可能是"微小修改"
+  const MAX_TRIVIAL_LINES = 200;
+  if (projectRoot && filePaths.length === 1) {
+    try {
+      const { readFileSync } = require('node:fs');
+      const { join } = require('node:path');
+      const content = readFileSync(join(projectRoot, filePaths[0]), 'utf-8');
+      const lineCount = content.split('\n').length;
+      if (lineCount > MAX_TRIVIAL_LINES) {
+        return false; // 大文件不能走 free mode
+      }
+    } catch (_) {
+      // 文件不存在或不可读 → 不允许 free mode（保守）
+      return false;
+    }
+  }
 
   return true;
 }

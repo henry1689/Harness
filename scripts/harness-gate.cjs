@@ -203,9 +203,11 @@ function main() {
       windowsHide: true,
     }).trim();
   } catch (e) {
-    // git 命令失败，保守处理: 不拦截
-    console.log('[Harness Gate] SKIP — git diff command failed: ' + e.message.substring(0, 100));
-    process.exit(0);
+    // P6-SECURITY: fail-close — git 命令失败时也拒绝提交，防止攻击者通过破坏 .git 绕过防线
+    // 与其他防线（PreToolUse/Sentinel）的 fail-close 策略保持一致
+    console.log('[Harness Gate] BLOCKED — git diff command failed: ' + e.message.substring(0, 100));
+    console.log('[Harness Gate] 与其他防线一致，采用 fail-close 策略：不确定 → 拒绝');
+    process.exit(1);
   }
 
   const stagedFiles = stagedRaw
@@ -274,22 +276,23 @@ function main() {
       // 3. 检查文件绑定
       if (!tokenCoversFile(token, stagedFile)) continue;
 
-      // 🔴 4. P4-AB: Token v2 HMAC 签名验证
-      if (token.version === 2) {
-        if (!tokenVerify || !tokenVerify.isTokenSecretAvailable()) {
-          console.error('[Harness Gate] 🔴 Token v2 需要 secret 但不可用，跳过此令牌');
-          continue;
-        }
-        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong' });
-        if (!v2Result.allowed) {
-          console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
-          continue;
-        }
+      // 🔴 4. P6-SECURITY: 仅接受 Token v2 (HMAC 签名)
+      // 完全移除 v1 明文 token 支持 + secret 缺失时 fail-close
+      if (token.version !== 2) {
+        console.error(`[Harness Gate] 🚫 Token v1 已禁用 — 仅接受 HMAC 签名的 v2 令牌 (file: ${stagedFile})`);
+        try { fs.unlinkSync(tokenPath); } catch (_) {}
+        continue;
       }
 
-      // 🔴 5. P4-AB: 高风险文件提交不接受 weak token
-      if (token.token_strength === 'weak') {
-        console.error(`[Harness Gate] ⚠️ Weak token 不可用于高风险文件提交: ${stagedFile}`);
+      if (!tokenVerify || !tokenVerify.isTokenSecretAvailable()) {
+        console.error('[Harness Gate] 🔴 HARNESS_TOKEN_SECRET 不可用 — Token 签名验证无法执行，拒绝所有提交');
+        // fail-close: secret 缺失时拒绝所有高风险提交，不做安全降级
+        block(highRiskFiles, 'HARNESS_TOKEN_SECRET 环境变量未设置 — Token v2 HMAC 签名验证无法执行。请配置 HARNESS_TOKEN_SECRET（至少 32 字节）。');
+      }
+
+      const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong' });
+      if (!v2Result.allowed) {
+        console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
         continue;
       }
 

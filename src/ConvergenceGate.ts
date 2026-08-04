@@ -153,27 +153,43 @@ export function getCurrentConvergenceRound(state: FlowRunState): number {
 // 内部实现
 // ════════════════════════════════════════════════════════════════════
 
-/** 运行 CK-00~CK-10 全部硬校验 */
+/** 运行 CK-00~CK-10 全部硬校验 — P6-FIX: 每个 CK 独立 try/catch，单点故障不影响其余检查 */
 function runCKChecks(projectRoot: string, files: string[], globalMemo?: string): CheckResult[] {
   const results: CheckResult[] = [];
-  try {
-    results.push(
-      checkGlobalSurvey(projectRoot, files),         // CK-00: S1全局审视
-      checkNineLayerPipeline(projectRoot, files),     // CK-01
-      checkPFCThinScheduler(projectRoot, files),      // CK-02
-      checkFGHouseholdSpec(projectRoot, files),       // CK-03
-      checkUUIDAnnotationChain(projectRoot, files),   // CK-04
-      checkMeetingEntityPoints(projectRoot, files),   // CK-05
-      checkSQLiteSaveCalls(projectRoot, files),       // CK-06
-      checkSystemicPattern(projectRoot, files),        // CK-06.5: 举一反三
-      checkHighRiskDependencyScan(projectRoot, files),// CK-07
-      checkASTIfBranchCount(projectRoot, files),      // CK-08
-      checkRegressionSafety(projectRoot, files),      // CK-09: 回归安全
-      checkIntentFulfillment(projectRoot, files, globalMemo),     // CK-10: 意图达成
-    );
-  } catch (err) {
-    console.error('[ConvergenceGate] CK 检查执行异常:', (err as Error).message);
+
+  const CK_DEFS: Array<{ id: string; name: string; fn: () => CheckResult }> = [
+    { id: 'CK-00', name: 'S1全局审视', fn: () => checkGlobalSurvey(projectRoot, files) },
+    { id: 'CK-01', name: '九层管线依赖', fn: () => checkNineLayerPipeline(projectRoot, files) },
+    { id: 'CK-02', name: 'PFC薄调度', fn: () => checkPFCThinScheduler(projectRoot, files) },
+    { id: 'CK-03', name: 'FG户籍规范', fn: () => checkFGHouseholdSpec(projectRoot, files) },
+    { id: 'CK-04', name: 'UUID全链路标注', fn: () => checkUUIDAnnotationChain(projectRoot, files) },
+    { id: 'CK-05', name: '12处会晤点', fn: () => checkMeetingEntityPoints(projectRoot, files) },
+    { id: 'CK-06', name: 'SQLite save()调用', fn: () => checkSQLiteSaveCalls(projectRoot, files) },
+    { id: 'CK-06.5', name: '举一反三', fn: () => checkSystemicPattern(projectRoot, files) },
+    { id: 'CK-07', name: '高风险依赖扫描', fn: () => checkHighRiskDependencyScan(projectRoot, files) },
+    { id: 'CK-08', name: '补丁嗅探', fn: () => checkASTIfBranchCount(projectRoot, files) },
+    { id: 'CK-09', name: '回归安全', fn: () => checkRegressionSafety(projectRoot, files) },
+    { id: 'CK-10', name: '意图达成', fn: () => checkIntentFulfillment(projectRoot, files, globalMemo) },
+  ];
+
+  for (const ck of CK_DEFS) {
+    try {
+      results.push(ck.fn());
+    } catch (err) {
+      console.error(`[ConvergenceGate] ❌ ${ck.id} (${ck.name}) 执行异常:`, (err as Error).message);
+      // 异常时生成 error 结果 — 明确标记为失败，不静默视为"通过"
+      results.push({
+        id: ck.id,
+        name: ck.name,
+        passed: false,
+        severity: 'fail',
+        violations: [{ file: 'CK_RUNNER', message: `${ck.id} 执行异常: ${(err as Error).message}` }],
+        durationMs: 0,
+        cacheable: false,
+      });
+    }
   }
+
   return results;
 }
 

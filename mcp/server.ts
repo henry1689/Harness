@@ -185,7 +185,7 @@ mcpServer.registerTool(
     const { evaluate: convergenceEvaluate } = await import('../src/ConvergenceGate.js');
 
     const risk = classifyFiles(files);
-    const trivial = isTrivialChange(msg, files);
+    const trivial = isTrivialChange(msg, files, PROJECT_ROOT);
 
     // P5: ProjectBrain — 构建 IntentSpec 用于 DiffScopeGuard
     const intentSpec = buildIntentSpec({
@@ -278,7 +278,7 @@ mcpServer.registerTool(
             gate: s.gate_resolution,
           })),
           token_issued: result.success,
-          token_expires_in: result.success ? '2 hours' : 'N/A',
+          token_expires_in: result.success ? '15 minutes' : 'N/A',
           human_gate_note: result.success
             ? 'Pipeline completed successfully. Token issued.'
             : 'Pipeline FAILED. Human approval is REQUIRED for S1/S2 stages. No token issued.',

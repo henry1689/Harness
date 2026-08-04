@@ -1,13 +1,13 @@
 {
   "version": 1,
   "algorithm": "sha256",
-  "generated_at": "2026-08-03T12:21:14.686Z",
+  "generated_at": "2026-08-04T08:35:37.880Z",
   "files": {
-    ".claude/harness-pre-check.cjs": "0b46e5d13b8b9af2ac934c0699cbf5269c2f7028ff63c359601b8e66f1fd3118",
+    ".claude/harness-pre-check.cjs": "58d1bdb47da8094339c1782c13683d7c04cfc5316b38bac3efbf9159488b61f7",
     ".claude/harness-post-check.cjs": "713eb99dc44a114b7c5fed69a994909400e95d989e676a96a3e335b0d8e49f1c",
     ".claude/harness-verify-startup.cjs": "6f71028eb986959a338a30cfc5fce26a7c8543f8fe8a71b044b4a970e98d993c",
     ".claude/harness-auto-start.cjs": "38dbf1f5f268c74769757ad1f3f36e8252cc32f156f30c63dd1a96f35dba3379",
-    "scripts/harness-gate.cjs": "e67f236098309fc5d2db47ca9e5db614146f53099aa861fbac394029ec763b13",
+    "scripts/harness-gate.cjs": "0da5924f8ec60e3af46beaf1a1fbc8929dd5325ff7b682a3ca417a4cda810043",
     "src/project-brain/diff-scope-runtime.cjs": "a3c96449c8fba38f17c5efea2afdf02de8acbc8fd08119719bd1cbf953a58a21"
   }
 }

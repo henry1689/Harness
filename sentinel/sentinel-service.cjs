@@ -129,14 +129,16 @@ async function flushBatch() {
  * @param {boolean} isBatchAlert - 是否来自批量告警（增强日志）
  */
 async function processFileChange(filePath, isBatchAlert) {
-  stats.events++;
-  const timestamp = new Date().toISOString();
+  // P6-FIX: 外层 try/catch 防止未捕获异常导致 Sentinel 进程崩溃
+  try {
+    stats.events++;
+    const timestamp = new Date().toISOString();
 
-  const prefix = isBatchAlert ? '[sentinel:batch]' : '[sentinel]';
-  console.error(`${prefix} 📁 文件变更: ${filePath} (#${stats.events})`);
+    const prefix = isBatchAlert ? '[sentinel:batch]' : '[sentinel]';
+    console.error(`${prefix} 📁 文件变更: ${filePath} (#${stats.events})`);
 
-  // 查令牌
-  const result = await checkFile(filePath, { project: projectRoot });
+    // 查令牌
+    const result = await checkFile(filePath, { project: projectRoot });
 
   if (result.allowed) {
     stats.allowed++;
@@ -186,6 +188,13 @@ async function processFileChange(filePath, isBatchAlert) {
       console.error(`${prefix} 🔴 严重: ${filePath} 5次重试全部失败，文件可能已被篡改且无法自动恢复！`);
     }
   }
+  } catch (err) {
+    stats.errors++;
+    console.error(`[sentinel] ❌ processFileChange 异常: ${err.message || err} (file: ${filePath})`);
+    try {
+      archiveEvent('error', { file: filePath, error: err.message || String(err), timestamp: new Date().toISOString() });
+    } catch (_) {}
+  }
 }
 
 /** 文件变更事件入口 */
@@ -199,6 +208,15 @@ function onFileChanged(relPath) {
   // 如果还不包含 src/ 前缀，补上
   if (!filePath.startsWith('src/') && !filePath.startsWith('.claude/') && !filePath.startsWith('data/')) {
     filePath = 'src/' + filePath;
+  }
+
+  // P6-FIX: 批量队列上限，防止 DoS 无限延迟回滚
+  const BATCH_MAX_SIZE = 100;
+  if (batchQueue.length >= BATCH_MAX_SIZE) {
+    console.error(`[sentinel] ⚠️ 批量队列已达上限 ${BATCH_MAX_SIZE}，强制 flush 防止 DoS`);
+    if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+    flushBatch();
+    return;
   }
 
   // ── 批次聚合 ──
@@ -221,7 +239,7 @@ function archiveEvent(type, detail) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const fname = `${type}_${Date.now()}.json`;
     fs.writeFileSync(path.join(dir, fname), JSON.stringify(detail, null, 2), 'utf-8');
-  } catch (_) { /* 审计写入失败不应影响主循环 */ }
+  } catch (err) { console.error(`[sentinel] ⚠️ 审计归档失败: ${err.message}`); }
 }
 
 // ── 启动 ──

@@ -108,6 +108,20 @@ function createRollback(projectRoot) {
         }).trim();
 
         if (afterStatus) {
+          // P6-FIX: untracked 文件（??）无法被 git checkout 回滚 — 直接删除
+          if (afterStatus.startsWith('??') || afterStatus.startsWith('? ')) {
+            try {
+              const absPath = path.join(projectRoot, filePath);
+              if (fs.existsSync(absPath)) {
+                fs.unlinkSync(absPath);
+                console.error(`[sentinel:rollback] 🗑 已删除未跟踪文件: ${filePath}`);
+                return { reverted: true, file: filePath, hash: beforeHash, attempts: attempt + 1 };
+              }
+              return { reverted: false, file: filePath, error: 'untracked 文件不存在于磁盘', attempts: attempt + 1 };
+            } catch (unlinkErr) {
+              return { reverted: false, file: filePath, error: `无法删除未跟踪文件: ${unlinkErr.message || unlinkErr}`, attempts: attempt + 1 };
+            }
+          }
           return { reverted: false, file: filePath, error: 'git checkout 后文件仍有变更', attempts: attempt + 1 };
         }
 

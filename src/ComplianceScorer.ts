@@ -154,7 +154,14 @@ function scoreStandard(
   // 1. CK 检查扣分
   for (const ckId of std.mappedCKChecks) {
     const ck = ckResults.find(c => c.id === ckId);
-    if (!ck) continue; // 该 CK 未被触发 → 视为通过
+    // P6-FIX: 缺失的 CK 结果不作为"通过"，而是作为严重扣分（可能因异常被跳过）
+    if (!ck) {
+      failedChecks++;
+      totalChecks++;
+      deductions.push({ source: ckId, amount: CK_FAIL_DEDUCTION, reason: `${ckId} 结果缺失（可能因执行异常被跳过）` });
+      relatedViolations.push(`[${ckId}] ⚠ 结果缺失 - 此检查可能因异常被静默跳过`);
+      continue;
+    }
 
     totalChecks++;
     if (ck.severity === 'fail') {

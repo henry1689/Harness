@@ -368,60 +368,35 @@ function checkPassToken(filePath, input) {
     var token = JSON.parse(raw);
     var now = Date.now();
 
-    // 🔴 P4-AB: Token v2 HMAC 签名验证 (优先检查)
-    if (token.version === 2) {
-      try {
-        var tv = require('../src/security/token-verify.cjs');
-        if (tv.isTokenSecretAvailable()) {
-          var v2Result = tv.verifyTokenV2(token, filePath, { now: new Date(now) });
-          if (!v2Result.allowed) {
-            console.error('[Harness] Token v2 rejected: ' + v2Result.reason + ' (file: ' + filePath + ')');
-            if (v2Result.reason === 'token_invalid_signature' || v2Result.reason === 'token_expired') {
-              try { fs.unlinkSync(tp); } catch (_) {}
-            }
-            return null;
-          }
-        } else {
-          // secret 不可用 → fail-close for v2
-          console.error('[Harness] 🔴 Token v2 requires HARNESS_TOKEN_SECRET but it is not available');
-          return null;
-        }
-      } catch (e) {
-        console.error('[Harness] Token v2 verification error: ' + e.message);
-        return null;
-      }
-    }
-
-    // 1. 过期检查
-    if (now > (token.expires_at || 0)) {
+    // 🔴 P6-SECURITY: 仅接受 Token v2 (HMAC 签名)，完全移除 v1 明文 token 支持
+    // v1 token 无密码学保护 — 所有字段可伪造，构成认证后门
+    if (token.version !== 2) {
+      console.error('[Harness] 🚫 Token v1 已禁用 — 仅接受 HMAC 签名的 v2 令牌 (file: ' + filePath + ')');
       try { fs.unlinkSync(tp); } catch (_) {}
       return null;
     }
 
-    // 2. 已消费检查
-    if (token.consumed) return null;
-
-    // 3. 文件列表匹配
-    if (token.files && token.files.length > 0) {
-      if (!token.files.some(function(f) { return normalize(f) === normalize(filePath); })) {
-        console.error('[Harness] Token file mismatch: ' + filePath + ' not in [' + token.files.join(',') + ']');
+    try {
+      var tv = require('../src/security/token-verify.cjs');
+      if (tv.isTokenSecretAvailable()) {
+        var v2Result = tv.verifyTokenV2(token, filePath, { now: new Date(now) });
+        if (!v2Result.allowed) {
+          console.error('[Harness] Token v2 rejected: ' + v2Result.reason + ' (file: ' + filePath + ')');
+          if (v2Result.reason === 'token_invalid_signature' || v2Result.reason === 'token_expired') {
+            try { fs.unlinkSync(tp); } catch (_) {}
+          }
+          return null;
+        }
+        return token;
+      } else {
+        // secret 不可用 → fail-close: 拒绝所有 token
+        console.error('[Harness] 🔴 HARNESS_TOKEN_SECRET 不可用 — Token v2 签名验证无法执行，拒绝所有令牌');
         return null;
       }
-    }
-
-    // 4. UUID 白名单匹配
-    if (token.caller_uuid && token.caller_uuid !== 'sg-mcp-v3-00000000-0000-0000-0000-000000000001') {
-      console.error('[Harness] Token UUID mismatch: ' + token.caller_uuid);
+    } catch (e) {
+      console.error('[Harness] Token v2 verification error: ' + e.message);
       return null;
     }
-
-    // 5. 单次使用计数
-    if ((token.usage_count || 0) > 0) {
-      console.error('[Harness] Token already used: ' + filePath);
-      return null;
-    }
-
-    return token;
   } catch (_) { return null; }
 }
 

@@ -44,6 +44,9 @@ module.exports = {
         NODE_ENV: 'production',
         HARNESS_MCP_PORT: '8765',
         HARNESS_PROJECT_ROOT: 'D:/tools/wenstar-cc',
+        // P6-SECURITY: Token v2 HMAC 签名密钥（至少 32 字节）
+        // 生成: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+        HARNESS_TOKEN_SECRET: process.env.HARNESS_TOKEN_SECRET || 'CHANGE_ME__GENERATE_WITH_randomBytes_32',
       },
       // 进程被杀后延迟重启
       kill_timeout: 5000,
