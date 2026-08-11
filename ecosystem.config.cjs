@@ -5,7 +5,7 @@
  *
  * 环境变量:
  *   HARNESS_ROOT          — Harness 项目根目录 (默认: process.cwd())
- *   WENSTAR_CC_ROOT       — 被管控项目根目录 (默认: process.cwd()，或通过 --root 传参)
+ *   WENSTAR_CC_ROOT       — 被管控项目根目录 (默认: D:/tools/wenstar-cc，v2.7 固化防退化)
  *   HARNESS_MCP_PORT      — MCP 服务端口 (默认: 8765)
  *   HARNESS_TOKEN_SECRET  — Token v2 HMAC 密钥 (至少 32 字节)
  *
@@ -21,7 +21,7 @@
 const path = require('path');
 const fs = require('fs');
 const HARNESS_ROOT = process.env.HARNESS_ROOT || process.cwd();
-const WENSTAR_ROOT = process.env.WENSTAR_CC_ROOT || process.cwd();
+const WENSTAR_ROOT = process.env.WENSTAR_CC_ROOT || 'D:/tools/wenstar-cc';
 
 // 🔴 C4-fix: 统一签名 secret——从 data/.harness-secret 读取真实随机 secret。
 // 不再使用公开占位符（占位符被 Agent 读到即可伪造签名）。
@@ -62,7 +62,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         HARNESS_MCP_PORT: '8765',
-        HARNESS_PROJECT_ROOT: 'D:/tools/wenstar-cc',
+        // v2.7: 跟随 WENSTAR_ROOT，消除硬编码歧义（会被 start.cjs --root 覆盖，但保持一致）
+        HARNESS_PROJECT_ROOT: WENSTAR_ROOT,
         // P6-SECURITY + C4-fix: Token v2 HMAC 签名密钥。
         // 优先系统环境变量（用户设了真实 secret 用它），否则读 data/.harness-secret 文件。
         // 两者都缺 → MCP 解锁工具 fail-closed（拒绝），绝不使用公开占位符。
@@ -136,6 +137,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         HARNESS_DASHBOARD_PORT: '8766',
+        // v2.7: 显式传给 dashboard，使其读被管控项目路径（dashboard/server.cjs L31 读此 env）
+        WENSTAR_CC_ROOT: WENSTAR_ROOT,
       },
       kill_timeout: 3000,
     },

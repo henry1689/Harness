@@ -4,37 +4,38 @@ title Harness Service Manager (PM2)
 
 cd /d D:\AI文件\harness
 
+REM v2.7: 固化被管控项目根目录——防止 WENSTAR_CC_ROOT 未设时退化成 harness 自身
+set WENSTAR_CC_ROOT=D:\tools\wenstar-cc
+
 echo ==============================================
 echo   Harness v3.0 — PM2 进程守护
 echo ==============================================
 echo.
+
+REM v2.7: 全面监管——5 个 app 逐一检查（wenstaros-watch 暂不启）
+set "APPS=harness-mcp harness-sentinel harness-self-sentinel harness-dashboard harness-watchdog"
 
 REM 检查 PM2 daemon 是否存活
 pm2 ping >nul 2>&1
 if %errorlevel% neq 0 (
     echo [BOOT] PM2 守护未运行，尝试恢复快照...
     pm2 resurrect >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [BOOT] 快照不可用，从 ecosystem 启动全部服务...
-        pm2 start ecosystem.config.cjs
+)
+
+REM 统一收尾：先 resurrect（幂等，只启 dump 里缺的），再逐 app 兜底。
+REM 循环放公共路径末尾（不 goto 跳过）——daemon 死亡分支同样执行兜底，
+REM 避免陈旧 dump 缺本轮新增 app 时无人拉起。逐 app 启动天然只启 5 个，
+REM 永不启动 wenstaros-watch（MID-3-fix）。findstr 只验证「存在」不验证
+REM "online"，stopped/errored 状态由 harness-watchdog 二道防线自愈。
+pm2 resurrect >nul 2>&1
+for %%A in (%APPS%) do (
+    pm2 jlist 2>nul | findstr /C:"%%A" >nul
+    if errorlevel 1 (
+        echo [BOOT] %%A 缺失，启动...
+        pm2 start ecosystem.config.cjs --only %%A
     )
-    goto :show
 )
 
-REM PM2 存活 → 检查具体服务
-pm2 jlist 2>nul | findstr /C:"harness-mcp" >nul
-if %errorlevel% neq 0 (
-    echo [BOOT] harness-mcp 缺失，启动...
-    pm2 start ecosystem.config.cjs --only harness-mcp
-)
-
-pm2 jlist 2>nul | findstr /C:"harness-sentinel" >nul
-if %errorlevel% neq 0 (
-    echo [BOOT] harness-sentinel 缺失，启动...
-    pm2 start ecosystem.config.cjs --only harness-sentinel
-)
-
-:show
 echo.
 pm2 status
 echo.

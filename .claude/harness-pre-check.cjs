@@ -90,7 +90,7 @@ var EXEMPTIONS_FILE = path.resolve(__dirname, '..', 'data', 'exemptions.json');
 // （根级治理文件同样「一律不豁免」）。
 var HARNESS_ROOT_FILES = [
   '.harness-pass', 'package.json', 'package-lock.json', 'ecosystem.config.cjs',
-  'start-services.cjs', 'start-harness.bat', 'start-harness.ps1',
+  'start-harness.bat',
   'register-startup.ps1', 'start-mcp-detached.bat', 'CLAUDE.md',
   '.gitignore', '.gitattributes', 'tsconfig.json',
 ];

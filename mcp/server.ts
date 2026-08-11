@@ -632,9 +632,27 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
     sessionIdGenerator: undefined,
   });
 
-  await mcpServer.connect(transport);
-  await transport.handleRequest(req, res, parsedBody);
-  transport.close?.().catch(() => {});
+  // 🔴 FIX(root cause): GET(SSE) 是长连接，handleRequest 会阻塞到客户端断连。
+  //    若在此 connect(mcpServer)，Protocol 的单一 transport 槽位会被永久占用
+  //    (protocol.js "Already connected to a transport")，之后所有并发 POST 都会
+  //    throw → Claude Code tools fetch failed。无状态模式下 GET 仅是空闲 keep-alive
+  //    流，无需接入 mcpServer（harness 从不推送 server-initiated 消息）。
+  try {
+    if (req.method !== 'GET') await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, parsedBody);
+  } catch (err) {
+    // 并发 POST 重叠/槽位被占时，返回 503 让客户端可重试，而非挂起
+    if (!res.headersSent) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'MCP busy: ' + String((err as Error)?.message || err) },
+        id: null,
+      }));
+    }
+  } finally {
+    transport.close?.().catch(() => {});
+  }
 });
 
 httpServer.listen(PORT, '127.0.0.1', () => {
