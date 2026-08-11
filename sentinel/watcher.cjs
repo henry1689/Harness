@@ -59,6 +59,7 @@ function createWatcher(watchDir, onChange, opts = {}) {
   let running = false;
   let pollTimer = null;
   let fsWatcher = null;
+  let initialScanDone = false; // 🔴 P9: 标记首次扫描是否完成（首次只登记不触发，避免启动误报）
 
   function normalize(p) {
     return p.replace(/\\/g, '/');
@@ -122,7 +123,16 @@ function createWatcher(watchDir, onChange, opts = {}) {
           if (!stat) continue;
           const existing = fileState.get(relPath);
           if (!existing) {
+            // 🔴 P9-fix: 新文件也触发 onChange（原来只登记不触发 → Agent 新建的源文件修改全部漏报）
+            // 原因: Agent 改造时会新建文件并持续修改（如 perception-40d 系列），
+            // "首次登记不触发"导致新文件的创建和后续修改都不被 Sentinel 检测到。
             fileState.set(relPath, { mtime: stat.mtimeMs, timer: null });
+            // 启动时首次全量扫描会触发所有已有文件（误报）→ 用 IS_INITIAL_SCAN 标记跳过
+            if (!initialScanDone) {
+              // 首次扫描：登记不触发
+            } else {
+              onChange(relPath); // 运行中新增文件 → 触发事件
+            }
           } else if (stat.mtimeMs > existing.mtime + 50) {
             // mtime 变了 → 文件被修改
             existing.mtime = stat.mtimeMs;
@@ -143,8 +153,9 @@ function createWatcher(watchDir, onChange, opts = {}) {
     console.error(`[sentinel:watcher] 🔍 开始监控: ${watchDir}`);
     console.error(`[sentinel:watcher]    防抖: ${debounceMs}ms  轮询: ${pollMs}ms`);
 
-    // 先全量扫描，建立基线
+    // 先全量扫描，建立基线（首次扫描只登记不触发，避免把存量文件当新事件）
     scanDir(watchDir);
+    initialScanDone = true;
 
     // 双重监控：fs.watch（实时）+ 轮询（兜底）
     try {

@@ -57,7 +57,7 @@ export interface FlowEngineOptions {
   /** 🔴 自动批准 human gate（MCP 无头模式，跳过人工确认） */
   autoApproveHumanGate?: boolean;
   /** 🔴 P5: condition gate 前置检查（如 S3 编译自检） */
-  conditionGateCheck?: (stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>;
+  conditionGateCheck?: (stageId: string, projectRoot: string, modifiedFiles?: string[]) => Promise<{ passed: boolean; reason?: string }>;
 }
 
 /** 流水线执行结果 */
@@ -145,6 +145,7 @@ export class FlowEngine {
       flow_name: this.config.flow_name,
       risk_level: context.riskLevel,
       modified_files: context.modifiedFiles,
+      skip_s3_compile: context.skip_s3_compile === true,
     });
 
     console.log(`\n[FlowEngine] 🚀 流水线启动: ${this.config.flow_name} (${runId})`);
@@ -266,7 +267,10 @@ export class FlowEngine {
 
     // 审计记录：门控决议
     if (this.auditLogger) {
-      this.auditLogger.logGateResolve(stageId, stage.gate_type, resolution);
+      // 🔴 P9-fix: 把 S4.5 收敛分数（compliance_score）也写入审计，使分数可观察
+      // 原来只记 resolution（passed/rejected），分数只在进程日志，用户/看板看不到
+      const gateDetail = (result.machine_signal?.metrics || {}) as Record<string, unknown>;
+      this.auditLogger.logGateResolve(stageId, stage.gate_type, resolution, gateDetail);
     }
 
     console.log(`[FlowEngine] 🎯 ${stageId} → gate: ${stage.gate_type} → ${resolution}`);

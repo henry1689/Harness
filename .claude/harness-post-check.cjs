@@ -42,6 +42,17 @@ try {
   console.log(JSON.stringify({ description: '' }));
 }
 
+/* ── 链路心跳写入（后置） ── */
+function writePostHeartbeat(n) {
+  try {
+    var hbf = path.resolve(SCRIPT_DIR, '..', 'data', 'hook-heartbeat.json');
+    var d = JSON.parse(fs.readFileSync(hbf, 'utf-8'));
+    d.post_ts = Date.now();
+    d.post_file = n;
+    fs.writeFileSync(hbf, JSON.stringify(d));
+  } catch (_) {}
+}
+
 /* ── Main ── */
 function run() {
   var raw = HOOK_INPUT;
@@ -51,9 +62,13 @@ function run() {
     if (p && typeof p === 'object') input = p;
   } catch (_) {}
 
-  var fp = input.file_path || input.path || '';
+  // 🔴 P9-fix: 兼容 Claude Code 真实 hook 输入格式 — 路径在 tool_input 内嵌套
+  // 旧代码只读顶层 input.file_path → 永远取不到 → 后置审计/令牌销毁全部失效
+  var ti = input.tool_input || {};
+  var fp = input.file_path || input.path || ti.file_path || ti.path || '';
   if (!fp) { console.log(JSON.stringify({ description: '' })); return; }
   var n = String(fp).replace(/\\/g, '/');
+  writePostHeartbeat(n);
 
   // 🔴 路径归一化：将绝对路径 D:/AI文件/harness/xxx → 相对路径 src/xxx
   // 保证与 token 哈希一致（token 由 MCP 签发时使用相对路径）

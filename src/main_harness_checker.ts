@@ -242,6 +242,11 @@ function checkNineLayerPipeline(projectRoot: string, files: string[]): CheckResu
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      // 🔴 P9-fix: 跳过纯类型引用（import type），它们编译后消失，不构成运行时依赖
+      // 允许跨层的类型级引用（如 m2 引用 m3 的 Perception24D 类型），只拦运行时反向依赖
+      const typeImportMatch = line.match(/import\s+type\s+.*\s+from\s+['"](\.\.?\/[^'"]+)['"]/);
+      if (typeImportMatch) continue;
+
       // 匹配 import 语句
       const importMatch = line.match(/import\s+.*\s+from\s+['"](\.\.?\/[^'"]+)['"]/);
       if (!importMatch) continue;
@@ -252,6 +257,7 @@ function checkNineLayerPipeline(projectRoot: string, files: string[]): CheckResu
       const importedModule = getModuleLayer(relativePath);
 
       // M1-M9 模块间不允许反向依赖（低层不能 import 高层）
+      // 注意: 仅运行时依赖受此约束；类型级引用（import type）已在上方豁免
       if (fileModule && importedModule && isReverseDependency(fileModule, importedModule)) {
         violations.push({
           line: i + 1,
@@ -589,7 +595,7 @@ function checkSQLiteSaveCalls(projectRoot: string, files: string[]): CheckResult
 // CK-06.5: 举一反三系统性扫描 — 是共性问题还是个性特例
 // ════════════════════════════════════════════════════════════════════
 
-function checkSystemicPattern(projectRoot: string, files: string[]): CheckResult {
+function checkSystemicPattern(projectRoot: string, files: string[], extraExclude?: string[]): CheckResult {
   const start = Date.now();
   const violations: Violation[] = [];
   const n = files.map(f => f.replace(/\\/g, '/'));
@@ -602,9 +608,11 @@ function checkSystemicPattern(projectRoot: string, files: string[]): CheckResult
   const patterns = extractCodePatterns(projectRoot, files);
 
   // 2. 对每个模式做全仓库 grep，找同类问题
+  //    v2.6: extraExclude（豁免文件）并入搜索排除集——它们不贡献特征、也不作为"必须一起修"的目标
+  const searchExclude = [...files, ...(extraExclude || [])];
   const systemicHits: Array<{ pattern: string; file: string; line: number; snippet: string }> = [];
   for (const pat of patterns) {
-    const hits = searchPatternInRepo(projectRoot, pat.pattern, files);
+    const hits = searchPatternInRepo(projectRoot, pat.pattern, searchExclude);
     for (const hit of hits) {
       systemicHits.push({ ...hit, pattern: pat.description });
     }
@@ -697,13 +705,10 @@ function extractCodePatterns(projectRoot: string, files: string[]): Array<{ patt
         });
       }
 
-      // 异常/条件分支
-      if (line.includes('if') && line.includes('return') && line.includes('null')) {
-        patterns.push({
-          pattern: `if\\s*\\(.*null\\).*return`,
-          description: '空值兜底模式 if(null) return',
-        });
-      }
+      // 🔴 P9-fix: 移除"空值兜底模式 if(null) return"的特征提取
+      // 原因: `if (x === null) return` 是正常的防御性编程，不是 bug。
+      // 原逻辑把它当"共性问题"要求 Agent 修复全仓库同类代码（如 DossierPath/LexiconLoader/ConfigService），
+      // 导致 Agent 永远无法通过 S4.5（它不能改无辜文件的正常代码）。
     }
   }
 

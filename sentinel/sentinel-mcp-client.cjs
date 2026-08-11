@@ -58,10 +58,11 @@ const LOW_RISK_PREFIXES = [
 ];
 
 const LOW_RISK_SUFFIXES = ['.test.ts', '.spec.ts', '.d.ts'];
-const LOW_RISK_EXTENSIONS = ['.md', '.sql', '.cjs', '.mjs', '.html', '.css', '.scss', '.less', '.env', '.gitignore', '.lock', '.sh', '.ps1', '.bat'];
+const LOW_RISK_EXTENSIONS = ['.md', '.sql', '.html', '.css', '.scss', '.less', '.env', '.gitignore', '.lock', '.sh', '.ps1', '.bat'];
+// 🔴 .cjs/.mjs 已从低风险移除 — 可执行脚本在 scripts/hooks/mcp/sentinel 目录下可用于绕过管控
 
 const HARNESS_PROTECTED = [
-  '.claude/settings.json', '.claude/harness', '.claude/workflows', '.claude/hooks',
+  '.claude/settings.json', '.claude/harness/', '.claude/workflows', '.claude/hooks',
 ];
 
 // ── 工具函数 ──

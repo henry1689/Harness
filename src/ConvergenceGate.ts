@@ -19,9 +19,11 @@
  *   delegateFnMap.set('S4.5_Convergence_Gate', convergenceEvaluate);
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import type { StageConfig, StageOutput, FlowRunState, ConvergenceEntry } from './types.js';
 import { passSignal, rejectSignal, makeStageOutput } from './DualChannelSignal.js';
-import { computeComplianceScore, isCompliancePassed } from './ComplianceScorer.js';
+import { computeComplianceScore } from './ComplianceScorer.js';
 import {
   checkGlobalSurvey,
   checkNineLayerPipeline,
@@ -42,6 +44,47 @@ import type { CheckResult } from './main_harness_checker.js';
 // 配置
 // ════════════════════════════════════════════════════════════════════
 
+/** 纯数据映射类豁免清单（v2.6 新增，采纳 refined-rules 规则2）
+ *  这些文件是常量映射/关系标签/类型定义（无状态无副作用无复杂控制流），
+ *  对它们豁免 S4.5 的「复杂度收敛」要求（仅 CK-08/CK-06.5 豁免，正确性检查保留）。
+ *  格式: { version, files: [相对路径], basenames: [文件名兜底] }
+ */
+interface PureMappingExempt {
+  version: number;
+  files: string[];
+  basenames: string[];
+}
+
+const S4_EXEMPT_FILE = 's4-pure-mapping-exempt.json';
+
+/** 读取纯数据映射类豁免清单（文件不存在 → 空清单） */
+function loadPureMappingExempt(projectRoot: string): PureMappingExempt {
+  const empty: PureMappingExempt = { version: 1, files: [], basenames: [] };
+  try {
+    // 优先 harness 自己的 data/，其次项目根 data/（双项目兼容）
+    const selfDir = typeof import.meta !== 'undefined' ? (import.meta as any).dirname ?? __dirname : __dirname;
+    const candidates = [
+      resolve(selfDir, '..', 'data', S4_EXEMPT_FILE),
+      resolve(projectRoot, 'data', S4_EXEMPT_FILE),
+    ];
+    for (const fp of candidates) {
+      if (existsSync(fp)) {
+        const j = JSON.parse(readFileSync(fp, 'utf-8'));
+        return { version: j.version || 1, files: (j.files || []).map(String), basenames: (j.basenames || []).map(String) };
+      }
+    }
+    return empty;
+  } catch (_) { return empty; }
+}
+
+/** 文件是否命中豁免清单（相对路径精确匹配 + basename 兜底） */
+function isExemptFile(file: string, exempt: PureMappingExempt): boolean {
+  const n = String(file).replace(/\\/g, '/');
+  if (exempt.files.some(f => n.endsWith(f.replace(/\\/g, '/')))) return true;
+  const base = n.split('/').pop() || n;
+  return exempt.basenames.includes(base);
+}
+
 export interface ConvergenceGateConfig {
   /** 通过阈值（默认 100%） */
   passThreshold: number;
@@ -54,8 +97,8 @@ export interface ConvergenceGateConfig {
 }
 
 const DEFAULT_CONFIG: ConvergenceGateConfig = {
-  passThreshold: 100,
-  bypassThreshold: 100,
+  passThreshold: 98,
+  bypassThreshold: 98,
   maxRounds: 5,
   autoHandoffRound: 3,
 };
@@ -81,8 +124,15 @@ export async function evaluate(
   const projectRoot = state.project_root || process.cwd();
   console.log(`[ConvergenceGate] 🔍 第 ${state.convergence_round + 1} 轮收敛评估`);
 
-  // 1. 运行 CK-01~CK-08 本地硬校验
-  const ckResults: CheckResult[] = runCKChecks(projectRoot, state.modified_files, state.global_memo);
+  // v2.6: 读取纯数据映射类豁免清单（采纳 refined-rules 规则2）
+  const exempt = loadPureMappingExempt(projectRoot);
+  const exemptCount = exempt.files.length + exempt.basenames.length;
+  if (exemptCount > 0) {
+    console.log(`[ConvergenceGate] 🧊 纯映射类豁免 ${exemptCount} 项 — 仅对 CK-08/CK-06.5 生效`);
+  }
+
+  // 1. 运行 CK-01~CK-08 本地硬校验（复杂度收敛类 CK 剔除豁免文件，正确性类保留全量）
+  const ckResults: CheckResult[] = runCKChecks(projectRoot, state.modified_files, state.global_memo, exempt);
 
   // 2. 读取 S4 DelegateReviewer 违规清单
   const reviewViolations = extractS4Violations(state);
@@ -153,9 +203,15 @@ export function getCurrentConvergenceRound(state: FlowRunState): number {
 // 内部实现
 // ════════════════════════════════════════════════════════════════════
 
-/** 运行 CK-00~CK-10 全部硬校验 — P6-FIX: 每个 CK 独立 try/catch，单点故障不影响其余检查 */
-function runCKChecks(projectRoot: string, files: string[], globalMemo?: string): CheckResult[] {
+/** 运行 CK-00~CK-10 全部硬校验 — P6-FIX: 每个 CK 独立 try/catch，单点故障不影响其余检查
+ *  v2.6: exempt 为纯数据映射类豁免清单。CK-08/CK-06.5（复杂度收敛类）剔除豁免文件，
+ *  CK-06.5 额外用 extraExclude 避免豁免文件反成搜索命中目标；其余 CK 保留全量 files（正确性不豁免）。 */
+function runCKChecks(projectRoot: string, files: string[], globalMemo?: string, exempt?: PureMappingExempt): CheckResult[] {
   const results: CheckResult[] = [];
+  const exemptSet = exempt || { version: 1, files: [], basenames: [] };
+  const exemptFiles = files.filter(f => isExemptFile(f, exemptSet));
+  const nonExemptFiles = files.filter(f => !isExemptFile(f, exemptSet));
+  const hasExempt = exemptFiles.length > 0;
 
   const CK_DEFS: Array<{ id: string; name: string; fn: () => CheckResult }> = [
     { id: 'CK-00', name: 'S1全局审视', fn: () => checkGlobalSurvey(projectRoot, files) },
@@ -165,9 +221,11 @@ function runCKChecks(projectRoot: string, files: string[], globalMemo?: string):
     { id: 'CK-04', name: 'UUID全链路标注', fn: () => checkUUIDAnnotationChain(projectRoot, files) },
     { id: 'CK-05', name: '12处会晤点', fn: () => checkMeetingEntityPoints(projectRoot, files) },
     { id: 'CK-06', name: 'SQLite save()调用', fn: () => checkSQLiteSaveCalls(projectRoot, files) },
-    { id: 'CK-06.5', name: '举一反三', fn: () => checkSystemicPattern(projectRoot, files) },
+    // v2.6: CK-06.5 举一反三 — 豁免文件不贡献特征，也排除在搜索命中之外（extraExclude）
+    { id: 'CK-06.5', name: '举一反三', fn: () => checkSystemicPattern(projectRoot, hasExempt ? nonExemptFiles : files, hasExempt ? exemptFiles : undefined) },
     { id: 'CK-07', name: '高风险依赖扫描', fn: () => checkHighRiskDependencyScan(projectRoot, files) },
-    { id: 'CK-08', name: '补丁嗅探', fn: () => checkASTIfBranchCount(projectRoot, files) },
+    // v2.6: CK-08 补丁嗅探 — 豁免文件剔除（不评估其复杂度收敛）
+    { id: 'CK-08', name: '补丁嗅探', fn: () => checkASTIfBranchCount(projectRoot, hasExempt ? nonExemptFiles : files) },
     { id: 'CK-09', name: '回归安全', fn: () => checkRegressionSafety(projectRoot, files) },
     { id: 'CK-10', name: '意图达成', fn: () => checkIntentFulfillment(projectRoot, files, globalMemo) },
   ];
@@ -233,14 +291,23 @@ function makeDecision(
 ): { decision: 'PASS' | 'REJECT' | 'HUMAN_BYPASS' | 'HARD_LOCKOUT'; signal: ReturnType<typeof rejectSignal> | ReturnType<typeof passSignal>; humanReport: string } {
   const metrics = { compliance_score: report.overallScore, convergence_round: round };
 
-  // 场景A: 达标 ≥100%
-  if (report.overallScore >= config.passThreshold) {
-    const humanReport = buildPassReport(report, round, scoreDelta);
+  // 场景A: 加权总分 ≥ passThreshold(98%) 且 所有标准 ≥98 → PASS
+  // v2.6: 显式「passedStandards === totalStandards」——per-standard penalty 在 98 分制下
+  // 不自动等价于「每条 ≥98」（weight 7 的标准 97 分仅惩罚 0.055%，总分仍 ≥98），必须逐条检查。
+  if (report.overallScore >= config.passThreshold && report.passedStandards === report.totalStandards) {
+    const humanReport = buildPassReport(report, round, scoreDelta, config);
     return { decision: 'PASS', signal: passSignal(metrics), humanReport };
   }
 
-  // 场景B: 未达标 <100%，且轮次 >= autoHandoffRound → 转交用户确认，不再自动驳回
-  if (round >= config.autoHandoffRound) {
+  // 🔴 P9-fix: 判定从"只看轮次"改为"轮次 + 分数门槛 + 趋势"
+  // 原逻辑: round>=3 一律 HUMAN_BYPASS（80% 第三轮也放行）→ 低分靠轮次混过
+  //         round<3 一律 REJECT（99% 第一轮也拒）→ 高分被误拦
+  // 新逻辑: HUMAN_BYPASS 需 轮次足够 AND 分数达门槛（90%）
+  //         分数退化（较上轮下降）→ 即使未达轮次也提示恶化，交给用户
+
+  // 场景B: 轮次足够 + 分数达门槛(90%) → 转交用户确认
+  const handoffThreshold = 90; // 分数门槛：低于此即使轮次足够也不放行
+  if (round >= config.autoHandoffRound && report.overallScore >= handoffThreshold) {
     const humanReport = buildHandoffReport(report, round, scoreDelta, config);
     return {
       decision: 'HUMAN_BYPASS',
@@ -249,7 +316,24 @@ function makeDecision(
     };
   }
 
-  // 场景C: 未达标 <100%，且轮次 < autoHandoffRound → 驳回回流 S3
+  // 场景B2: 轮次足够但分数未达门槛 → 仍驳回（防止低分混过），但注明已到 handoff 轮
+  if (round >= config.autoHandoffRound && report.overallScore < handoffThreshold) {
+    const humanReport = buildRejectReport(report, round, scoreDelta, config) +
+      `\n\n⚠️ 已达第 ${round} 轮（handoff 轮）但综合得分 ${report.overallScore}% < ${handoffThreshold}%，` +
+      '分数不足不转交用户——继续回流 S3 直至 ≥90% 或人工干预。';
+    return {
+      decision: 'REJECT',
+      signal: rejectSignal(
+        report.gapAnalysis.map(g => `${g.standardId} [${g.standardText}]: ${g.currentScore}分(距达标差${g.pointsNeeded}分)`)
+          .concat([`分数未达 ${handoffThreshold}% 门槛`]),
+        'mid',
+        metrics,
+      ),
+      humanReport,
+    };
+  }
+
+  // 场景C: 未达标且轮次不足 → 驳回回流 S3（附带趋势提示）
   const humanReport = buildRejectReport(report, round, scoreDelta, config);
   return {
     decision: 'REJECT',
@@ -266,7 +350,8 @@ function makeDecision(
 // 报告生成
 // ════════════════════════════════════════════════════════════════════
 
-function buildPassReport(report: { overallScore: number; passedStandards: number; totalStandards: number }, round: number, scoreDelta?: number): string {
+function buildPassReport(report: { overallScore: number; passedStandards: number; totalStandards: number }, round: number, scoreDelta?: number, config?: ConvergenceGateConfig): string {
+  const th = config?.passThreshold ?? 98;
   const lines = ['## ✅ S4.5 收敛闸门 — 通过', ''];
   lines.push(`| 指标 | 值 |`);
   lines.push(`|------|-----|`);
@@ -274,7 +359,7 @@ function buildPassReport(report: { overallScore: number; passedStandards: number
   lines.push(`| 达标标准 | ${report.passedStandards}/${report.totalStandards} |`);
   lines.push(`| 收敛轮次 | 第 ${round} 轮 |`);
   if (scoreDelta !== undefined) lines.push(`| 趋势 | ${scoreDelta > 0 ? '📈 +' + scoreDelta.toFixed(1) + '%' : scoreDelta === 0 ? '→ 持平' : '📉 ' + scoreDelta.toFixed(1) + '%'} |`);
-  lines.push('', '✅ 达到 ≥ 90% 设计标准，自动放行 S5。');
+  lines.push('', `✅ 达到 ≥ ${th}% 设计标准（所有标准达标），自动放行 S5。`);
   return lines.join('\n');
 }
 
@@ -312,13 +397,13 @@ function buildHandoffReport(report: { overallScore: number; passedStandards: num
   lines.push(`| 达标标准 | ${report.passedStandards}/${report.totalStandards} |`);
   lines.push(`| 已用轮次 | ${round}/${config.maxRounds} |`);
   if (scoreDelta !== undefined) lines.push(`| 趋势 | ${scoreDelta > 0 ? '📈 +' + scoreDelta.toFixed(1) + '%' : scoreDelta === 0 ? '→ 持平' : '📉 ' + scoreDelta.toFixed(1) + '%'} |`);
-  lines.push('', '---', '', `## ⚠️ ${round} 轮收敛后仍未达到 ${config.passThreshold}% 满分`, '');
-  lines.push(`系统已自动完成 ${round} 轮优化迭代，以下标准仍未满分：`, '');
+  lines.push('', '---', '', `## ⚠️ ${round} 轮收敛后仍未达到 ${config.passThreshold}% 达标`, '');
+  lines.push(`系统已自动完成 ${round} 轮优化迭代，以下标准仍未达标：`, '');
   for (const g of report.gapAnalysis) {
     lines.push(`- ${g.standardId} ${g.standardText}: ${g.currentScore}分(差${g.pointsNeeded}分)`);
   }
   lines.push('', '---', '', '## 🔴 请用户决策', '');
-  lines.push('本轮得分未达 100%，但已超过自动收敛轮次上限。');
+  lines.push(`本轮得分未达 ${config.passThreshold}%，但已超过自动收敛轮次上限。`);
   lines.push('□ 放行：接受当前水平，继续 S5');
   lines.push('□ 继续修改：手动指定需要修复的标准，回到 S3 再改一轮');
   lines.push('□ 终止：放弃本次修改，重新评估方案');

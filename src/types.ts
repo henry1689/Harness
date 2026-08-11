@@ -301,6 +301,8 @@ export interface TriggerContext {
   triggeredBy?: string;
   /** 项目根目录（供 ConvergenceGate 运行 CK 检查） */
   projectRoot?: string;
+  /** 🔴 P9: 修复编译错误专用豁免标志（true = S3 跳过编译检查，仅用于清理历史错误） */
+  skip_s3_compile?: boolean;
 }
 
 /** 整个 Flow 的运行时状态 */

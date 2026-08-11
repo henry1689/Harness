@@ -108,8 +108,40 @@ function auditLog(event, detail) {
   } catch (_) {}
 }
 
+/** 检查端口是否被占用（P9-fix: 防 EADDRINUSE 崩溃弹窗） */
+function isPortInUse(p) {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync(`netstat -ano | findstr :${p} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000, windowsHide: true });
+    return out.trim().length > 0;
+  } catch (_) { return false; }
+}
+
 /** 启动子进程 */
 function startChild() {
+  // 🔴 P9-fix: 端口被占用时先清理残留，避免 EADDRINUSE 崩溃导致频繁弹窗
+  // 原因: 之前手动启动/残留的 server.ts 进程占用 8765，PM2 启动时 EADDRINUSE 崩溃。
+  if (isPortInUse(port)) {
+    console.error(`[harness-start] ⚠️ 端口 ${port} 被占用，尝试清理残留进程...`);
+    try {
+      const { execSync } = require('child_process');
+      // 找到占用端口的 PID 并杀掉（排除自身）
+      const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000, windowsHide: true });
+      const pid = (out.match(/\s(\d+)\s*$/) || [])[1];
+      if (pid && pid !== String(process.pid)) {
+        execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true });
+        console.error(`[harness-start] ✅ 已清理残留进程 PID ${pid}`);
+      }
+    } catch (e) {
+      console.error(`[harness-start] ⚠️ 清理失败: ${e.message}`);
+    }
+    // 等端口释放
+    const start = Date.now();
+    while (isPortInUse(port) && Date.now() - start < 5000) {
+      require('child_process').execSync('ping -n 2 127.0.0.1 >nul', { stdio: 'ignore', windowsHide: true });
+    }
+  }
+
   console.error(`[harness-start] 🚀 启动 Harness MCP Server (第 ${restartCount + 1} 次)...`);
   console.error(`[harness-start]    端口: ${port}`);
   console.error(`[harness-start]    项目根目录: ${projectRoot}`);

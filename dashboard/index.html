@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harness v2.1 · 实时监控看板</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d2991d;
+    --blue: #58a6ff;
+    --purple: #a371f7;
+    --accent: #79c0ff;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; }
+  .header { background:var(--card); border-bottom:1px solid var(--border); padding:12px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+  .header h1 { font-size:18px; font-weight:600; }
+  .header h1 .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; animation:pulse 2s infinite; }
+  .header .clock { font-size:13px; color:var(--dim); font-variant-numeric:tabular-nums; transition: color 0.3s; }
+  .header .clock.tick { color:var(--accent); }
+  .header .pulse { font-size:14px; margin-left:12px; animation:heartbeat 1s infinite; cursor:default; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  @keyframes heartbeat { 0%,100%{transform:scale(1)} 15%{transform:scale(1.25)} 30%{transform:scale(1)} 45%{transform:scale(1.15)} 60%{transform:scale(1)} }
+  .container { max-width:1400px; margin:0 auto; padding:16px 24px; }
+  .defenses { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+  .defense { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 16px; position:relative; overflow:hidden; }
+  .defense::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; }
+  .defense.green::before { background:var(--green); }
+  .defense.red::before { background:var(--red); }
+  .defense .dname { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+  .defense .dstatus { font-size:13px; font-weight:500; }
+  .defense.green .dstatus { color:var(--green); }
+  .defense.red .dstatus { color:var(--red); }
+  .grid2 { display:grid; grid-template-columns:2fr 1fr; gap:12px; margin-bottom:12px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+  .card h3 { font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px; display:flex; align-items:center; gap:6px; }
+  .card h3 .icon { font-size:16px; }
+  .stat-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:8px; }
+  .stat { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 12px; min-width:80px; }
+  .stat .val { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .stat .lbl { font-size:10px; color:var(--dim); margin-top:2px; }
+  .val.green { color:var(--green); }
+  .val.red { color:var(--red); }
+  .val.yellow { color:var(--yellow); }
+  .val.blue { color:var(--blue); }
+
+  .event-list { max-height:340px; overflow-y:auto; }
+  .event { padding:6px 8px; border-bottom:1px solid var(--border); font-size:12px; display:flex; align-items:center; gap:8px; }
+  .event .time { color:var(--dim); min-width:70px; font-variant-numeric:tabular-nums; }
+  .event .tag { font-size:10px; padding:1px 5px; border-radius:3px; font-weight:600; white-space:nowrap; }
+  .tag.intercept { background:rgba(248,81,73,.15); color:var(--red); }
+  .tag.allow { background:rgba(63,185,80,.15); color:var(--green); }
+  .tag.error { background:rgba(210,153,29,.15); color:var(--yellow); }
+  .event .file { color:var(--blue); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+
+  .hotspot-item { padding:6px 8px; border-bottom:1px solid var(--border); font-size:12px; display:flex; align-items:center; justify-content:space-between; }
+  .hotspot-item .count { font-weight:700; color:var(--red); min-width:32px; text-align:right; }
+
+  .trend-bars { display:flex; align-items:flex-end; gap:8px; height:80px; padding-top:8px; }
+  .trend-bar-group { display:flex; flex-direction:column; align-items:center; flex:1; }
+  .trend-bar { width:100%; border-radius:3px 3px 0 0; min-height:2px; position:relative; display:flex; flex-direction:column-reverse; }
+  .trend-bar .seg { width:100%; }
+  .trend-bar .seg.allowed { background:var(--green); }
+  .trend-bar .seg.reverted { background:var(--red); }
+  .trend-date { font-size:9px; color:var(--dim); margin-top:4px; }
+
+  .project-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:16px; }
+  .project-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .project-name { font-size:16px; font-weight:700; color:var(--blue); }
+  .badge { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:600; letter-spacing:.3px; }
+  .badge.live { background:rgba(63,185,80,.15); color:var(--green); }
+  .badge.idle { background:rgba(210,153,29,.15); color:var(--yellow); }
+  .badge.stop { background:rgba(248,81,73,.15); color:var(--red); }
+  .project-meta { font-size:11px; color:var(--dim); font-family:Consolas,monospace; }
+  .project-stats { display:flex; gap:10px; flex-wrap:wrap; }
+  .pstat { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px 12px; min-width:64px; text-align:center; }
+  .pstat .pv { font-size:18px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .pstat .pl { font-size:10px; color:var(--dim); margin-top:2px; }
+  .pstat-last { flex:1; min-width:220px; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 12px; display:flex; align-items:center; gap:8px; }
+  .pstat-last .plfile { color:var(--blue); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .pstat-last .pltime { color:var(--dim); font-size:10px; white-space:nowrap; }
+  .link-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .link-chip { display:flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px 12px; font-size:12px; }
+  .link-chip .ldot { width:8px; height:8px; border-radius:50%; }
+  .link-chip.online .ldot { background:var(--green); }
+  .link-chip.stale .ldot { background:var(--red); }
+  .link-chip.missing .ldot { background:var(--yellow); }
+  .link-chip .lname { font-weight:600; }
+  .link-chip .lage { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .heal-list { display:flex; flex-direction:column; gap:4px; max-height:120px; overflow-y:auto; }
+  .heal-item { font-size:11px; padding:4px 8px; background:var(--bg); border-radius:4px; display:flex; align-items:center; gap:8px; }
+  .heal-item .ha { font-size:9px; padding:1px 4px; border-radius:3px; font-weight:700; }
+  .heal-item .ha.HEAL { background:rgba(210,153,29,.2); color:var(--yellow); }
+  .heal-item .ha.RESTARTED { background:rgba(63,185,80,.2); color:var(--green); }
+  .heal-item .ha.WARN { background:rgba(248,81,73,.15); color:var(--red); }
+  .heal-item .ha.STALE { background:rgba(248,81,73,.15); color:var(--red); }
+  .heal-item .htime { color:var(--dim); white-space:nowrap; }
+  .flow-stats { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .flow-chip { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:5px 10px; font-size:11px; }
+  .flow-chip b { font-variant-numeric:tabular-nums; }
+  .flow-chip.reject b { color:var(--red); }
+  .flow-chip.timeout b { color:var(--yellow); }
+  .flow-chip.pass b { color:var(--green); }
+  .flow-hot-list { display:flex; flex-wrap:wrap; gap:6px; }
+  .flow-hot { font-size:10px; background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:2px 8px; }
+  .flow-hot .n { color:var(--red); font-weight:700; margin-left:4px; }
+  .exempt-item { padding:6px 8px; border-bottom:1px solid var(--border); font-size:12px; display:flex; align-items:center; gap:8px; }
+  .exempt-item .etime { color:var(--yellow); font-weight:700; min-width:50px; }
+  .exempt-list { max-height:160px; overflow-y:auto; }
+  .rule-item { padding:6px 8px; border-bottom:1px solid var(--border); font-size:12px; display:flex; align-items:flex-start; gap:8px; }
+  .rule-item .rtype { font-size:9px; padding:1px 5px; border-radius:3px; font-weight:700; white-space:nowrap; }
+  .rtype.risk { background:rgba(248,81,73,.15); color:var(--red); }
+  .rtype.behavior { background:rgba(210,153,29,.15); color:var(--yellow); }
+  .rtype.standard { background:rgba(163,113,247,.15); color:var(--purple); }
+  .rule-list { max-height:160px; overflow-y:auto; }
+  .wos-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:16px; }
+  .wos-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .wos-name { font-size:15px; font-weight:700; color:var(--accent); }
+  .wos-meta { font-size:11px; color:var(--dim); font-family:Consolas,monospace; }
+  .wos-stats { display:flex; gap:10px; flex-wrap:wrap; }
+  .process-list { display:flex; flex-direction:column; gap:6px; }
+  .process-item { display:flex; align-items:center; gap:8px; font-size:12px; padding:6px 8px; background:var(--bg); border-radius:4px; }
+  .process-item .pname { font-weight:600; min-width:120px; }
+  .process-item .pstat { font-size:10px; padding:1px 5px; border-radius:3px; }
+  .pstat.online { background:rgba(63,185,80,.15); color:var(--green); }
+  .process-item .pinfo { color:var(--dim); font-size:11px; margin-left:auto; }
+
+  .footer { text-align:center; color:var(--dim); font-size:10px; padding:12px; border-top:1px solid var(--border); margin-top:16px; }
+  .blink { animation:blink 1s step-end infinite; }
+  @keyframes blink { 50%{opacity:0} }
+  .refresh-indicator { font-size:10px; color:var(--dim); text-align:right; margin-top:4px; }
+
+  @media(max-width:900px){ .defenses{grid-template-columns:repeat(2,1fr)} .grid2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1><span class="dot" id="healthDot" style="background:var(--green)"></span>Harness v2.1 · 实时监控看板</h1>
+  <div class="clock" id="clock">--</div>
+  <div class="pulse" id="pulse" title="💓 每秒跳动 = 页面存活中">💓</div>
+</div>
+
+<div class="container">
+  <!-- 四道防线 -->
+  <div class="defenses" id="defenses"></div>
+
+  <!-- 被管控项目实时监控 -->
+  <div class="project-card" id="projectCard" style="display:none"></div>
+
+  <!-- WenStarOS 轻量监控 -->
+  <div class="wos-card" id="wosCard" style="display:none">
+    <div class="wos-head">
+      <span class="wos-name">📁 WenStarOS 轻量监控</span>
+      <span class="badge" id="wosBadge">○ 离线</span>
+      <span class="wos-meta" id="wosMeta">--</span>
+    </div>
+    <div class="wos-stats">
+      <div class="stat"><div class="val blue" id="wosEvents">--</div><div class="lbl">监控事件</div></div>
+      <div class="stat"><div class="val green" id="wosToday">--</div><div class="lbl">今日变更</div></div>
+      <div class="stat"><div class="val" id="wosAge">--</div><div class="lbl">心跳年龄</div></div>
+    </div>
+  </div>
+
+  <!-- 链路心跳健康 (P9) -->
+  <div class="project-card" id="linkCard" style="display:none"></div>
+
+  <!-- watchdog 生命线 -->
+  <div class="card" id="wdCard" style="display:none;margin-bottom:16px">
+    <h3><span class="icon">🐶</span> 看门狗生命线 <span style="font-weight:400;color:var(--dim);margin-left:auto">纯本地监控 · 零 LLM · 零 token</span></h3>
+    <div class="stat-row">
+      <div class="stat"><div class="val blue" id="wdTick">--</div><div class="lbl">心跳 tick</div></div>
+      <div class="stat"><div class="val green" id="wdAge">--</div><div class="lbl">心跳年龄</div></div>
+      <div class="stat"><div class="val green" id="wdHook">--</div><div class="lbl">Hook 链路</div></div>
+    </div>
+  </div>
+
+  <!-- 流水线健康（最近 7 天审计） -->
+  <div class="card" id="flowCard" style="display:none;margin-bottom:16px">
+    <h3><span class="icon">🔍</span> 流水线健康 <span style="font-weight:400;color:var(--dim);margin-left:auto">最近 7 天审计 · 纯只读</span></h3>
+    <div class="flow-stats" id="flowStats"></div>
+    <div style="font-size:11px;color:var(--dim);margin-bottom:6px">被 condition_rejected 最多的文件</div>
+    <div class="flow-hot-list" id="flowHotspots"></div>
+  </div>
+
+  <!-- RuleLearner 规则建议 -->
+  <div class="card" id="learnCard" style="display:none;margin-bottom:16px">
+    <h3><span class="icon">📚</span> RuleLearner 规则建议 <span style="font-weight:400;color:var(--dim);margin-left:auto">从审计数据学 · 人工确认后生效</span></h3>
+    <div class="rule-list" id="ruleList"></div>
+  </div>
+
+  <!-- 解锁豁免状态 -->
+  <div class="card" id="exemptCard" style="display:none;margin-bottom:16px">
+    <h3><span class="icon">🔓</span> 解锁豁免状态 <span style="font-weight:400;color:var(--dim);margin-left:auto">手动解锁 · 30分钟内跳过 token 检查</span></h3>
+    <div class="exempt-list" id="exemptList"></div>
+  </div>
+
+  <div class="grid2">
+    <!-- Sentinel 事件流 -->
+    <div class="card">
+      <h3><span class="icon">🛡️</span> Sentinel 实时事件</h3>
+      <div class="stat-row" id="sentinelStats"></div>
+      <div class="event-list" id="eventList"><div class="event"><span style="color:var(--dim)">等待数据...</span></div></div>
+    </div>
+
+    <!-- 违规热点 + 令牌/熔断 -->
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3><span class="icon">🔥</span> 被控项目违规热点</h3>
+        <div id="hotspots"><div class="hotspot-item"><span style="color:var(--dim)">等待数据...</span></div></div>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <h3><span class="icon">🔑</span> 令牌 & 熔断</h3>
+        <div class="stat-row" id="tokenBreakerStats"></div>
+      </div>
+      <div class="card">
+        <h3><span class="icon">⚙️</span> PM2 进程</h3>
+        <div class="process-list" id="processList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7日趋势 -->
+  <div class="card" style="margin-bottom:12px">
+    <h3><span class="icon">📈</span> 7日 Sentinel 事件趋势 <span style="font-weight:400;color:var(--dim);margin-left:auto">绿=放行 | 红=拦截/回滚</span></h3>
+    <div class="trend-bars" id="trendBars"></div>
+  </div>
+</div>
+
+<div class="footer">
+  <span id="updateTime">--</span> · 每 3 秒自动刷新 · 数据源: D:\AI文件\harness\data\
+</div>
+
+<script>
+const API = '/api/status';
+const REFRESH_MS = 3000;
+
+function formatTime(iso) { if(!iso) return '--'; return new Date(iso).toLocaleTimeString('zh-CN',{hour12:false}); }
+function formatShortTime(iso) { if(!iso) return '--'; const d=new Date(iso); return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0')+':'+d.getSeconds().toString().padStart(2,'0'); }
+
+function renderDefenses(ds) {
+  const el = document.getElementById('defenses');
+  el.innerHTML = ds.map(d => `
+    <div class="defense ${d.status}">
+      <div class="dname">${d.name}</div>
+      <div class="dstatus">${d.status==='green'?'✅':'🔴'} ${d.detail}</div>
+    </div>`).join('');
+}
+
+function renderWatchdog(wd) {
+  const el = document.getElementById('wdCard');
+  if (!wd) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  document.getElementById('wdTick').textContent = wd.tick;
+  document.getElementById('wdAge').textContent = wd.alive ? wd.age + 's' : '离线';
+  document.getElementById('wdHook').textContent = '●';
+}
+
+function renderFlowHealth(fh) {
+  const el = document.getElementById('flowCard');
+  if (!fh || !fh.runs) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const r = fh.resolution || {};
+  const lockouts = fh.lockouts || [];
+  const s45 = fh.latestS45Score;
+  const s45Color = s45 && s45.score >= 100 ? 'pass' : (s45 && s45.score >= 90 ? '' : 'reject');
+  document.getElementById('flowStats').innerHTML = `
+    <span class="flow-chip">流水线 <b>${fh.runs}</b> 次</span>
+    <span class="flow-chip pass">通过 <b>${r.condition_passed||0}</b></span>
+    <span class="flow-chip reject">驳回 <b>${r.condition_rejected||0}</b></span>
+    <span class="flow-chip timeout">人工超时 <b>${r.human_timeout||0}</b></span>
+    <span class="flow-chip pass">人工批准 <b>${r.human_approved||0}</b></span>
+    <span class="flow-chip ${lockouts.length>0?'reject':'pass'}">回流锁定 <b>${lockouts.length}</b></span>
+    ${s45 ? `<span class="flow-chip ${s45Color}" title="S4.5 收敛打分（第${s45.round}轮）">S4.5得分 <b>${s45.score}</b>${s45.score>=100?'✅':s45.score>=90?'⚠️':'🔴'}</span>` : ''}`;
+  const hotspots = (fh.fileRejects||[]).map(([f,c]) => {
+    const short = f.split('/').slice(-2).join('/');
+    return `<span class="flow-hot">${short}<span class="n">×${c}</span></span>`;
+  }).join('');
+  document.getElementById('flowHotspots').innerHTML = hotspots || '<span style="color:var(--dim);font-size:11px">无驳回记录</span>';
+}
+
+function renderLearnRules(rules) {
+  const el = document.getElementById('learnCard');
+  if (!rules || !rules.risk_reviews) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const items = [];
+  (rules.risk_reviews || []).slice(0, 4).forEach(r => {
+    items.push(`<div class="rule-item"><span class="rtype risk">风险</span><span style="color:var(--blue)">${r.file}</span><span style="color:var(--red);font-weight:700">${r.rejectCount}次</span><span style="color:var(--dim);flex:1">${(r.suggestion||'').slice(0,60)}</span></div>`);
+  });
+  (rules.behavior_hints || []).slice(0, 3).forEach(h => {
+    items.push(`<div class="rule-item"><span class="rtype behavior">行为</span><span style="color:var(--blue)">${h.file}</span><span style="color:var(--yellow);font-weight:700">${h.rejectCount}次/${h.runCount}run</span><span style="color:var(--dim);flex:1">${(h.suggestion||'').slice(0,60)}</span></div>`);
+  });
+  (rules.standard_suggestions || []).slice(0, 2).forEach(s => {
+    items.push(`<div class="rule-item"><span class="rtype standard">标准</span><span style="color:var(--purple);font-weight:700">S4.5占${s.s45Ratio}%</span><span style="color:var(--dim);flex:1">${(s.suggestion||'').slice(0,80)}</span></div>`);
+  });
+  el.querySelector('#ruleList').innerHTML = items.length ? items.join('') : '<div style="color:var(--dim);font-size:11px">暂无建议</div>';
+}
+
+function renderWenstaros(wos) {
+  const el = document.getElementById('wosCard');
+  if (!wos) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  document.getElementById('wosBadge').className = 'badge ' + (wos.alive ? 'live' : 'stop');
+  document.getElementById('wosBadge').textContent = wos.alive ? '● 监控中' : '○ 离线';
+  document.getElementById('wosMeta').textContent = wos.root || '';
+  document.getElementById('wosEvents').textContent = wos.events;
+  document.getElementById('wosToday').textContent = wos.todayEvents;
+  document.getElementById('wosAge').textContent = wos.alive ? wos.age + 's' : '--';
+}
+
+function renderExemptions(exemptions) {
+  const el = document.getElementById('exemptCard');
+  if (!exemptions || exemptions.length === 0) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  document.getElementById('exemptList').innerHTML = exemptions.map(e => `
+    <div class="exempt-item">
+      <span class="etime">${e.remainingMin}m</span>
+      <span style="color:var(--blue);flex:1" title="${e.file}">${e.file}</span>
+      <span style="font-size:10px;color:var(--green)">${e.source === 'manual_unlock' ? '✅ 手动解锁豁免' : '⚠️ ' + (e.source||'未知')}</span>
+    </div>`).join('');
+}
+
+function renderLinks(links, healEvents) {
+  const el = document.getElementById('linkCard');
+  if (!links || links.length === 0) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const statusLabel = s => s === 'online' ? '在线' : s === 'stale' ? '断链' : '缺失';
+  const chips = links.map(l => `
+    <span class="link-chip ${l.status}" title="${l.file}">
+      <span class="ldot"></span>
+      <span class="lname">${l.name}</span>
+      <span class="lage">${l.status==='online' ? l.age+'s' : statusLabel(l.status)}</span>
+    </span>`).join('');
+  const healHtml = healEvents && healEvents.length ? healEvents.map(h => `
+    <div class="heal-item">
+      <span class="ha ${h.action}">${h.action}</span>
+      <span>${h.link}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.detail||''}</span>
+      <span class="htime">${formatShortTime(new Date(h.ts).toISOString())}</span>
+    </div>`).join('') : '<div style="color:var(--dim);font-size:11px">无自愈事件</div>';
+  el.innerHTML = `
+    <div class="project-head">
+      <span class="project-name">🔗 链路心跳健康 <span style="font-size:11px;color:var(--dim)">${linksOk}/${links.length} 链路在线</span></span>
+      <span class="badge ${linksOk===links.length?'live':'stop'}">${linksOk===links.length?'● 全链路在线':'○ 有链路异常'}</span>
+    </div>
+    <div class="link-row">${chips}</div>
+    <h3 style="font-size:11px;color:var(--dim);margin:8px 0 4px">🐶 自愈记录</h3>
+    <div class="heal-list">${healHtml}</div>`;
+}
+
+function renderProjects(projects, links) {
+  const el = document.getElementById('projectCard');
+  if (!projects || projects.length === 0) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const sentinelLink = (links || []).find(l => l.key === 'sentinel');
+  const hbAge = sentinelLink && sentinelLink.status === 'online' ? sentinelLink.age + 's' : '离线';
+  el.innerHTML = projects.map(p => {
+    const active = p.recent10m > 0;
+    const badge = !p.monitoring ? '<span class="badge stop">未监控</span>'
+      : '<span class="badge live">● 哨兵实时监控中</span>'
+      + (active ? '' : ' <span class="badge idle">当前10分钟无 src 变更</span>');
+    const lastTime = p.lastEventTime ? formatShortTime(p.lastEventTime) : '--';
+    const lastType = p.lastEventType === 'allowed' ? '放行' : (p.lastEventType ? '拦截/回滚' : '');
+    return `
+      <div class="project-head">
+        <span class="project-name">📦 ${p.name}</span>
+        ${badge}
+        <span class="badge live" title="Sentinel 心跳 — 持续更新证明监控存活">💓 心跳 ${hbAge}</span>
+        <span class="project-meta">${p.root}</span>
+      </div>
+      <div class="project-stats">
+        <div class="pstat"><div class="pv blue">${p.todayEvents}</div><div class="pl">今日事件</div></div>
+        <div class="pstat"><div class="pv red">${p.todayReverted}</div><div class="pl">拦截/回滚</div></div>
+        <div class="pstat"><div class="pv green">${p.todayAllowed}</div><div class="pl">放行</div></div>
+        <div class="pstat"><div class="pv yellow">${p.todayErrors}</div><div class="pl">错误</div></div>
+        <div class="pstat"><div class="pv ${active?'green':'dim'}">${p.recent10m}</div><div class="pl">近10分钟</div></div>
+        <div class="pstat"><div class="pv">${p.recent1h}</div><div class="pl">近1小时</div></div>
+        <div class="pstat-last">
+          <span style="font-size:10px;color:var(--dim);white-space:nowrap">最近事件</span>
+          <span class="plfile" title="${p.lastEventFile||''}">${p.lastEventFile ? `${lastType} ${p.lastEventFile}` : '—'}</span>
+          <span class="pltime">${lastTime}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderSentinelStats(s) {
+  document.getElementById('sentinelStats').innerHTML = `
+    <div class="stat"><div class="val blue">${s.todayEvents}</div><div class="lbl">今日事件</div></div>
+    <div class="stat"><div class="val green">${s.todayAllowed}</div><div class="lbl">放行</div></div>
+    <div class="stat"><div class="val red">${s.todayReverted}</div><div class="lbl">拦截/回滚</div></div>
+    <div class="stat"><div class="val yellow">${s.todayErrors}</div><div class="lbl">错误</div></div>
+    <div class="stat"><div class="val" style="color:var(--purple)">${s.totalBreaches||0}</div><div class="lbl">历史违规</div></div>
+  `;
+}
+
+function renderEvents(events) {
+  const el = document.getElementById('eventList');
+  if (!events || events.length === 0) {
+    el.innerHTML = '<div class="event"><span style="color:var(--dim)">今日无事件 — 哨兵静默中</span></div>';
+    return;
+  }
+  el.innerHTML = events.slice(0, 50).map(e => {
+    let tag='', tagClass='';
+    if (e.type === 'allowed') { tag='放行'; tagClass='allow'; }
+    else if (e.error) { tag='错误'; tagClass='error'; }
+    else { tag='拦截'; tagClass='intercept'; }
+    return `<div class="event">
+      <span class="time">${formatShortTime(e.time)}</span>
+      <span class="tag ${tagClass}">${tag}</span>
+      <span class="file" title="${e.file}">${e.file}</span>
+      <span style="font-size:10px;color:var(--dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.reason||''}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderHotspots(hs) {
+  const el = document.getElementById('hotspots');
+  if (!hs || hs.length === 0) {
+    el.innerHTML = '<div class="hotspot-item"><span style="color:var(--dim)">暂无违规</span></div>';
+    return;
+  }
+  el.innerHTML = hs.map(h => `
+    <div class="hotspot-item">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" title="${h.file}">${h.file}</span>
+      <span class="count">${h.count}</span>
+    </div>`).join('');
+}
+
+function renderTokenBreaker(tb, br) {
+  document.getElementById('tokenBreakerStats').innerHTML = `
+    <div class="stat"><div class="val blue">${tb.active}</div><div class="lbl">活跃令牌</div></div>
+    <div class="stat"><div class="val ${br.active>0?'red':'green'}">${br.active}</div><div class="lbl">熔断中</div></div>
+    <div class="stat"><div class="val yellow">${br.total}</div><div class="lbl">熔断历史</div></div>
+  `;
+}
+
+function renderProcesses(ps) {
+  const el = document.getElementById('processList');
+  if (!ps || ps.length === 0) {
+    el.innerHTML = '<div class="process-item"><span style="color:var(--red)">❌ 无进程数据</span></div>';
+    return;
+  }
+  el.innerHTML = ps.map(p => `
+    <div class="process-item">
+      <span class="pname">${p.name}</span>
+      <span class="pstat online">${p.status}</span>
+      <span style="font-size:11px;color:var(--dim)">PID ${p.pid}</span>
+      <span class="pinfo">运行 ${Math.floor(p.uptime/60)}m · CPU ${p.cpu}% · ${p.memory}MB · 重启${p.restarts}次</span>
+    </div>`).join('');
+}
+
+function renderTrend(daily) {
+  const el = document.getElementById('trendBars');
+  if (!daily || daily.length === 0) { el.innerHTML = '<span style="color:var(--dim);font-size:12px">暂无数据</span>'; return; }
+  const maxVal = Math.max(...daily.map(d => d.total), 1);
+  el.innerHTML = daily.map(d => {
+    const totalH = d.total > 0 ? Math.max(d.total / maxVal * 72, 3) : 0;
+    const allowedH = d.total > 0 ? d.allowed / d.total * totalH : 0;
+    const revertedH = totalH - allowedH;
+    return `<div class="trend-bar-group">
+      <div class="trend-bar" style="height:${totalH}px">
+        ${revertedH>0?`<div class="seg reverted" style="height:${revertedH}px" title="拦截:${d.reverted}"></div>`:''}
+        ${allowedH>0?`<div class="seg allowed" style="height:${allowedH}px" title="放行:${d.allowed}"></div>`:''}
+      </div>
+      <span style="font-size:9px;color:var(--dim);margin-top:2px">${d.total||0}</span>
+      <div class="trend-date">${d.date.slice(5)}</div>
+    </div>`;
+  }).join('');
+}
+
+function updateHealthDot(ds) {
+  const dot = document.getElementById('healthDot');
+  const allGreen = ds.every(d => d.status === 'green');
+  dot.style.background = allGreen ? 'var(--green)' : 'var(--red)';
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(API);
+    const d = await res.json();
+
+    document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN');
+    document.getElementById('updateTime').textContent = '数据更新: ' + formatTime(d.timestamp);
+
+    updateHealthDot(d.defenses);
+    renderDefenses(d.defenses);
+    renderProjects(d.projects, d.links);
+    renderWenstaros(d.wenstaros);
+    renderLinks(d.links, d.healEvents);
+    renderWatchdog(d.watchdog);
+    renderFlowHealth(d.flowHealth);
+    renderLearnRules(d.learnRules);
+    renderExemptions(d.exemptions);
+    renderSentinelStats(d.sentinel);
+    renderEvents(d.sentinel.recentEvents);
+    renderHotspots(d.projectHotspots);
+    renderTokenBreaker(d.tokens, d.breaker);
+    renderProcesses(d.processes);
+    renderTrend(d.dailyTrend);
+  } catch (err) {
+    console.error('刷新失败:', err);
+  }
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+
+// 时钟 — 每秒跳动 + 颜色闪烁，证明页面存活
+let tickToggle = false;
+setInterval(() => {
+  const clk = document.getElementById('clock');
+  clk.textContent = new Date().toLocaleString('zh-CN');
+  // 每秒颜色闪一次，肉眼可见
+  tickToggle = !tickToggle;
+  if (tickToggle) clk.classList.add('tick'); else clk.classList.remove('tick');
+}, 1000);
+</script>
+</body>
+</html>

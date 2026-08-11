@@ -92,8 +92,23 @@ export class TokenStore {
 
     const fullToken: HarnessTokenV2 = { ...token, signature };
 
-    // 原子写入
+    // 原子写入（主文件：token_id）
     this.atomicWrite(token_id, fullToken);
+
+    // 🔴 P9-fix: 双命名兼容 — hook/Sentinel 用 hashCode(filePath) 查找 token，
+    // 而主文件用 token_id(UUID) 命名，二者永不匹配 → 签发后 hook 找不到。
+    // 这里额外为每个涉及文件写一份 hashCode(filePath).json 别名，内容与主文件一致。
+    try {
+      for (const f of input.files || []) {
+        const normalized = String(f).replace(/\\/g, '/');
+        const aliasName = TokenStore.hashCodePath(normalized);
+        if (aliasName && aliasName !== token_id) {
+          this.atomicWrite(aliasName, fullToken);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[TokenStore] 别名 token 写入失败（不影响主 token）: ${err.message || err}`);
+    }
 
     return fullToken;
   }
@@ -215,6 +230,13 @@ export class TokenStore {
     // 防止路径遍历
     const safe = tokenId.replace(/[<>:"/\\|?*]/g, '_');
     return join(this.tokenDir, safe + '.json');
+  }
+
+  /** P9: 与 harness-pre-check.cjs 的 hashCode() 算法逐位一致，用于生成文件路径别名 */
+  private static hashCodePath(s: string): string {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h).toString(36);
   }
 
   /** 原子写入：temp file → rename */

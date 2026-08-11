@@ -35,7 +35,7 @@ export interface StageRunnerOptions {
   /** 项目根目录 */
   projectRoot?: string;
   /** 🔴 P5: condition gate 前置检查（如 S3 tsc 自检）。传入 stage_id，返回是否通过 */
-  conditionGateCheck?: (stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>;
+  conditionGateCheck?: (stageId: string, projectRoot: string, modifiedFiles?: string[]) => Promise<{ passed: boolean; reason?: string }>;
 }
 
 /** 委托评审函数签名：接收 stage 配置和运行状态，返回 StageOutput */
@@ -60,7 +60,7 @@ export class StageRunner {
   private readonly delegateReviewFn: DelegateReviewFn | null;
   private readonly delegateReviewFnMap: Map<string, DelegateReviewFn>;
   private readonly projectRoot: string;
-  private readonly conditionGateCheck: ((stageId: string, projectRoot: string) => Promise<{ passed: boolean; reason?: string }>) | null;
+  private readonly conditionGateCheck: ((stageId: string, projectRoot: string, modifiedFiles?: string[]) => Promise<{ passed: boolean; reason?: string }>) | null;
   private auditLog: AuditEntry[] = [];
 
   constructor(options: StageRunnerOptions = {}) {
@@ -232,9 +232,11 @@ export class StageRunner {
       let preCheckReason = '';
       if (this.conditionGateCheck) {
         try {
+          // P9-fix: 传入本次 flow 的 modified_files，让 S3 只检查涉及的文件而非全仓库
           const preCheck = await this.conditionGateCheck(
             stage.stage_id,
             this.projectRoot || process.cwd(),
+            state.modified_files,
           );
           preCheckPassed = preCheck.passed;
           preCheckReason = preCheck.reason || '';

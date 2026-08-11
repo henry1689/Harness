@@ -8,6 +8,10 @@
       {
         "matcher": "Read|Grep",
         "command": "node .claude/harness-pre-check.cjs"
+      },
+      {
+        "matcher": "Bash",
+        "command": "node scripts/bash-write-guard.cjs"
       }
     ],
     "PostToolUse": [

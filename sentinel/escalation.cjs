@@ -61,6 +61,20 @@ function createEscalation(projectRoot) {
 
   const billboard = billboardPath(projectRoot);
 
+  // 🔴 P9: 解锁豁免名单 — 手动 unlock 的文件在 30 分钟内跳过 token 检查
+  // 持久化到文件（跨进程共享）：manualUnlock 在独立进程执行，运行中 Sentinel 需读到。
+  const EXEMPTIONS_FILE = path.join(__dirname, '..', 'data', 'exemptions.json');
+  const unlockExemptions = new Map();
+  // 启动时加载已有豁免
+  try {
+    if (fs.existsSync(EXEMPTIONS_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(EXEMPTIONS_FILE, 'utf-8'));
+      for (const [k, exp] of Object.entries(saved)) {
+        if (Date.now() < exp) unlockExemptions.set(k, exp); // 只加载未过期的
+      }
+    }
+  } catch (_) {}
+
   // ── 公开 API ──
 
   /**
@@ -168,8 +182,9 @@ function createEscalation(projectRoot) {
   /**
    * 手动解锁文件。
    * @param {string} filePath
+   * @param {number} minutes - 豁免时长（分钟，默认 30）
    */
-  function manualUnlock(filePath) {
+  function manualUnlock(filePath, minutes = 30) {
     const key = filePath.replace(/\\/g, '/');
     const absPath = path.join(projectRoot, filePath);
     unlockFile(absPath, key);
@@ -177,9 +192,44 @@ function createEscalation(projectRoot) {
       clearTimeout(cooldownTimers.get(key));
       cooldownTimers.delete(key);
     }
+    // 🔴 P9-fix: 手动解锁 = 豁免 token 检查（默认30分钟，可自定义）
+    // 原因: 手动 unlock 只清了物理锁，但哨兵 checkFile 仍因 token 被消费回滚。
+    // 解锁豁免让 Agent 在豁免期内能正常写入高风险文件（如 SQLiteAdapter 的 40D 改造）。
+    unlockExemptions.set(key, Date.now() + minutes * 60 * 1000);
+    // 持久化到文件（跨进程共享）
+    try {
+      const snap = {};
+      for (const [k, exp] of unlockExemptions) snap[k] = exp;
+      if (!fs.existsSync(path.dirname(EXEMPTIONS_FILE))) fs.mkdirSync(path.dirname(EXEMPTIONS_FILE), { recursive: true });
+      fs.writeFileSync(EXEMPTIONS_FILE, JSON.stringify(snap), 'utf-8');
+    } catch (_) {}
   }
 
-  return { recordRevert, getEscalationLevel, manualUnlock };
+  /** P9: 检查文件是否在解锁豁免期（30分钟内手动解锁过） */
+  function isExempt(filePath) {
+    const key = String(filePath).replace(/\\/g, '/');
+    // 先从内存查，miss 则从文件读（跨进程：manualUnlock 在独立进程写入）
+    let expiry = unlockExemptions.get(key);
+    if (expiry === undefined) {
+      try {
+        if (fs.existsSync(EXEMPTIONS_FILE)) {
+          const saved = JSON.parse(fs.readFileSync(EXEMPTIONS_FILE, 'utf-8'));
+          if (saved[key] !== undefined) {
+            expiry = saved[key];
+            unlockExemptions.set(key, expiry);
+          }
+        }
+      } catch (_) {}
+    }
+    if (!expiry) return false;
+    if (Date.now() > expiry) {
+      unlockExemptions.delete(key); // 豁免过期清理
+      return false;
+    }
+    return true;
+  }
+
+  return { recordRevert, getEscalationLevel, manualUnlock, isExempt };
 }
 
 // ── 内部：文件锁定 ──

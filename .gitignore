@@ -22,3 +22,9 @@ data/mcp-watchdog/watchdog_*.json
 
 # Atomic write residues
 *.tmp
+
+# 🔴 Security: 密码/密钥/豁免/解锁令牌 严禁入库
+.harness-pass
+data/.harness-secret
+data/exemptions.json
+data/sessions/

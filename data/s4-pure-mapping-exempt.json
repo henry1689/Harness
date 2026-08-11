@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "纯数据映射类文件 S4.5 复杂度收敛豁免清单（v2.6，采纳 refined-rules 规则2）",
+  "note": "豁免 CK-08 补丁嗅探 / CK-06.5 举一反三 的复杂度收敛评估；CK-10 意图达成、CK-00 全局审视等正确性检查保留全量。文件为无状态无副作用无复杂控制流的常量映射/关系标签/类型定义时加入。",
+  "files": [
+    "src/m4/household/shared/RelationLabels.ts",
+    "src/m4/household/RelationResolver.ts"
+  ],
+  "basenames": [
+    "RelationLabels.ts",
+    "RelationResolver.ts"
+  ]
+}

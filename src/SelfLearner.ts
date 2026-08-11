@@ -109,19 +109,38 @@ export async function analyze(): Promise<LearnerReport> {
 // 分析逻辑
 // ════════════════════════════════════════════════════════════════════
 
+/**
+ * 扫描违规热点 Top10。
+ * 实际审计 schema（2026-08-12 校准）:
+ *   run_*.json 顶层 {run_id, entries:[...]} — flow_start.detail.modified_files 为被拒 run 涉及的文件
+ *   sentinel 目录 json — 顶层 file/target 为拦截目标
+ */
 function scanHotspots(cutoff: Date): FileHotspot[] {
   const fileCounts = new Map<string, { audit: number; sentinel: number }>();
 
+  // audit 侧: 被拒 run 的 flow_start.modified_files
   scanJsonFiles(AUDIT_DIR, cutoff, (data: JsonObj) => {
-    const fp: string = data.file || data.file_path || '';
-    if (!fp) return;
-    const entry = fileCounts.get(fp) || { audit: 0, sentinel: 0 };
-    entry.audit++;
-    fileCounts.set(fp, entry);
+    const entries: JsonObj[] = Array.isArray(data.entries) ? data.entries : [];
+    // 是否有驳回（condition_rejected / human_rejected）
+    const hasReject = entries.some((e: JsonObj) =>
+      e.event === 'gate_resolve' &&
+      (e.detail?.resolution === 'condition_rejected' || e.detail?.resolution === 'human_rejected'));
+    if (!hasReject) return;
+    const fsEntry = entries.find((e: JsonObj) => e.event === 'flow_start');
+    const files: unknown = fsEntry?.detail?.modified_files;
+    if (!Array.isArray(files)) return;
+    for (const f of files) {
+      const fp = String(f).replace(/\\/g, '/');
+      if (!fp) continue;
+      const entry = fileCounts.get(fp) || { audit: 0, sentinel: 0 };
+      entry.audit++;
+      fileCounts.set(fp, entry);
+    }
   });
 
+  // sentinel 侧: 拦截记录的文件
   scanJsonFiles(SENTINEL_DIR, cutoff, (data: JsonObj) => {
-    const fp: string = data.file || data.file_path || '';
+    const fp: string = String(data.file || data.file_path || data.target || '').replace(/\\/g, '/');
     if (!fp) return;
     const entry = fileCounts.get(fp) || { audit: 0, sentinel: 0 };
     entry.sentinel++;
@@ -139,64 +158,88 @@ function scanHotspots(cutoff: Date): FileHotspot[] {
       file, count: counts.audit + counts.sentinel, riskLevel,
       suggestion: counts.sentinel > 5 && counts.audit === 0
         ? `Sentinel 拦截 ${counts.sentinel} 次但审计无流水线 → 升级风险等级`
-        : `近 ${DAYS} 天 ${counts.audit + counts.sentinel} 次异常`,
+        : `近 ${DAYS} 天 ${counts.audit + counts.sentinel} 次异常（驳回 ${counts.audit} 次/Sentinel ${counts.sentinel} 次）`,
     };
   });
 }
 
+/**
+ * 分析收敛瓶颈。
+ * 2026-08-12 校准：真实审计无 per-standard 明细（convergence_check 事件从未被发射，
+ * gate_resolve 只含 compliance_score 总分 + convergence_round）。故降级为 **run 级收敛瓶颈**：
+ * 同一 run 内 S4.5 被驳回 ≥3 轮 且 分数长期 <98 → 标记为收敛瓶颈。
+ */
 function analyzeBottlenecks(cutoff: Date): StandardBottleneck[] {
-  const standardRounds = new Map<string, number[]>();
+  const runScores = new Map<string, { scores: number[]; rounds: number[] }>();
 
   scanJsonFiles(AUDIT_DIR, cutoff, (data: JsonObj) => {
-    if (data.event === 'convergence_check') {
-      const gapStandards: string[] = data.gapStandards || [];
-      const round: number = typeof data.round === 'number' ? data.round : 0;
-      for (const stdId of gapStandards) {
-        const rounds = standardRounds.get(stdId) || [];
-        rounds.push(round);
-        standardRounds.set(stdId, rounds);
-      }
+    const runId: string = data.run_id || '';
+    if (!runId || !Array.isArray(data.entries)) return;
+    for (const e of data.entries as JsonObj[]) {
+      if (e.event !== 'gate_resolve' || e.stage_id !== 'S4.5_Convergence_Gate') continue;
+      const res = e.detail?.resolution || '';
+      const score: number = typeof e.detail?.compliance_score === 'number' ? e.detail.compliance_score : NaN;
+      const round: number = typeof e.detail?.convergence_round === 'number' ? e.detail.convergence_round : 0;
+      if (!/rejected/.test(res) || isNaN(score)) continue;
+      const st = runScores.get(runId) || { scores: [], rounds: [] };
+      st.scores.push(score);
+      st.rounds.push(round);
+      runScores.set(runId, st);
     }
   });
 
   const bottlenecks: StandardBottleneck[] = [];
-  for (const [stdId, rounds] of standardRounds) {
-    if (rounds.length < 3) continue;
-    const avgRounds = rounds.reduce((a, b) => a + b, 0) / rounds.length;
-    if (avgRounds > 3) {
+  for (const [runId, st] of runScores) {
+    if (st.scores.length < 3) continue; // 至少 3 轮驳回才值得关注
+    const avgScore = st.scores.reduce((a, b) => a + b, 0) / st.scores.length;
+    const lastScore = st.scores[st.scores.length - 1];
+    const maxRound = Math.max(...st.rounds);
+    if (avgScore < 98) {
       bottlenecks.push({
-        standardId: stdId,
-        standardText: `标准 ${stdId}`,
-        avgRoundsToPass: Math.round(avgRounds * 10) / 10,
-        failCount: rounds.length,
-        suggestion: `平均 ${avgRounds.toFixed(1)} 轮才达标 → 建议增加权重或细化检查`,
+        standardId: runId.slice(0, 12),
+        standardText: 'S4.5 收敛瓶颈（run）',
+        avgRoundsToPass: maxRound,
+        failCount: st.scores.length,
+        suggestion: `run ${runId.slice(0, 12)} 在 ${st.scores.length} 轮内均被驳回（均分 ${Math.round(avgScore)}%，末轮 ${lastScore}%）→ 建议核查 S2 方案质量或豁免纯映射类文件`,
       });
     }
   }
-  return bottlenecks.sort((a, b) => b.avgRoundsToPass - a.avgRoundsToPass);
+  return bottlenecks.sort((a, b) => b.failCount - a.failCount);
 }
 
+/**
+ * 检测趋势异常（收敛停滞）。
+ * 2026-08-12 校准：读 S4.5 gate_resolve 的 compliance_score 序列（含通过/驳回），
+ * 按 run 分组，≥3 次记分且末 3 次无显著改善（提升 <2 分）→ 收敛停滞。
+ */
 function detectAnomalies(cutoff: Date): TrendAnomaly[] {
   const anomalies: TrendAnomaly[] = [];
   const runScores = new Map<string, number[]>();
 
   scanJsonFiles(AUDIT_DIR, cutoff, (data: JsonObj) => {
     const runId: string = data.run_id || '';
-    const score: number | undefined = data.compliance_score;
-    if (!runId || typeof score !== 'number') return;
-    const scores = runScores.get(runId) || [];
-    scores.push(score);
-    runScores.set(runId, scores);
+    if (!runId || !Array.isArray(data.entries)) return;
+    for (const e of data.entries as JsonObj[]) {
+      if (e.event !== 'gate_resolve' || e.stage_id !== 'S4.5_Convergence_Gate') continue;
+      const score: number = typeof e.detail?.compliance_score === 'number' ? e.detail.compliance_score : NaN;
+      if (isNaN(score)) continue;
+      const scores = runScores.get(runId) || [];
+      scores.push(score);
+      runScores.set(runId, scores);
+    }
   });
 
   for (const [runId, scores] of runScores) {
     if (scores.length < 3) continue;
     const last3 = scores.slice(-3);
+    // 末 3 轮分数上升不足 2 分 → 收敛停滞（多轮打磨但无实质进展）
     if (last3[2] <= last3[0] + 2) {
+      const status = last3[2] >= 98 ? '已达 98 但未全标准达标' : `仍低于 98%（末轮 ${last3[2]}%）`;
       anomalies.push({
-        issue: `流水线 ${runId.slice(0, 12)}... 收敛停滞`,
-        detail: `最近 3 轮: ${last3.join('% → ')}% → 无显著改善`,
-        severity: 'warn',
+        issue: `流水线 ${runId.slice(0, 12)} 收敛停滞`,
+        detail: `最近 3 轮: ${last3.join('% → ')}% → 无显著改善（${status}）`,
+        // MID-1-fix: 真停滞（分数未达 98）→ critical，让 generateSuggestions 能产出 new_pattern 专项建议
+        severity: last3[2] < 98 ? 'critical' : 'warn',
       });
     }
   }
@@ -212,8 +255,10 @@ function generateSuggestions(
   for (const h of hotspots.filter(x => x.riskLevel.includes('升级'))) {
     suggestions.push({ type: 'risk_upgrade', target: h.file, proposed: 'mid→high', reason: h.suggestion });
   }
+  // MID-2-fix: bottleneck 承载的是 run 级收敛瓶颈（非某条 DS 标准），
+  // 改为 run 级核查建议（new_pattern），避免 weight_adjust 指向不存在的"标准"
   for (const b of bottlenecks) {
-    suggestions.push({ type: 'weight_adjust', target: b.standardId, proposed: '+2', reason: b.suggestion });
+    suggestions.push({ type: 'new_pattern', target: b.standardId, proposed: 'run级收敛核查', reason: b.suggestion });
   }
   for (const a of anomalies.filter(x => x.severity === 'critical')) {
     suggestions.push({ type: 'new_pattern', target: a.issue, proposed: '新增专项检查', reason: a.detail });
@@ -321,7 +366,9 @@ function formatMarkdownReport(report: LearnerReport): string {
 // 直接运行
 // ════════════════════════════════════════════════════════════════════
 
-if (process.argv[1]?.includes('SelfLearner')) {
+// 直接运行守卫: 文件模式（argv[1] 含 SelfLearner）或 HARNESS_SELFLEARN=1 均可触发
+// v2.6: 加环境变量触发，供 run-learning.cjs 调度子进程稳定调用
+if (process.argv[1]?.includes('SelfLearner') || process.env.HARNESS_SELFLEARN === '1') {
   analyze().then(() => process.exit(0)).catch(err => {
     console.error('[SelfLearner] 异常:', (err as Error).message);
     process.exit(1);

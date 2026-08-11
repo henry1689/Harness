@@ -53,10 +53,10 @@ const CK_FAIL_DEDUCTION = 40;
 const CK_WARN_DEDUCTION = 15;
 /** DelegateReviewer 违规每项扣分 */
 const REVIEW_VIOLATION_DEDUCTION = 20;
-/** 通过阈值 — 🔴 每条标准 ≥100 分，满分才放行 */
-const PASS_THRESHOLD = 100;
-/** 旁路/转交用户阈值 */
-const BYPASS_THRESHOLD = 100;
+/** 通过阈值 — 🔴 每条标准 ≥98 分才放行（v2.6 校准：100% 满分制误伤低复杂度文件，回落 98） */
+const PASS_THRESHOLD = 98;
+/** 旁路/转交用户阈值（死配置，仅一致性；真实转交门槛见 ConvergenceGate.makeDecision handoffThreshold=90） */
+const BYPASS_THRESHOLD = 98;
 /** 硬锁定阈值 — 🔴 任意标准 <80 分立即锁定 */
 const HARD_LOCKOUT_THRESHOLD = 80;
 

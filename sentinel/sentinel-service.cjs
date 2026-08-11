@@ -31,6 +31,7 @@ const { loadRiskPolicy } = require('../scripts/risk-policy-loader.cjs');
 const args = process.argv.slice(2);
 let projectRoot = '';
 let dryRun = false;
+let unlockPassword = '';
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--project' && args[i + 1]) projectRoot = args[++i];
@@ -38,6 +39,14 @@ for (let i = 0; i < args.length; i++) {
   else if (args[i] === '--unlock') {
     // 标记为解锁模式 — 稍后处理
     process.env.__SENTINEL_UNLOCK = args[++i] || '';
+  }
+  else if (args[i] === '--minutes') {
+    // 豁免时长（分钟）— 配合 --unlock 使用
+    process.env.__SENTINEL_UNLOCK_MINUTES = args[++i] || '30';
+  }
+  else if (args[i] === '--password') {
+    // 管理员密码 — 配合 --unlock 使用（防 Agent 自行豁免）
+    unlockPassword = args[++i] || '';
   }
 }
 
@@ -48,10 +57,25 @@ if (process.env.__SENTINEL_UNLOCK !== undefined) {
     console.error('[sentinel] --unlock 需要同时指定 --project <项目根目录>');
     process.exit(1);
   }
+  // 🔴 S2-安全收紧 ①: --unlock 必须带管理员密码校验，否则拒绝
+  // 原因: 此前 --unlock 无任何身份校验，Agent 有 Bash 权限可自行豁免任意文件。
+  // 现在必须与 .harness-pass 校验通过才能豁免。--password 未提供或错误 → 拒绝。
+  if (!unlockPassword) {
+    console.error('[sentinel] 🔴 已启用密码保护: --unlock 必须带 --password <管理员密码>');
+    console.error('[sentinel]     用法: node sentinel-service.cjs --project <根> --unlock <file> --minutes <N> --password <密码>');
+    process.exit(1);
+  }
+  const { verifyPassword } = require('../scripts/pass-core.cjs');
+  const pwOk = verifyPassword(unlockPassword);
+  if (!pwOk) {
+    console.error('[sentinel] 🔴 解锁被拒: 管理员密码错误。豁免未签发。');
+    process.exit(1);
+  }
+  const minutes = parseInt(process.env.__SENTINEL_UNLOCK_MINUTES || '30', 10) || 30;
   const { createEscalation: _CE } = require('./escalation.cjs');
   const _esc = _CE(projectRoot);
-  _esc.manualUnlock(unlockFile);
-  console.error(`[sentinel] 🔓 已手动解锁: ${unlockFile}`);
+  _esc.manualUnlock(unlockFile, minutes);
+  console.error(`[sentinel] 🔓 已手动解锁: ${unlockFile} (豁免 ${minutes} 分钟)`);
   process.exit(0);
 }
 
@@ -78,6 +102,11 @@ const WATCH_ROOTS = [
 ];
 
 if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
+
+// MED-4 决策: 不把 data/sessions + data/tokens 加入哨兵监控。
+// 原因: 这些目录被合法流程（unlock 签发 / MCP 令牌签发）高频写入，
+//       Sentinel 监控会导致正常签发被回滚（误伤）。「绕过流程的 Bash 直接写」
+//       已由 scripts/bash-write-guard.cjs 覆盖（关键路径写操作 DENY）。
 
 // ── 配置 ──
 
@@ -149,6 +178,21 @@ async function processFileChange(filePath, isBatchAlert) {
 
     const prefix = isBatchAlert ? '[sentinel:batch]' : '[sentinel]';
     console.error(`${prefix} 📁 文件变更: ${filePath} (#${stats.events})`);
+
+    // 🔴 P9-fix: 解锁豁免 — 手动 unlock 的文件在 30 分钟内跳过 token 检查
+    // 原因: 手动解锁只清物理锁，但 token 被消费后 checkFile 仍判无效 → 回滚。
+    // 豁免让 Agent 在解锁期内能正常写入高风险文件（如 SQLiteAdapter 40D 改造）。
+    // 注意: watcher 传的 filePath 可能不带 src/ 前缀（webui/...），
+    // manualUnlock 存的 key 是带前缀的（src/webui/...），需两种都试。
+    const exemptPath = String(filePath).replace(/\\/g, '/');
+    const exemptHit = escalation.isExempt(exemptPath) ||
+      (exemptPath.startsWith('src/') ? escalation.isExempt(exemptPath.slice(4)) : escalation.isExempt('src/' + exemptPath));
+    if (exemptHit) {
+      stats.allowed++;
+      console.error(`${prefix} ✅ 解锁豁免放行: ${filePath} — 手动解锁 30 分钟内跳过 token 检查`);
+      archiveEvent('allowed', { file: filePath, risk: 'high', reason: '解锁豁免 (manual unlock)', timestamp });
+      return;
+    }
 
     // 查令牌
     const result = await checkFile(filePath, { project: projectRoot });
@@ -268,6 +312,9 @@ console.error(`[sentinel] ╚═════════════════
 
 // 为每个监控根目录创建独立 watcher
 const watchers = [];
+// S4 三轮评审决定: 回退 MED-3（.claude 深度监控）。
+// 原因: 引入两个 HIGH 新问题（.claude/harness 幻影前缀误判保护区 + onFileChanged 路径错拼导致轮询监控失效），
+//       且 watcher 默认排除 .claude 是防自写回滚的必要设计。.claude 防线文件保护改由 bash-write-guard 承担。
 for (const root of WATCH_ROOTS) {
   const fullPath = path.join(projectRoot, root);
   if (!fs.existsSync(fullPath)) {
@@ -322,3 +369,31 @@ process.on('SIGTERM', () => {
 // ── 进程存活信号 ──
 
 console.error(`[sentinel] ✅ 哨兵已就绪 v2.1 (PID: ${process.pid}, 批量窗口: ${BATCH_WINDOW_MS}ms, 监控: ${watchers.length} 个目录, 升级模块: 激活)`);
+
+// ── P9 心跳：哨兵每次状态报告写 sentinel-heartbeat.json（供 watchdog 链路检测）──
+const SENTINEL_HEARTBEAT_FILE = path.join(auditDir, '..', 'sentinel-heartbeat.json');
+function writeSentinelHeartbeat() {
+  try {
+    const uptime = Math.round((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
+    const totalTracked = watchers.reduce((sum, w) => sum + w.watcher.getTrackedCount(), 0);
+    const dir = path.dirname(SENTINEL_HEARTBEAT_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SENTINEL_HEARTBEAT_FILE, JSON.stringify({
+      ts: Date.now(),
+      pid: process.pid,
+      projectRoot,
+      uptime,
+      events: stats.events,
+      allowed: stats.allowed,
+      reverted: stats.reverted,
+      errors: stats.errors,
+      watchers: watchers.length,
+      trackedFiles: totalTracked,
+      mode: dryRun ? 'DRY-RUN' : 'LIVE',
+    }));
+  } catch (err) { console.error(`[sentinel] ⚠️ 心跳写入失败: ${err.message}`); }
+}
+
+// 立即写一次 + 每 30 秒刷新（比 5 分钟状态报告更细粒度，watchdog 依赖它）
+writeSentinelHeartbeat();
+setInterval(writeSentinelHeartbeat, 30_000);
