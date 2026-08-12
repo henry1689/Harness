@@ -61,17 +61,15 @@ function createEscalation(projectRoot) {
 
   const billboard = billboardPath(projectRoot);
 
-  // 🔴 P9: 解锁豁免名单 — 手动 unlock 的文件在 30 分钟内跳过 token 检查
-  // 持久化到文件（跨进程共享）：manualUnlock 在独立进程执行，运行中 Sentinel 需读到。
-  const EXEMPTIONS_FILE = path.join(__dirname, '..', 'data', 'exemptions.json');
+  // 🔴 P9: 解锁豁免名单 — 手动 unlock 的文件在 N 分钟内「放宽检查，但仍需令牌」
+  // v2.9: 改用共享数据层 exemptions-core（v1/v2 兼容 + load-merge-write）
+  const exemptionsCore = require('../scripts/exemptions-core.cjs');
+  const EXEMPTIONS_FILE = exemptionsCore.EXEMPTIONS_FILE;
   const unlockExemptions = new Map();
   // 启动时加载已有豁免
   try {
-    if (fs.existsSync(EXEMPTIONS_FILE)) {
-      const saved = JSON.parse(fs.readFileSync(EXEMPTIONS_FILE, 'utf-8'));
-      for (const [k, exp] of Object.entries(saved)) {
-        if (Date.now() < exp) unlockExemptions.set(k, exp); // 只加载未过期的
-      }
+    for (const [k, rec] of exemptionsCore.loadExemptions(EXEMPTIONS_FILE)) {
+      if (exemptionsCore.getExpiry(rec) > Date.now()) unlockExemptions.set(k, rec); // 只加载未过期的
     }
   } catch (_) {}
 
@@ -184,49 +182,52 @@ function createEscalation(projectRoot) {
    * @param {string} filePath
    * @param {number} minutes - 豁免时长（分钟，默认 30）
    */
-  function manualUnlock(filePath, minutes = 30) {
-    const key = filePath.replace(/\\/g, '/');
+  /**
+   * v2.9: manualUnlock 签发豁免（限定范围 + 仍需令牌）
+   * @param {string} filePath
+   * @param {number} minutes
+   * @param {{reason?:string, operations?:string[], relaxed_checks?:string[], issued_by?:string}} opts
+   */
+  function manualUnlock(filePath, minutes = 30, opts = {}) {
+    const key = String(filePath).replace(/\\/g, '/');
     const absPath = path.join(projectRoot, filePath);
     unlockFile(absPath, key);
     if (cooldownTimers.has(key)) {
       clearTimeout(cooldownTimers.get(key));
       cooldownTimers.delete(key);
     }
-    // 🔴 P9-fix: 手动解锁 = 豁免 token 检查（默认30分钟，可自定义）
-    // 原因: 手动 unlock 只清了物理锁，但哨兵 checkFile 仍因 token 被消费回滚。
-    // 解锁豁免让 Agent 在豁免期内能正常写入高风险文件（如 SQLiteAdapter 的 40D 改造）。
-    unlockExemptions.set(key, Date.now() + minutes * 60 * 1000);
-    // 持久化到文件（跨进程共享）
-    try {
-      const snap = {};
-      for (const [k, exp] of unlockExemptions) snap[k] = exp;
-      if (!fs.existsSync(path.dirname(EXEMPTIONS_FILE))) fs.mkdirSync(path.dirname(EXEMPTIONS_FILE), { recursive: true });
-      fs.writeFileSync(EXEMPTIONS_FILE, JSON.stringify(snap), 'utf-8');
-    } catch (_) {}
+    // 用共享数据层签发（load-merge-write + 审计），修复并发解锁互相覆盖
+    const record = exemptionsCore.addExemption(key, {
+      minutes,
+      reason: opts.reason,
+      operations: opts.operations,
+      relaxed_checks: opts.relaxed_checks,
+      issued_by: opts.issued_by,
+    });
+    unlockExemptions.set(key, record);
+    return record;
   }
 
-  /** P9: 检查文件是否在解锁豁免期（30分钟内手动解锁过） */
+  /**
+   * v2.9: 查询豁免记录（返回 record 或 null，不再返回布尔）
+   * @returns {{expires_at:number, id?:string, operations?:string[], relaxed_checks?:string[], reason?:string}|null}
+   */
   function isExempt(filePath) {
     const key = String(filePath).replace(/\\/g, '/');
     // 先从内存查，miss 则从文件读（跨进程：manualUnlock 在独立进程写入）
-    let expiry = unlockExemptions.get(key);
-    if (expiry === undefined) {
+    let record = unlockExemptions.get(key);
+    if (!record) {
       try {
-        if (fs.existsSync(EXEMPTIONS_FILE)) {
-          const saved = JSON.parse(fs.readFileSync(EXEMPTIONS_FILE, 'utf-8'));
-          if (saved[key] !== undefined) {
-            expiry = saved[key];
-            unlockExemptions.set(key, expiry);
-          }
-        }
+        record = exemptionsCore.isExemptRecord(key);
+        if (record) unlockExemptions.set(key, record);
       } catch (_) {}
     }
-    if (!expiry) return false;
-    if (Date.now() > expiry) {
+    if (!record) return null;
+    if (exemptionsCore.getExpiry(record) <= Date.now()) {
       unlockExemptions.delete(key); // 豁免过期清理
-      return false;
+      return null;
     }
-    return true;
+    return record;
   }
 
   return { recordRevert, getEscalationLevel, manualUnlock, isExempt };

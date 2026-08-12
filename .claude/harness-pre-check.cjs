@@ -95,7 +95,7 @@ var HARNESS_ROOT_FILES = [
   '.gitignore', '.gitattributes', 'tsconfig.json',
 ];
 // 防线目录前缀（S4 评审 ② 补 dashboard/.github — CI 与看板是可执行治理代码）
-var DEFENSE_DIR_PREFIXES = ['src/', 'data/', '.claude/', 'scripts/', 'hooks/', 'mcp/', 'sentinel/', 'dashboard/', '.github/'];
+var DEFENSE_DIR_PREFIXES = ['src/', 'dist/', 'data/', '.claude/', 'scripts/', 'hooks/', 'mcp/', 'sentinel/', 'dashboard/', '.github/'];
 
 /* ── Read input from stdin (Claude Code passes tool data via stdin, not env var) ── */
 var HOOK_INPUT = '';
@@ -499,16 +499,26 @@ function run() {
     return { decision: 'allow' };
   }
 
-  // 🔴 豁免打通: 流水线令牌无效时，若文件在豁免期内（手动 unlock 签发）→ 放行。
-  // harness 自身防线代码一律不豁免（isExemptionApplicable 返回 false）——
-  // 防止 Agent 用豁免绕过「管理员解锁 + 流水线令牌」双因子自保护。
+  // 🔴 v2.9: 豁免不再完全放行。豁免只放宽「指定检查」，token 仍必需。
+  // 走到这里是 token 无效/缺失。豁免命中时：
+  //   - 校验豁免是否覆盖当前工具类型（operations 白名单）
+  //   - 附注「豁免内但缺令牌」后 DENY，提示走 harness_run_flow（可传 exempt_files）
+  // harness 自身防线代码一律不豁免（isExemptionApplicable 返回 false）。
   if (isExemptionApplicable(n)) {
     var exemption = checkFileExemption(n);
     if (exemption) {
-      archiveExemptionAllow(n, exemption.expires_at);
-      console.error('[Harness] 🔑 EXEMPTION: ' + n + ' — 豁免期内跳过流水线令牌 (至 ' + new Date(exemption.expires_at).toLocaleTimeString('zh-CN') + ')');
-      return { decision: 'allow',
-        description: '[Harness] 🔑 豁免放行: ' + n + ' — 处于手动解锁豁免期（跳过流水线令牌）' };
+      var exemptionRecord = (typeof exemption === 'object' && exemption.record) ? exemption.record :
+        { expires_at: exemption.expires_at || exemption, id: 'v1' };
+      // 校验 operations：豁免未覆盖当前工具 → 直接 deny
+      if (typeof exemptionsCoreCoversOp === 'function' && !exemptionsCoreCoversOp(exemptionRecord, toolName)) {
+        archiveExemptionDeny(n, exemptionRecord, toolName);
+        return { decision: 'deny',
+          reason: '[Harness] 🔒 豁免不覆盖此操作: ' + n + ' (工具 ' + toolName + ' 不在豁免 operations 内)' };
+      }
+      archiveExemptionUse(n, exemptionRecord, { tool: toolName, deferred: true });
+      console.error('[Harness] 🔑 EXEMPTION(deferred): ' + n + ' — 豁免期内但【仍需流水线令牌】(至 ' + new Date(exemptionRecord.expires_at).toLocaleTimeString('zh-CN') + ')');
+      return { decision: 'deny',
+        reason: '[Harness] 🔒 豁免不替代流水线令牌: ' + n + ' — 文件在豁免期内(' + (exemptionRecord.reason || 'v1豁免') + ')，但豁免只放宽指定检查，仍需 token。请调 harness_run_flow 并传 exempt_files 包含此文件。' };
     }
   }
 
@@ -630,27 +640,44 @@ function isExemptionApplicable(filePath) {
   return true;
 }
 
+/** v2.9: 豁免是否覆盖某工具类型（operations 白名单；空 = 不限） */
+function exemptionsCoreCoversOp(record, tool) {
+  try {
+    var ops = record && record.operations;
+    if (!ops || !ops.length) return true;
+    var t = String(tool || '').toLowerCase();
+    return ops.some(function (o) { return t.indexOf(String(o).toLowerCase()) !== -1 || String(o).toLowerCase().indexOf(t) !== -1; });
+  } catch (_) { return true; }
+}
+
 function checkFileExemption(filePath) {
   try {
     if (!fs.existsSync(EXEMPTIONS_FILE)) return null;
     var ex = JSON.parse(fs.readFileSync(EXEMPTIONS_FILE, 'utf-8'));
     var now = Date.now();
     var n = String(filePath).replace(/\\/g, '/');
-    for (var k in ex) {
-      if (!Object.prototype.hasOwnProperty.call(ex, k)) continue;
+    // v2: {version:2, exemptions:{key:{...}}}
+    var src = (ex && ex.version === 2 && ex.exemptions && typeof ex.exemptions === 'object') ? ex.exemptions : ex;
+    for (var k in src) {
+      if (!Object.prototype.hasOwnProperty.call(src, k)) continue;
       var kn = String(k).replace(/\\/g, '/');
       // 精确匹配（endsWith）防前缀误伤；同时兼容豁免键带前导斜杠
       var k2 = kn.charAt(0) === '/' ? kn.slice(1) : kn;
       if (n === k2 || n.endsWith('/' + k2)) {
-        if (now < ex[k]) return { expires_at: ex[k] };
+        var v = src[k];
+        // v2.9 兼容读法: v1 数字 或 v2 {expires_at,...}
+        var expiry = (typeof v === 'number') ? v : (v && v.expires_at);
+        if (typeof expiry === 'number' && now < expiry) {
+          return { expires_at: expiry, record: (typeof v === 'object') ? v : { expires_at: v, id: 'v1-' + k } };
+        }
       }
     }
     return null;
   } catch (_) { return null; }
 }
 
-/** 记录豁免放行事件（供审计/回溯） */
-function archiveExemptionAllow(file, expires_at) {
+/** 记录豁免使用事件（v2.9: 豁免命中但延后，仍需令牌） */
+function archiveExemptionUse(file, record, meta) {
   try {
     if (!fs.existsSync(AUDIT_DIR)) fs.mkdirSync(AUDIT_DIR, { recursive: true });
     var d = path.join(AUDIT_DIR, 'exemptions');
@@ -658,8 +685,22 @@ function archiveExemptionAllow(file, expires_at) {
     var today = new Date().toISOString().slice(0, 10);
     var dd = path.join(d, today);
     if (!fs.existsSync(dd)) fs.mkdirSync(dd, { recursive: true });
-    fs.writeFileSync(path.join(dd, 'allow_' + Date.now() + '.json'),
-      JSON.stringify({ timestamp: new Date().toISOString(), event: 'EXEMPTION_ALLOW', file: file, expires_at: expires_at }, null, 2));
+    fs.writeFileSync(path.join(dd, 'use_' + Date.now() + '.json'),
+      JSON.stringify({ timestamp: new Date().toISOString(), event: 'EXEMPTION_USE_DEFERRED', file: file, expires_at: record.expires_at, id: record.id, tool: meta && meta.tool, deferred: !!(meta && meta.deferred) }, null, 2));
+  } catch (_) {}
+}
+
+/** 记录豁免不覆盖操作（operations 白名单拒绝） */
+function archiveExemptionDeny(file, record, tool) {
+  try {
+    if (!fs.existsSync(AUDIT_DIR)) fs.mkdirSync(AUDIT_DIR, { recursive: true });
+    var d = path.join(AUDIT_DIR, 'exemptions');
+    if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+    var today = new Date().toISOString().slice(0, 10);
+    var dd = path.join(d, today);
+    if (!fs.existsSync(dd)) fs.mkdirSync(dd, { recursive: true });
+    fs.writeFileSync(path.join(dd, 'deny_' + Date.now() + '.json'),
+      JSON.stringify({ timestamp: new Date().toISOString(), event: 'EXEMPTION_OP_DENY', file: file, id: record.id, tool: tool }, null, 2));
   } catch (_) {}
 }
 

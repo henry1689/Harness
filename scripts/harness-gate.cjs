@@ -62,6 +62,10 @@ const HIGH_RISK_PATTERNS = [
   /^sentinel\//,
   /^scripts\/harness-gate\.cjs$/,
   /^data\/flows\//,
+  // v2.9: 补丁脚本/boot 管控 — 所有 scripts/* 与 src 下可执行脚本 commit 需 token
+  // （修正 A: 原 HIGH_RISK 只精确匹配 scripts/harness-gate.cjs 一个，fix-kb-gates 等无令牌 commit）
+  /^scripts\//,
+  /^src\/.*\.(cjs|mjs)$/,
 ];
 
 // ============================================================================

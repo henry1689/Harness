@@ -27,7 +27,8 @@ const POLL_INTERVAL_MS = 800;
 /** 忽略的文件后缀 */
 const IGNORE_SUFFIXES = ['.test.ts', '.spec.ts', '.d.ts'];
 /** 忽略的目录 — P7: __tests__ 通过环境变量 HARNESS_SENTINEL_MONITOR_TESTS=1 可开启监控 */
-const IGNORE_DIRS_BASE = ['node_modules', '.git', 'dist', '.claude'];
+// v2.9: dist 纳入治理（哈希基线 + 自愈）— 从忽略目录移除
+const IGNORE_DIRS_BASE = ['node_modules', '.git', '.claude'];
 /** 监控的文件后缀 — P7: 扩展至 Harness 自身文件类型 */
 const WATCH_SUFFIXES = ['.ts', '.json', '.yaml', '.yml', '.cjs', '.mjs', '.js'];
 

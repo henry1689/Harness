@@ -48,6 +48,18 @@ for (let i = 0; i < args.length; i++) {
     // 管理员密码 — 配合 --unlock 使用（防 Agent 自行豁免）
     unlockPassword = args[++i] || '';
   }
+  else if (args[i] === '--reason') {
+    // v2.9: 豁免理由（审计必填）
+    process.env.__SENTINEL_UNLOCK_REASON = args[++i] || '';
+  }
+  else if (args[i] === '--ops') {
+    // v2.9: 豁免允许的操作白名单（edit,write），逗号分隔
+    process.env.__SENTINEL_UNLOCK_OPS = args[++i] || '';
+  }
+  else if (args[i] === '--relaxed') {
+    // v2.9: 豁免放宽的检查（S4.5_complexity,breaker,cooldown），逗号分隔
+    process.env.__SENTINEL_UNLOCK_RELAXED = args[++i] || '';
+  }
 }
 
 // 处理 --unlock 命令
@@ -72,10 +84,20 @@ if (process.env.__SENTINEL_UNLOCK !== undefined) {
     process.exit(1);
   }
   const minutes = parseInt(process.env.__SENTINEL_UNLOCK_MINUTES || '30', 10) || 30;
+  // v2.9: 豁免申请闭环 — 需提供理由；ops/relaxed 限定范围
+  const reason = process.env.__SENTINEL_UNLOCK_REASON || '';
+  const ops = (process.env.__SENTINEL_UNLOCK_OPS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const relaxed = (process.env.__SENTINEL_UNLOCK_RELAXED || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!reason) {
+    console.error('[sentinel] 🔴 v2.9: --unlock 必须带 --reason "<豁免理由>"（豁免申请闭环要求理由与标准）');
+    console.error('[sentinel]     用法: node sentinel-service.cjs --project <根> --unlock <file> --minutes <N> --password <密码> --reason "<理由>" [--ops edit,write] [--relaxed S4.5_complexity]');
+    process.exit(1);
+  }
   const { createEscalation: _CE } = require('./escalation.cjs');
   const _esc = _CE(projectRoot);
-  _esc.manualUnlock(unlockFile, minutes);
-  console.error(`[sentinel] 🔓 已手动解锁: ${unlockFile} (豁免 ${minutes} 分钟)`);
+  const record = _esc.manualUnlock(unlockFile, minutes, { reason, operations: ops, relaxed_checks: relaxed });
+  console.error(`[sentinel] 🔓 已手动解锁: ${unlockFile} (豁免 ${minutes} 分钟, id: ${record.id}, 理由: ${reason})`);
+  console.error(`[sentinel]    ⚠️ v2.9: 豁免只放宽指定检查，仍要求流水线令牌（harness_run_flow 可传 exempt_files）`);
   process.exit(0);
 }
 
@@ -93,6 +115,7 @@ const auditDir = path.resolve(__dirname, '..', 'data', 'sentinel');
 const riskPolicy = loadRiskPolicy(path.resolve(__dirname, '..', 'scripts'));
 const WATCH_ROOTS = [
   'src/',         // 被管控项目源文件（必须）
+  'dist/',        // v2.9: 编译产物纳入治理（哈希基线 + 自愈；harness 自身无 dist 自动跳过）
   '.claude/',     // P7: Harness 钩子脚本
   'mcp/',         // P7: MCP 服务实现
   'sentinel/',    // P7: 哨兵自身（防篡改）
@@ -122,6 +145,7 @@ const stats = {
   startedAt: new Date().toISOString(),
   events: 0,
   allowed: 0,
+  exempt: 0,
   reverted: 0,
   errors: 0,
   batches: 0,
@@ -179,32 +203,51 @@ async function processFileChange(filePath, isBatchAlert) {
     const prefix = isBatchAlert ? '[sentinel:batch]' : '[sentinel]';
     console.error(`${prefix} 📁 文件变更: ${filePath} (#${stats.events})`);
 
-    // 🔴 P9-fix: 解锁豁免 — 手动 unlock 的文件在 30 分钟内跳过 token 检查
-    // 原因: 手动解锁只清物理锁，但 token 被消费后 checkFile 仍判无效 → 回滚。
-    // 豁免让 Agent 在解锁期内能正常写入高风险文件（如 SQLiteAdapter 40D 改造）。
-    // 注意: watcher 传的 filePath 可能不带 src/ 前缀（webui/...），
-    // manualUnlock 存的 key 是带前缀的（src/webui/...），需两种都试。
-    const exemptPath = String(filePath).replace(/\\/g, '/');
-    const exemptHit = escalation.isExempt(exemptPath) ||
-      (exemptPath.startsWith('src/') ? escalation.isExempt(exemptPath.slice(4)) : escalation.isExempt('src/' + exemptPath));
-    if (exemptHit) {
-      stats.allowed++;
-      console.error(`${prefix} ✅ 解锁豁免放行: ${filePath} — 手动解锁 30 分钟内跳过 token 检查`);
-      archiveEvent('allowed', { file: filePath, risk: 'high', reason: '解锁豁免 (manual unlock)', timestamp });
+    // v2.9: dist/ 走哈希基线自愈（不走 token/回滚——dist 是 untracked，git 回滚会删合法产物）
+    const _normPath = String(filePath).replace(/\\/g, '/');
+    if (_normPath.startsWith('dist/')) {
+      try {
+        const { spawnSync } = require('child_process');
+        const r = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'scripts', 'dist-baseline.cjs'), '--verify', _normPath, '--project', projectRoot], {
+          encoding: 'utf-8', timeout: 60000, stdio: 'inherit', cwd: path.resolve(__dirname, '..'),
+        });
+        if (r.status !== 0) console.error(`${prefix} ⚠️ dist 自愈校验异常 (exit ${r.status})`);
+      } catch (e) {
+        console.error(`${prefix} ⚠️ dist 自愈调用失败:`, e.message);
+      }
       return;
     }
 
-    // 查令牌
+    // v2.9 三分支: 豁免命中 → 仍查令牌 → (豁免+令牌=allowed / 豁免+无令牌=exempt_allowed 不回滚 / 无豁免+无令牌=回滚升级)
+    // 豁免≠完全放行: 只放宽「回滚」与「升级」，token 仍必需。
+    const exemptPath = String(filePath).replace(/\\/g, '/');
+    const exemptRecord = escalation.isExempt(exemptPath) ||
+      (exemptPath.startsWith('src/') ? escalation.isExempt(exemptPath.slice(4)) : escalation.isExempt('src/' + exemptPath));
+
+    // 查令牌（豁免与否都查）
     const result = await checkFile(filePath, { project: projectRoot });
 
   if (result.allowed) {
+    // 分支1: 令牌有效 → 正常放行（无论是否豁免）
     stats.allowed++;
     console.error(`${prefix} ✅ 放行: ${filePath} — ${result.reason}`);
     archiveEvent('allowed', { file: filePath, risk: result.risk, reason: result.reason, timestamp });
     return;
   }
 
-  // 未授权 → 回滚
+  if (exemptRecord) {
+    // 分支2: 豁免命中 + 无令牌 → 记录「豁免内修改」但【不回滚、不升级】
+    // 终结 boot 重放循环: 豁免期内改写只记录，豁免过期后再写才回滚。
+    stats.exempt++;
+    console.error(`${prefix} 🟡 豁免内修改(无令牌): ${filePath} — id: ${exemptRecord.id || 'v1'} 豁免期内不回滚`);
+    archiveEvent('exempt_allowed', {
+      file: filePath, risk: result.risk, reason: '豁免内修改(无令牌)', timestamp,
+      exemption_id: exemptRecord.id || null,
+    });
+    return;
+  }
+
+  // 分支3: 无豁免 + 无令牌 → 回滚 + 升级（原逻辑）
   console.error(`${prefix} 🚫 拦截: ${filePath} — ${result.reason}`);
 
   const revertResult = await rollback.revert(filePath, { dryRun });
@@ -322,7 +365,9 @@ for (const root of WATCH_ROOTS) {
     continue;
   }
   try {
-    const w = createWatcher(fullPath, onFileChanged);
+    // MID-4-fix: watcher 回调传相对项目根的路径（root 前缀 + relPath），
+    // 修复 dist 等非 src 监控根下 relPath 被误拼成 src/ 前缀导致路径错配。
+    const w = createWatcher(fullPath, (relPath) => onFileChanged(root + relPath.replace(/\\/g, '/')));
     w.start();
     watchers.push({ root, watcher: w });
   } catch (err) {

@@ -228,9 +228,10 @@ mcpServer.registerTool(
       files: z.array(z.string()).describe('待修改的文件路径列表'),
       message: z.string().optional().describe('原始修改意图描述'),
       skip_s3_compile: z.boolean().optional().describe('🔴 修复编译错误专用：为 true 时 S3 跳过 tsc 编译检查，直接签发 token（仅限修复历史编译错误任务，改完后 S5 仍会完整验证）'),
+      exempt_files: z.array(z.string()).optional().describe('v2.9: 豁免文件列表（限定范围内仍走 S1-S7——只放宽 S4.5 复杂度收敛，token 照常签发）'),
     },
   },
-  async ({ flow, files, message, skip_s3_compile }) => {
+  async ({ flow, files, message, skip_s3_compile, exempt_files }) => {
     if (!files || files.length === 0) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: '未指定修改文件' }) }] };
     }
@@ -292,7 +293,13 @@ mcpServer.registerTool(
         return review(stage, state);
       }
     });
-    delegateFnMap.set('S4.5_Convergence_Gate', async (stage: any, state: any) => convergenceEvaluate(stage, state));
+    // v2.9: 传 exempt_files 给 S4.5 — 豁免文件只放宽复杂度收敛，S1/S2/S5/S6/S7 全量保留
+    // MID-2-fix: 原地挂载（不浅拷贝）——ConvergenceGate 内 state.convergence_round 原地自增，
+    // 浅拷贝会让收敛轮次停滞在 round=1（人工转交/HARD_LOCKOUT 失效）。
+    if (Array.isArray(exempt_files) && exempt_files.length > 0) {
+      state.s4_exempt_files = exempt_files;
+    }
+    delegateFnMap.set('S4.5_Convergence_Gate', async (stage: any, st: any) => convergenceEvaluate(stage, st));
 
     const engine = new FlowEngine({
       delegateReviewFn: async (stage: any, state: any) => review(stage, state),

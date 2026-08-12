@@ -126,9 +126,31 @@ export async function evaluate(
 
   // v2.6: 读取纯数据映射类豁免清单（采纳 refined-rules 规则2）
   const exempt = loadPureMappingExempt(projectRoot);
+  // v2.9: 合并 flow 传入的 exempt_files（harness_run_flow 的豁免文件，限定范围仍走 S1-S7）
+  // MID-3-fix: 必须校验每项存在【有效未过期】的豁免记录（exemptions-core），
+  // 否则 Agent 可自声明 exempt_files 对任意文件关闭补丁嗅探。未命中 → 不并入。
+  const flowExempt = (state as any).s4_exempt_files as string[] | undefined;
+  if (Array.isArray(flowExempt) && flowExempt.length > 0) {
+    const selfDir = typeof import.meta !== 'undefined' ? (import.meta as any).dirname ?? __dirname : __dirname;
+    const exemptionsCore = require(resolve(selfDir, '..', 'scripts', 'exemptions-core.cjs')) as {
+      isExemptRecord: (f: string) => { relaxed_checks?: string[] } | null;
+    };
+    for (const f of flowExempt) {
+      const n = String(f).replace(/\\/g, '/');
+      // 校验有效豁免记录（含过期判断）；可选要求 relaxed_checks 含 S4.5_complexity
+      const rec = exemptionsCore.isExemptRecord(n);
+      if (!rec) {
+        console.log(`[ConvergenceGate] ⚠️ exempt_files 中 ${n} 无有效豁免记录，不并入（防止自声明放宽）`);
+        continue;
+      }
+      if (!exempt.files.some(x => x === n)) exempt.files.push(n);
+      const base = n.split('/').pop() || n;
+      if (!exempt.basenames.includes(base)) exempt.basenames.push(base);
+    }
+  }
   const exemptCount = exempt.files.length + exempt.basenames.length;
   if (exemptCount > 0) {
-    console.log(`[ConvergenceGate] 🧊 纯映射类豁免 ${exemptCount} 项 — 仅对 CK-08/CK-06.5 生效`);
+    console.log(`[ConvergenceGate] 🧊 豁免 ${exemptCount} 项 — 仅对 CK-08/CK-06.5 生效`);
   }
 
   // 1. 运行 CK-01~CK-08 本地硬校验（复杂度收敛类 CK 剔除豁免文件，正确性类保留全量）
