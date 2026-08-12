@@ -117,25 +117,36 @@ function isPortInUse(p) {
   } catch (_) { return false; }
 }
 
+/** 端口清理已完成标记（v2.9.1-fix: 只在首次启动清理一次，避免重启循环中反复杀进程闪屏） */
+let portCleanupDone = false;
+
 /** 启动子进程 */
 function startChild() {
   // 🔴 P9-fix: 端口被占用时先清理残留，避免 EADDRINUSE 崩溃导致频繁弹窗
-  // 原因: 之前手动启动/残留的 server.ts 进程占用 8765，PM2 启动时 EADDRINUSE 崩溃。
-  if (isPortInUse(port)) {
-    console.error(`[harness-start] ⚠️ 端口 ${port} 被占用，尝试清理残留进程...`);
+  // v2.9.1-fix:
+  //   1. 端口清理只在首次启动做一次（portCleanupDone）——否则 exit 后重启会再次触发清理，
+  //      若 8765 被自己刚 fork 的 server.ts 瞬占 → taskkill 强杀自己 → exit → 再重启 → 死循环闪屏。
+  //   2. taskkill 前排除 childPid（自己 fork 的子进程）——不误杀自己刚起的 server.ts。
+  //   3. 清理失败有上限，不无限循环。
+  if (!portCleanupDone && isPortInUse(port)) {
+    portCleanupDone = true;
+    console.error(`[harness-start] ⚠️ 端口 ${port} 被占用，尝试清理残留进程（仅首次）...`);
     try {
       const { execSync } = require('child_process');
-      // 找到占用端口的 PID 并杀掉（排除自身）
+      // 找到占用端口的 PID 并杀掉（排除自身 与 自己 fork 的子进程）
       const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: 'utf-8', timeout: 5000, windowsHide: true });
       const pid = (out.match(/\s(\d+)\s*$/) || [])[1];
-      if (pid && pid !== String(process.pid)) {
+      const isSelfChild = childPid && pid && (pid === String(childPid) || pid === String(process.pid));
+      if (pid && !isSelfChild) {
         execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true });
         console.error(`[harness-start] ✅ 已清理残留进程 PID ${pid}`);
+      } else if (pid && isSelfChild) {
+        console.error(`[harness-start] ⚠️ 端口 ${port} 被自己子进程占用，不杀，等待其 listen`);
       }
     } catch (e) {
       console.error(`[harness-start] ⚠️ 清理失败: ${e.message}`);
     }
-    // 等端口释放
+    // 等端口释放（有上限，不无限循环）
     const start = Date.now();
     while (isPortInUse(port) && Date.now() - start < 5000) {
       require('child_process').execSync('ping -n 2 127.0.0.1 >nul', { stdio: 'ignore', windowsHide: true });
