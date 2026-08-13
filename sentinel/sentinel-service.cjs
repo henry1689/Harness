@@ -139,6 +139,27 @@ const BATCH_WINDOW_MS = 500;
 /** 批次处理最大文件数 — 超过告警（防脚本批量篡改） */
 const BATCH_ALERT_THRESHOLD = 3;
 
+/** v2.9.2: 递归统计 dist 下最近 30s 变更的文件数（wenstar-cc 构建产物在 m3/m4/household 等子目录） */
+function countRecentDistFiles(projectRootPath) {
+  try {
+    const distDir = path.join(projectRootPath, 'dist');
+    if (!fs.existsSync(distDir)) return 0;
+    const cutoff = Date.now() - 30_000;
+    let n = 0;
+    const countDir = (dir) => {
+      try {
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          const fp = path.join(dir, ent.name);
+          if (ent.isDirectory()) countDir(fp);
+          else { try { if (fs.statSync(fp).mtimeMs > cutoff) n++; } catch (_) {} }
+        }
+      } catch (_) {}
+    };
+    countDir(distDir);
+    return n;
+  } catch (_) { return 0; }
+}
+
 // ── 统计 ──
 
 const stats = {
@@ -209,21 +230,7 @@ async function processFileChange(filePath, isBatchAlert) {
       // v2.9.2-fix: 批量构建检测——wenstar-cc 正常 npm run build(tsc) 会写入数百个 dist 文件，
       // 每个都 spawn dist-baseline --verify 会反复启动子进程（闪屏爆发）。30s 内 dist 变更 ≥10 个
       // 判定为构建事件 → 跳过自愈（构建是合法写入，完成后应 --refresh 更新基线而非逐文件覆写）。
-      const _distRecent = (() => {
-        try {
-          const fsx = require('fs');
-          const pathx = require('path');
-          const distDir = pathx.join(projectRoot, 'dist');
-          if (!fsx.existsSync(distDir)) return 0;
-          const cutoff = Date.now() - 30_000;
-          let n = 0;
-          for (const ent of fsx.readdirSync(distDir, { withFileTypes: true })) {
-            if (ent.isDirectory()) continue;
-            try { if (fsx.statSync(pathx.join(distDir, ent.name)).mtimeMs > cutoff) n++; } catch (_) {}
-          }
-          return n;
-        } catch (_) { return 0; }
-      })();
+      const _distRecent = countRecentDistFiles(projectRoot);
       if (_distRecent >= 10) {
         console.error(`${prefix} 🟡 dist 批量构建中(${_distRecent} 文件/30s)，跳过自愈校验（构建完成后 --refresh 更新基线）`);
         return;
