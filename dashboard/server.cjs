@@ -305,6 +305,9 @@ function collectStatus() {
       { name: 'harness-mcp', pid: hbPidMatch || 0, status: mcpAlive ? 'online' : 'stopped', uptime: 0, restarts: 0, cpu: 0, memory: 0 },
       { name: 'harness-sentinel', pid: 0, status: sentinelLogAge < 60 ? 'online' : 'unknown', uptime: 0, restarts: 0, cpu: 0, memory: 0 },
       { name: 'harness-dashboard', pid: process.pid, status: 'online', uptime: Math.round(process.uptime()), restarts: 0, cpu: 0, memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) },
+      // v2.9.2-fix: 补 self-sentinel 与 watchdog（self-sentinel 用 sentinel-heartbeat mtime；watchdog 用内容 ts）
+      { name: 'harness-self-sentinel', pid: 0, status: fileAge('sentinel-heartbeat.json') <= 45 ? 'online' : 'unknown', uptime: 0, restarts: 0, cpu: 0, memory: 0 },
+      { name: 'harness-watchdog', pid: 0, status: (wdHeartbeat && (now - (wdHeartbeat.ts || 0)) / 1000 <= 120) ? 'online' : 'unknown', uptime: 0, restarts: 0, cpu: 0, memory: 0 },
     );
   } catch (_) {}
 
@@ -367,9 +370,13 @@ function collectStatus() {
     {
       name: 'PM2 守护',
       status: pm2Ok ? 'green' : 'red',
-      detail: pm2Processes.length >= 3 ? '3 进程在线' :
-              pm2Processes.length >= 2 ? '2 进程在线' :
-              mcpAlive ? 'MCP 存活（pm2 jlist 超时）' : '进程缺失',
+      detail: (() => {
+        // v2.9.2-fix: 动态显示在线进程数（5 个监管组件：mcp/sentinel/self-sentinel/dashboard/watchdog）
+        const online = pm2Processes.filter(p => p.status === 'online').length;
+        return online >= 3 ? `${online} 进程在线` :
+               online >= 2 ? `${online} 进程在线` :
+               mcpAlive ? 'MCP 存活（部分进程缺失）' : '进程缺失';
+      })(),
     },
     {
       name: 'MCP Server',
@@ -378,8 +385,13 @@ function collectStatus() {
     },
     {
       name: 'Sentinel',
-      status: sentinelState.level < 2 ? 'green' : 'red',
-      detail: `v2.1 模式${sentinelState.level || 0} | ${sentinelEvents.length} 今日事件`,
+      // v2.9.2-fix: 以心跳新鲜度为主判据（sentinelAlive=心跳≤45s）。
+      // LOCKDOWN(level≥2)是临时保护状态（expires_at 自动解除），不是故障——未到期才提示，不标红。
+      status: sentinelAlive ? 'green' : 'red',
+      detail: `v2.1 心跳${sentinelAlive ? '正常' : '断链'} | ${sentinelEvents.length} 今日事件` +
+        (sentinelState.level >= 2 && sentinelState.expires_at > Date.now()
+          ? ` | 🔒 LOCKDOWN 至 ${new Date(sentinelState.expires_at).toLocaleTimeString('zh-CN')}`
+          : ''),
     },
     {
       name: 'Hook 前置检查',
