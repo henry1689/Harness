@@ -27,9 +27,14 @@ const LOG_DIR = path.join(DATA_DIR, 'logs');
 const HEAL_LOG = path.join(DATA_DIR, 'heal-log.jsonl');
 
 // 心跳文件 → 对应 PM2 进程名 → 心跳允许过期秒数
+// v2.9.2-fix: MCP timeoutSec 20→120 / Sentinel 45→90。
+// 根因: harness_run_flow 收敛评估等长操作会阻塞 MCP 心跳更新(单线程)→心跳停更>60s
+// → watchdog 连续3次确认→pm2 restart harness-mcp(heal-log 实证08-12 03:57/17:10/18:13
+// 心跳过期76s/73s/114s反复重启)→开发跑flow时「一阵子爆发」闪屏。
+// 提升后覆盖长操作余量，且 CONFIRM_ROUNDS=3(60s)防抖保留。
 const LINKS = [
-  { name: 'MCP',      hb: 'heartbeat.json',            pm2Name: 'harness-mcp',      timeoutSec: 20 },
-  { name: 'Sentinel', hb: 'sentinel-heartbeat.json',    pm2Name: 'harness-sentinel', timeoutSec: 45 },
+  { name: 'MCP',      hb: 'heartbeat.json',            pm2Name: 'harness-mcp',      timeoutSec: 120 },
+  { name: 'Sentinel', hb: 'sentinel-heartbeat.json',    pm2Name: 'harness-sentinel', timeoutSec: 90 },
   { name: 'Hook',     hb: 'hook-heartbeat.json',        pm2Name: null,               timeoutSec: 600 }, // hook 无独立进程，仅告警
 ];
 
