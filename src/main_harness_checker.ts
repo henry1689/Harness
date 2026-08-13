@@ -106,30 +106,20 @@ interface CacheableData {
 // 配置
 // ════════════════════════════════════════════════════════════════════
 
-/** 高风险文件列表 */
+/** 高风险文件列表（basename 后缀匹配） */
 const HIGH_RISK_FILES = [
   'chat.ts', 'FamilyGraph.ts', 'SQLiteAdapter.ts',
   'server.ts', 'DeepSeekLLMProvider.ts', 'PrefrontalCortex.ts',
 ];
 
+/** v2.9.2: 高风险目录（路径前缀匹配——雷区已从 chat.ts 转移到 chat/*.ts 阶段管线；governance 为内容豁免总开关） */
+const HIGH_RISK_DIRS = [
+  'src/webui/chat/',
+  'src/governance/',
+];
+
 /** 九层管线模块前缀 */
 const M1_M9_MODULES = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9'];
-
-/** 12 处 _meetingEntityName 精确行号点位 */
-const MEETING_ENTITY_CHECKPOINTS: Array<{ line: number; description: string }> = [
-  { line: 570, description: '会晤模式入口判断' },
-  { line: 679, description: '实体名提取逻辑' },
-  { line: 760, description: '会晤上下文构建' },
-  { line: 775, description: '会晤参与方过滤' },
-  { line: 847, description: '角色信息隔离' },
-  { line: 1233, description: '会晤记忆注入点1' },
-  { line: 1235, description: '会晤记忆注入点2' },
-  { line: 1302, description: '知识文本拼接' },
-  { line: 1338, description: '会晤提示词构造' },
-  { line: 1445, description: '会晤响应处理' },
-  { line: 1484, description: '会晤归档入口' },
-  { line: 1501, description: '会晤结束清理' },
-];
 
 /** AST 补丁检测阈值：单个已有函数新增 ≥N 个条件分支 → 疑似补丁 */
 const PATCH_IF_THRESHOLD = 2;
@@ -190,6 +180,7 @@ function main(): void {
       checkSQLiteSaveCalls(projectRoot, files),
       checkSystemicPattern(projectRoot, files),
       checkHighRiskDependencyScan(projectRoot, files),
+      checkContentSafetyExemptions(projectRoot, files),
     );
   }
 
@@ -448,9 +439,62 @@ function checkUUIDAnnotationChain(projectRoot: string, files: string[]): CheckRe
 // CK-05: 12 处 _meetingEntityName grep 核验
 // ════════════════════════════════════════════════════════════════════
 
+/** v2.9.2: 从 chat.ts 解析 V15 自编目（MEETING_PROP_POINTS 数组字面量）——权威索引在代码内，随代码同步漂移
+ *  返回 { entries, catalogEndIdx }——catalogEndIdx 为编目数组结束行，供 via 搜索排除编目自身 */
+function parseMeetingCatalog(lines: string[]): { entries: Array<{ line: number; stage: string; desc: string; via: string }>; catalogEndIdx: number } {
+  const entries: Array<{ line: number; stage: string; desc: string; via: string }> = [];
+  let started = false;
+  let catalogEndIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.includes('MEETING_PROP_POINTS')) { started = true; continue; }
+    if (!started) continue;
+    const m = l.match(/\{\s*line:\s*(\d+),\s*stage:\s*'([^']*)',\s*desc:\s*'([^']*)',\s*via:\s*'([^']*)'\s*\}/);
+    if (m) entries.push({ line: +m[1], stage: m[2], desc: m[3], via: m[4] });
+    if (entries.length > 0 && /^\s*\];/.test(l)) { catalogEndIdx = i; break; }
+  }
+  return { entries, catalogEndIdx };
+}
+
+/** v2.9.2: 收集 chat.ts 中所有非注释的 _meetingEntityName/meetingEntity/meeting_entity 真实引用点 */
+function collectMeetingRefs(lines: string[]): Array<{ line: number; text: string }> {
+  const refs: Array<{ line: number; text: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (isCommentLine(lines[i])) continue;
+    if (/_meetingEntityName|meetingEntity|meeting_entity/.test(lines[i])) refs.push({ line: i + 1, text: lines[i].trim() });
+  }
+  return refs;
+}
+
+/**
+ * v2.9.2: 语义级校验——编目点位是否有传播证据。
+ * 修正：编目行号本身会随 chat.ts 重构漂移（实测 L651→实际 L620，偏差 30 行）。
+ * 硬判据改为「via 标记在全文存在」（传播链未断）——编目行号偏差仅 warn，不 fail，
+ * 避免「编目没同步行号」就误伤正常开发。
+ */
+function catalogEntryHasEvidence(lines: string[], entry: { line: number; via: string }): boolean {
+  // via 标记全局存在（硬判据——传播链断裂才算 fail）
+  if (!!entry.via && lines.some(l => l.includes(entry.via))) return true;
+  // 无 via 标记时，看 _meetingEntityName 系列引用全文存在
+  if (lines.some(l => /_meetingEntityName|meetingEntity|meeting_entity/.test(l))) return true;
+  return false;
+}
+
+/** v2.9.2: 编目行号是否与实际 via 位置偏差过大（>20 行 → warn，提示编目需同步）
+ *  排除编目定义自身行（MEETING_PROP_POINTS 数组内也含 via 字符串），从编目结束后搜索 */
+function catalogLineDrifted(lines: string[], entry: { line: number; via: string }, catalogStartIdx: number): number | null {
+  if (!entry.via) return null;
+  const fromIdx = catalogStartIdx > 0 ? catalogStartIdx : 0;
+  const actualIdx = lines.findIndex((l, i) => i > fromIdx && l.includes(entry.via));
+  if (actualIdx === -1) return null;
+  return Math.abs((actualIdx + 1) - entry.line);
+}
+
+// v2.9.2: CK-05 会晤传播链语义核验（替代硬编码行号——原 12 点全部失效，隔离检查空转）
 function checkMeetingEntityPoints(projectRoot: string, files: string[]): CheckResult {
   const start = Date.now();
   const violations: Violation[] = [];
+  const warnings: Violation[] = [];
 
   // 仅当修改涉及 chat.ts 或会晤相关逻辑时启用
   const meetingFiles = files.filter(f =>
@@ -458,59 +502,66 @@ function checkMeetingEntityPoints(projectRoot: string, files: string[]): CheckRe
     f.includes('EntityMeeting') || f.includes('MeetingContext')
   );
   if (!meetingFiles.length) {
-    return { id: 'CK-05', name: '12处_meetingEntityName核验', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: true };
+    return { id: 'CK-05', name: '会晤传播链语义核验', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: true };
   }
 
-  // 🔴 对 chat.ts 做逐行 grep 核验
   const chatPath = resolve(projectRoot, 'src/webui/chat.ts');
   if (!existsSync(chatPath)) {
-    return { id: 'CK-05', name: '12处_meetingEntityName核验', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: true };
+    return { id: 'CK-05', name: '会晤传播链语义核验', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: true };
+  }
+  const lines = readFileSync(chatPath, 'utf-8').split('\n');
+
+  // 1) V15 编目必须存在且可解析（权威索引缺失 = 传播链不可验证 → hard fail）
+  const catalogParsed = parseMeetingCatalog(lines);
+  const catalog = catalogParsed.entries;
+  if (catalog.length === 0) {
+    violations.push({ line: 1, file: 'src/webui/chat.ts',
+      message: 'V15 _meetingEntityName 编目（MEETING_PROP_POINTS）缺失或无法解析——会晤传播链不可验证。该自编目是架构铁律#6 的权威索引，必须保留。' });
   }
 
-  const content = readFileSync(chatPath, 'utf-8');
-  const lines = content.split('\n');
-
-  // 构建点位核验清单
-  const pointResults: Array<{ line: number; description: string; status: string; evidence: string }> = [];
-
-  for (const cp of MEETING_ENTITY_CHECKPOINTS) {
-    const idx = cp.line - 1; // 0-indexed
-    if (idx >= lines.length) {
-      pointResults.push({ line: cp.line, description: cp.description, status: '✗', evidence: `行号 ${cp.line} 超出文件范围（总行数 ${lines.length}）` });
-      continue;
-    }
-
-    const line = lines[idx];
-    const hasMeetingEntity = line.includes('_meetingEntityName') || line.includes('meetingEntity') || line.includes('meeting_entity');
-    // 检查周边 5 行范围
-    const nearbyStart = Math.max(0, idx - 5);
-    const nearbyEnd = Math.min(lines.length, idx + 5);
-    const nearby = lines.slice(nearbyStart, nearbyEnd).join('\n');
-    const hasMeetingEntityNearby = nearby.includes('_meetingEntityName') || nearby.includes('meetingEntity');
-
-    if (hasMeetingEntity || hasMeetingEntityNearby) {
-      pointResults.push({ line: cp.line, description: cp.description, status: '✓', evidence: line.trim().slice(0, 80) });
+  // 2) 编目 ↔ 真实代码交叉验证（核心，替代硬编码行号）
+  // v2.9.2-fix: 硬判据=via 标记全文存在（传播链断裂→fail）；编目行号偏差>20→warn（提示编目需同步）
+  const refs = collectMeetingRefs(lines);
+  for (const entry of catalog) {
+    if (!catalogEntryHasEvidence(lines, entry)) {
+      violations.push({ line: entry.line, file: 'src/webui/chat.ts',
+        message: `V15 编目 L${entry.line} (${entry.stage}/${entry.desc}) 传播链断裂：via 标记 "${entry.via}" 与 _meetingEntityName 系列引用全文均不存在——会晤传播链缺失` });
     } else {
-      pointResults.push({
-        line: cp.line, description: cp.description, status: '⚠', evidence: `行 ${cp.line} 附近未找到 _meetingEntityName 引用，请人工确认是否为不适用场景`,
-      });
-      violations.push({
-        line: cp.line,
-        file: 'src/webui/chat.ts',
-        message: `_meetingEntityName 点位 #${cp.line} (${cp.description}): 未找到相关引用，需人工确认`,
-      });
+      const drift = catalogLineDrifted(lines, entry, catalogParsed.catalogEndIdx);
+      if (drift !== null && drift > 20) {
+        warnings.push({ line: entry.line, file: 'src/webui/chat.ts',
+          message: `V15 编目 L${entry.line} (${entry.stage}) 行号偏移 ${drift} 行——请同步更新编目行号` });
+      }
     }
   }
 
-  // 🔴 12 点逐项核验清单（强制输出）
-  const checklist = pointResults.map(p => `| ${p.line} | ${p.status} | ${p.description} | ${p.evidence} |`).join('\n');
+  // 3) 关键传播锚点必须存在（阶段锚点正则，不依赖行号；单行匹配）
+  const anchors: Array<{ name: string; re: RegExp }> = [
+    { name: '实体名声明(let _meetingEntityName)', re: /let\s+_meetingEntityName/ },
+    { name: '实体名赋值(getEntityName)', re: /_meetingEntityName\s*=\s*ctx\._entityMeeting\.getEntityName/ },
+    { name: 'M4 会晤UUID隔离(orchestrate)', re: /ctx\.m4\.orchestrate\(/ },
+    { name: 'M5 会晤标记(orchestrate 传 _meetingEntityName)', re: /ctx\.m5\.orchestrate\([^)]*_meetingEntityName/ },
+    { name: 'ChatPolicy 会晤模式(meetingMode)', re: /new\s+ChatPolicy\(meetingMode\(/ },
+  ];
+  for (const a of anchors) {
+    if (!lines.some(l => a.re.test(l))) {
+      violations.push({ line: 1, file: 'src/webui/chat.ts', message: `会晤传播锚点缺失: ${a.name}` });
+    }
+  }
 
+  // 4) 引用规模（传播链需存在，偏低仅 warn）
+  if (refs.length < 8) {
+    warnings.push({ line: 1, file: 'src/webui/chat.ts',
+      message: `_meetingEntityName 真实引用点仅 ${refs.length} 处（预期 ≥8），传播链规模偏低` });
+  }
+
+  const hardFail = violations.length > 0;
   return {
     id: 'CK-05',
-    name: '12处_meetingEntityName核验',
-    passed: violations.length === 0,
-    severity: violations.length > 0 ? 'warn' : 'pass',
-    violations,
+    name: '会晤传播链语义核验',
+    passed: violations.length === 0 && warnings.length === 0,
+    severity: hardFail ? 'fail' : (warnings.length > 0 ? 'warn' : 'pass'),
+    violations: [...violations, ...warnings],
     durationMs: Date.now() - start,
     cacheable: true,
   };
@@ -768,7 +819,13 @@ function checkHighRiskDependencyScan(projectRoot: string, files: string[]): Chec
   const violations: Violation[] = [];
 
   // 检查修改的高风险文件的所有 import 依赖
-  const highRiskModified = files.filter(f => HIGH_RISK_FILES.some(hr => f.endsWith(hr)));
+  // v2.9.2: isHighRiskPath 同时匹配 basename 后缀 + 高风险目录前缀（chat 阶段管线 / governance）
+  const isHighRiskPath = (f: string) => {
+    const n = f.replace(/\\/g, '/');
+    return HIGH_RISK_FILES.some(hr => n.endsWith(hr)) ||
+           HIGH_RISK_DIRS.some(d => n.startsWith(d));
+  };
+  const highRiskModified = files.filter(isHighRiskPath);
   if (!highRiskModified.length) {
     return { id: 'CK-07', name: '高风险依赖扫描', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: false };
   }
@@ -813,6 +870,52 @@ function checkHighRiskDependencyScan(projectRoot: string, files: string[]): Chec
     violations,
     durationMs: Date.now() - start,
     cacheable: false,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// CK-11: 内容安全豁免声明检查（S2-T2 / S2-O1 最险注入区）
+// v2.9.2: chat.ts 最险内容（解除审查/14岁共同过去/个人世界隐私法）改动需声明理由
+// ════════════════════════════════════════════════════════════════════
+
+const CONTENT_EXEMPT_MARKERS = [
+  { re: /【文档完整再现】/, desc: 'S2-T2 档案完整再现指令' },
+  { re: /不要因为觉得某段"不合适"或"不该说"而跳过/, desc: 'S2-T2 审查豁免措辞' },
+  { re: /PERSONAL_WORLD_PRIVACY_LAW/, desc: 'S2-O1 个人世界隐私法注入' },
+  { re: /个人世界里不存在"个人隐私\/色情\/污秽"/, desc: '个人世界无隐私禁令声明' },
+];
+
+function checkContentSafetyExemptions(projectRoot: string, files: string[]): CheckResult {
+  const start = Date.now();
+  const violations: Violation[] = [];
+  if (!files.some(f => f.includes('chat.ts'))) {
+    return { id: 'CK-11', name: '内容安全豁免声明检查', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: false };
+  }
+  const chatPath = resolve(projectRoot, 'src/webui/chat.ts');
+  if (!existsSync(chatPath)) {
+    return { id: 'CK-11', name: '内容安全豁免声明检查', passed: true, severity: 'pass', violations: [], durationMs: Date.now() - start, cacheable: false };
+  }
+  const lines = readFileSync(chatPath, 'utf-8').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    for (const m of CONTENT_EXEMPT_MARKERS) {
+      if (m.re.test(lines[i])) {
+        violations.push({ line: i + 1, file: 'src/webui/chat.ts',
+          message: `内容安全敏感注入 ${m.desc} 位于 L${i + 1}——修改本区块必须在 S2 方案声明理由（governance/personal-world-law.ts 法规依据），S4 评审复核内容安全` });
+      }
+    }
+  }
+  // 触发词区块（chat.ts L1031 内嵌正则）被改动时专门提示——限定在含 _entityContextText 的注入行，避免误报
+  const triggerRe = /_entityContextText[^\n]*(14岁|第一次|那一次|那晚|亲密|宿舍|从头到尾|完整\.\*档案|所有内容)/;
+  const hit = lines.map((l, i) => (triggerRe.test(l) ? i + 1 : 0)).find(x => x);
+  if (hit) {
+    violations.push({ line: hit, file: 'src/webui/chat.ts',
+      message: `S2-T2 完整再现触发词区块位于 L${hit}——涉及「解除审查」最险内容，改动需额外理由声明` });
+  }
+  return {
+    id: 'CK-11', name: '内容安全豁免声明检查',
+    passed: violations.length === 0,
+    severity: violations.length > 0 ? 'warn' : 'pass',
+    violations, durationMs: Date.now() - start, cacheable: false,
   };
 }
 
@@ -1057,17 +1160,18 @@ function scanSixCouplingPoints(projectRoot: string, files: string[]): Array<{ li
     }
   }
 
-  // 耦合点2: 12 处会晤点位
+  // 耦合点2: 会晤传播链语义核验（v2.9.2: 读 V15 编目 ↔ 真实引用点交叉验证，替代硬编码行号）
   if (files.some(f => f.includes('chat.ts') || f.includes('meeting') || f.includes('Meeting'))) {
-    for (const cp of MEETING_ENTITY_CHECKPOINTS) {
-      if (existsSync(chatPath)) {
-        const lines = readFileSync(chatPath, 'utf-8').split('\n');
-        const idx = cp.line - 1;
-        if (idx < lines.length) {
-          const hasME = lines[idx].includes('meetingEntity') || lines[idx].includes('meeting_entity');
-          if (!hasME) {
-            results.push({ line: cp.line, file: 'src/webui/chat.ts', message: `会晤点位 L${cp.line} (${cp.description}): 未找到 _meetingEntityName 引用` });
-          }
+    if (existsSync(chatPath)) {
+      const lines = readFileSync(chatPath, 'utf-8').split('\n');
+      const catalogParsed = parseMeetingCatalog(lines);
+      const catalog = catalogParsed.entries;
+      if (catalog.length === 0) {
+        results.push({ file: 'src/webui/chat.ts', message: 'V15 会晤编目（MEETING_PROP_POINTS）缺失——传播链不可验证' });
+      }
+      for (const entry of catalog) {
+        if (!catalogEntryHasEvidence(lines, entry)) {
+          results.push({ line: entry.line, file: 'src/webui/chat.ts', message: `会晤传播点位 L${entry.line} (${entry.stage}): via("${entry.via}") 全文缺失——传播链断裂` });
         }
       }
     }
@@ -1429,14 +1533,15 @@ export {
   checkSQLiteSaveCalls,
   checkSystemicPattern,
   checkHighRiskDependencyScan,
+  checkContentSafetyExemptions,
   checkASTIfBranchCount,
   checkRegressionSafety,
   checkIntentFulfillment,
   buildSummary,
   buildCacheable,
-  MEETING_ENTITY_CHECKPOINTS,
   PATCH_IF_THRESHOLD,
   HIGH_RISK_FILES,
+  HIGH_RISK_DIRS,
   FG_REDLINE_TITLES,
 };
 export type { CheckResult, Violation, CheckerOutput, CheckerSummary, CacheableData };

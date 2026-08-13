@@ -77,7 +77,7 @@ export {
   checkASTIfBranchCount,
   checkRegressionSafety,
   checkIntentFulfillment,
-  MEETING_ENTITY_CHECKPOINTS,
+  checkContentSafetyExemptions,
   PATCH_IF_THRESHOLD,
   HIGH_RISK_FILES,
   FG_REDLINE_TITLES,

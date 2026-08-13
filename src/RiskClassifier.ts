@@ -18,6 +18,8 @@ const HIGH_RISK_FILES: ReadonlySet<string> = new Set([
   'src/webui/server.ts',
   'src/m5/DeepSeekLLMProvider.ts',
   'src/engine/tianquan/prefrontal/PrefrontalCortex.ts',
+  // v2.9.2: 内容豁免总开关（personal-world-law.ts）升 high——改动强制全流程，永不 free 模式
+  'src/governance/personal-world-law.ts',
 ]);
 
 /** 🟡 中风险模式——匹配以下路径模式 */
@@ -28,6 +30,7 @@ const MID_RISK_PATTERNS: readonly RegExp[] = [
   /^src\/app\/vault\/VaultManager/,
   /^src\/m4\/household\/EntityMeeting/,
   /^src\/webui\/chat\/MeetingContextPipeline/,
+  /^src\/webui\/chat\//,   // v2.9.2: chat 阶段管线（retrieval-stage/persistence-stage 等雷区）mid
   /^src\/m4\/household\/UUIDGatekeeper/,
   /^src\/m2\/ConversationDB/,
   /^src\/m2\/FusionStorageAdapter/,

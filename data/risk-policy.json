@@ -15,7 +15,8 @@
     "src/m4/household/FamilyGraph.ts",
     "src/m4/household/UUIDGatekeeper.ts",
     "src/m5/DeepSeekLLMProvider.ts",
-    "src/engine/tianquan/prefrontal/PrefrontalCortex.ts"
+    "src/engine/tianquan/prefrontal/PrefrontalCortex.ts",
+    "src/governance/personal-world-law.ts"
   ],
 
   "high_risk_dirs": [
@@ -27,7 +28,9 @@
     "src/app/knowledge/",
     "src/app/role/",
     "src/app/fg/",
-    "src/hooks/"
+    "src/hooks/",
+    "src/webui/chat/",
+    "src/governance/"
   ],
 
   "harness_self_protect": [

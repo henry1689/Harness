@@ -66,6 +66,9 @@ const HIGH_RISK_PATTERNS = [
   // （修正 A: 原 HIGH_RISK 只精确匹配 scripts/harness-gate.cjs 一个，fix-kb-gates 等无令牌 commit）
   /^scripts\//,
   /^src\/.*\.(cjs|mjs)$/,
+  // v2.9.2: 关键问题点 — chat 阶段管线 + governance 内容豁免总开关 commit 需 token
+  /^src\/webui\/chat\//,
+  /^src\/governance\//,
 ];
 
 // ============================================================================

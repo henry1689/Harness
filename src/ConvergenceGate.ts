@@ -37,6 +37,7 @@ import {
   checkASTIfBranchCount,
   checkRegressionSafety,
   checkIntentFulfillment,
+  checkContentSafetyExemptions,
 } from './main_harness_checker.js';
 import type { CheckResult } from './main_harness_checker.js';
 
@@ -241,7 +242,7 @@ function runCKChecks(projectRoot: string, files: string[], globalMemo?: string, 
     { id: 'CK-02', name: 'PFC薄调度', fn: () => checkPFCThinScheduler(projectRoot, files) },
     { id: 'CK-03', name: 'FG户籍规范', fn: () => checkFGHouseholdSpec(projectRoot, files) },
     { id: 'CK-04', name: 'UUID全链路标注', fn: () => checkUUIDAnnotationChain(projectRoot, files) },
-    { id: 'CK-05', name: '12处会晤点', fn: () => checkMeetingEntityPoints(projectRoot, files) },
+    { id: 'CK-05', name: '会晤传播链语义核验', fn: () => checkMeetingEntityPoints(projectRoot, files) },
     { id: 'CK-06', name: 'SQLite save()调用', fn: () => checkSQLiteSaveCalls(projectRoot, files) },
     // v2.6: CK-06.5 举一反三 — 豁免文件不贡献特征，也排除在搜索命中之外（extraExclude）
     { id: 'CK-06.5', name: '举一反三', fn: () => checkSystemicPattern(projectRoot, hasExempt ? nonExemptFiles : files, hasExempt ? exemptFiles : undefined) },
@@ -250,6 +251,8 @@ function runCKChecks(projectRoot: string, files: string[], globalMemo?: string, 
     { id: 'CK-08', name: '补丁嗅探', fn: () => checkASTIfBranchCount(projectRoot, hasExempt ? nonExemptFiles : files) },
     { id: 'CK-09', name: '回归安全', fn: () => checkRegressionSafety(projectRoot, files) },
     { id: 'CK-10', name: '意图达成', fn: () => checkIntentFulfillment(projectRoot, files, globalMemo) },
+    // v2.9.2: CK-11 内容安全豁免声明检查（S2-T2 最险注入区）
+    { id: 'CK-11', name: '内容安全豁免声明', fn: () => checkContentSafetyExemptions(projectRoot, files) },
   ];
 
   for (const ck of CK_DEFS) {

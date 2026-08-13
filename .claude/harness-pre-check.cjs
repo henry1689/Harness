@@ -55,12 +55,14 @@ var HIGH_RISK = [
   'src/m2/FusionStorageAdapter.ts', 'src/m2/ConversationDB.ts',
   'src/webui/chat/ChatEntry.ts', 'src/webui/chat/MeetingContextPipeline.ts',
   'src/webui/chat/retrieval.ts',
+  'src/webui/chat/',   // v2.9.2: chat 阶段管线（retrieval-stage/persistence-stage/long-text-retrieval 等雷区）
   'src/hooks/',
   'src/app/knowledge/KnowledgeEngine.ts', 'src/app/knowledge/KnowledgeContextBuilder.ts',
   'src/app/vault/VaultManager.ts',
   'src/app/ingestion/ConversationIngestionService.ts',
   'src/app/fusion/FusionEngine.ts',
   'src/app/fg/', 'src/app/role/',
+  'src/governance/',   // v2.9.2: 内容豁免总开关（personal-world-law.ts）必须受管控
 ];
 
 /* ── 低风险 ── */
@@ -510,12 +512,13 @@ function run() {
       var exemptionRecord = (typeof exemption === 'object' && exemption.record) ? exemption.record :
         { expires_at: exemption.expires_at || exemption, id: 'v1' };
       // 校验 operations：豁免未覆盖当前工具 → 直接 deny
-      if (typeof exemptionsCoreCoversOp === 'function' && !exemptionsCoreCoversOp(exemptionRecord, toolName)) {
-        archiveExemptionDeny(n, exemptionRecord, toolName);
+      // v2.9.2-fix: toolName → HOOK_TOOL_NAME（原变量未定义 → 15 次 EMERGENCY_BLOCK 崩溃）
+      if (typeof exemptionsCoreCoversOp === 'function' && !exemptionsCoreCoversOp(exemptionRecord, HOOK_TOOL_NAME)) {
+        archiveExemptionDeny(n, exemptionRecord, HOOK_TOOL_NAME);
         return { decision: 'deny',
-          reason: '[Harness] 🔒 豁免不覆盖此操作: ' + n + ' (工具 ' + toolName + ' 不在豁免 operations 内)' };
+          reason: '[Harness] 🔒 豁免不覆盖此操作: ' + n + ' (工具 ' + HOOK_TOOL_NAME + ' 不在豁免 operations 内)' };
       }
-      archiveExemptionUse(n, exemptionRecord, { tool: toolName, deferred: true });
+      archiveExemptionUse(n, exemptionRecord, { tool: HOOK_TOOL_NAME, deferred: true });
       console.error('[Harness] 🔑 EXEMPTION(deferred): ' + n + ' — 豁免期内但【仍需流水线令牌】(至 ' + new Date(exemptionRecord.expires_at).toLocaleTimeString('zh-CN') + ')');
       return { decision: 'deny',
         reason: '[Harness] 🔒 豁免不替代流水线令牌: ' + n + ' — 文件在豁免期内(' + (exemptionRecord.reason || 'v1豁免') + ')，但豁免只放宽指定检查，仍需 token。请调 harness_run_flow 并传 exempt_files 包含此文件。' };
