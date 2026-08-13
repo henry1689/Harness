@@ -206,6 +206,28 @@ async function processFileChange(filePath, isBatchAlert) {
     // v2.9: dist/ 走哈希基线自愈（不走 token/回滚——dist 是 untracked，git 回滚会删合法产物）
     const _normPath = String(filePath).replace(/\\/g, '/');
     if (_normPath.startsWith('dist/')) {
+      // v2.9.2-fix: 批量构建检测——wenstar-cc 正常 npm run build(tsc) 会写入数百个 dist 文件，
+      // 每个都 spawn dist-baseline --verify 会反复启动子进程（闪屏爆发）。30s 内 dist 变更 ≥10 个
+      // 判定为构建事件 → 跳过自愈（构建是合法写入，完成后应 --refresh 更新基线而非逐文件覆写）。
+      const _distRecent = (() => {
+        try {
+          const fsx = require('fs');
+          const pathx = require('path');
+          const distDir = pathx.join(projectRoot, 'dist');
+          if (!fsx.existsSync(distDir)) return 0;
+          const cutoff = Date.now() - 30_000;
+          let n = 0;
+          for (const ent of fsx.readdirSync(distDir, { withFileTypes: true })) {
+            if (ent.isDirectory()) continue;
+            try { if (fsx.statSync(pathx.join(distDir, ent.name)).mtimeMs > cutoff) n++; } catch (_) {}
+          }
+          return n;
+        } catch (_) { return 0; }
+      })();
+      if (_distRecent >= 10) {
+        console.error(`${prefix} 🟡 dist 批量构建中(${_distRecent} 文件/30s)，跳过自愈校验（构建完成后 --refresh 更新基线）`);
+        return;
+      }
       try {
         const { spawnSync } = require('child_process');
         const r = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'scripts', 'dist-baseline.cjs'), '--verify', _normPath, '--project', projectRoot], {
