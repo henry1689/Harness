@@ -348,7 +348,8 @@ function main() {
       //   - secret 缺失 → 信任 token 文件本身（token 由 MCP 用 secret 原子写入，
       //     文件存在 + 未过期 + 覆盖文件 + 版本v2 已通过前面的检查 = MCP 已背书）
       if (tokenVerify && tokenVerify.isTokenSecretAvailable()) {
-        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong' });
+        // v2.10: 传 repoRoot 供 content_hash 校验（读文件内容比对）
+        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong', projectRoot: repoRoot });
         if (!v2Result.allowed) {
           console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
           continue;

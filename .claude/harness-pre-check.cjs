@@ -732,7 +732,8 @@ function checkPassToken(filePath, input) {
     try {
       var tv = require('../src/security/token-verify.cjs');
       if (tv.isTokenSecretAvailable()) {
-        var v2Result = tv.verifyTokenV2(token, filePath, { now: new Date(now) });
+        // v2.10: 传 projectRoot(cwd357) 供 content_hash 校验（读文件内容比对）
+        var v2Result = tv.verifyTokenV2(token, filePath, { now: new Date(now), projectRoot: cwd357 });
         if (!v2Result.allowed) {
           console.error('[Harness] Token v2 rejected: ' + v2Result.reason + ' (file: ' + filePath + ')');
           if (v2Result.reason === 'token_invalid_signature' || v2Result.reason === 'token_expired') {

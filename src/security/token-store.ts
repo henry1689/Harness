@@ -84,6 +84,7 @@ export class TokenStore {
       forbidden_paths: [...(input.forbidden_paths ?? [])],
       project_root_hash: input.project_root_hash,
       diff_scope_hash: input.diff_scope_hash,
+      content_hash: input.content_hash,
       nonce,
       consumed: false,
     };

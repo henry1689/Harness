@@ -97,7 +97,7 @@ try {
   console.error('[sentinel:client] ⚠️ Token v2 验证模块加载失败，仅支持 v1 令牌');
 }
 
-function checkTokenLocal(filePath) {
+function checkTokenLocal(filePath, projectRootForContent) {
   try {
     if (!fs.existsSync(TOKEN_DIR)) return null;
     const hash = hashCode(normalize(filePath));
@@ -113,7 +113,7 @@ function checkTokenLocal(filePath) {
         console.error('[sentinel:client] 🔴 Token v2 需要验证但 secret 不可用，拒绝令牌');
         return null;
       }
-      const result = tokenVerify.verifyTokenV2(token, filePath, { now: new Date(now) });
+      const result = tokenVerify.verifyTokenV2(token, filePath, { now: new Date(now), projectRoot: projectRootForContent });
       if (!result.allowed) {
         console.error(`[sentinel:client] 🔴 Token v2 验证失败: ${result.reason} (file: ${filePath})`);
         // 过期或签名无效 → 删除无效令牌文件
@@ -194,8 +194,8 @@ async function checkFile(filePath, opts = {}) {
   const httpResult = await checkViaHTTP(filePath);
   if (httpResult !== null) return httpResult;
 
-  // 2) 降级：直接读本地令牌文件
-  const token = checkTokenLocal(n);
+  // 2) 降级：直接读本地令牌文件（v2.10: 传 projectRoot 供 content_hash 校验）
+  const token = checkTokenLocal(n, opts.project);
   if (token) {
     // 🔴 不在此处消费令牌——令牌在 git pre-commit hook 中一次性消费。
     //    Sentinel 只负责验证令牌有效性，允许文件编辑。

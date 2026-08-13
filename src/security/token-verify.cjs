@@ -12,7 +12,7 @@
 
 'use strict';
 
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const { createHmac, createHash, timingSafeEqual } = require('node:crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -116,6 +116,7 @@ function toSigningPayload(token) {
     forbidden_paths: token.forbidden_paths || [],
     project_root_hash: token.project_root_hash,
     diff_scope_hash: token.diff_scope_hash,
+    content_hash: token.content_hash,
     nonce: token.nonce,
   };
 }
@@ -200,6 +201,7 @@ function isHighRiskPath(fp) {
  * @param {object} [opts]
  * @param {string} [opts.requireStrength] — 'strong' | 'weak'
  * @param {Date} [opts.now] — 当前时间 (测试注入)
+ * @param {string} [opts.projectRoot] — v2.10: 项目根目录（content_hash 校验需读文件）
  * @returns {{ allowed: boolean, reason: string, token?: object }}
  */
 function verifyTokenV2(token, targetFile, opts) {
@@ -256,6 +258,21 @@ function verifyTokenV2(token, targetFile, opts) {
   // 6. 高风险文件必须 strong
   if (targetFile && isHighRiskPath(targetFile) && token.token_strength !== 'strong') {
     return { allowed: false, reason: 'token_strength_insufficient_high_risk', token: token };
+  }
+
+  // 7. v2.10: content_hash 绑定——token 签发时记录的文件内容若已变化 → 拒绝（防「拿一次 token 反复改」）
+  if (targetFile && token.content_hash && opts.projectRoot) {
+    var absTarget = path.resolve(opts.projectRoot, targetFile);
+    var currentHash = null;
+    try {
+      if (fs.existsSync(absTarget)) {
+        currentHash = createHash('sha256').update(fs.readFileSync(absTarget)).digest('hex');
+      }
+    } catch (_) { currentHash = null; }
+    // 签发时文件存在（content_hash 非空），但当前文件内容不同 → 已修改
+    if (currentHash !== null && currentHash !== token.content_hash) {
+      return { allowed: false, reason: 'token_content_changed', token: token };
+    }
   }
 
   return { allowed: true, reason: 'token_v2_valid', token: token };

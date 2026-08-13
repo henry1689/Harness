@@ -329,6 +329,16 @@ mcpServer.registerTool(
         const store = new TokenStore({ tokenDir });
 
         for (const f of files) {
+          // v2.10: 签发时记录目标文件内容 hash——同文件内容变了则 token 失效（防「拿一次 token 反复改」）
+          let contentHash: string | undefined;
+          try {
+            const absF = resolve(PROJECT_ROOT, f);
+            if (existsSync(absF)) {
+              const buf = readFileSync(absF);
+              contentHash = createHash('sha256').update(buf).digest('hex');
+            }
+          } catch (_) { contentHash = undefined; }
+
           store.issueToken({
             token_strength: 'strong',
             run_id: result.run_id,
@@ -336,6 +346,7 @@ mcpServer.registerTool(
             files: [f],
             allowed_paths: [f],
             forbidden_paths: intentSpec.scope.forbidden_paths,
+            content_hash: contentHash,
           });
 
           // 🔴 P9-fix: 补绝对路径 hash 别名（治本）
@@ -807,6 +818,22 @@ async function handleSentinelCheck(req: IncomingMessage, res: ServerResponse): P
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ allowed: false, risk, reason: '令牌 UUID 不匹配', tokenFound: false }));
       return;
+    }
+
+    // v2.10: content_hash 绑定——token 签发时的文件内容若已变化 → 拒绝（防「拿一次 token 反复改」）
+    if (token.content_hash) {
+      try {
+        const absTarget = resolve(PROJECT_ROOT, filePath);
+        let currentHash: string | null = null;
+        if (existsSync(absTarget)) {
+          currentHash = createHash('sha256').update(readFileSync(absTarget)).digest('hex');
+        }
+        if (currentHash !== null && currentHash !== token.content_hash) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ allowed: false, risk, reason: '文件内容已变更（token 只对签发时内容有效，请重新运行 harness_run_flow）', tokenFound: false }));
+          return;
+        }
+      } catch (_) { /* 文件读取失败不阻断（降级放行，由签名校验兜底） */ }
     }
 
     // 令牌有效 → 返回放行（不在此处消费，由 git pre-commit hook 负责消费）

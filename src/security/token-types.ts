@@ -44,6 +44,8 @@ export interface HarnessTokenV2 {
   project_root_hash?: string;
   /** 可选：diff scope hash */
   diff_scope_hash?: string;
+  /** v2.10: 签发时目标文件内容 hash——同文件内容变了则 token 失效（防「拿一次 token 反复改」） */
+  content_hash?: string;
   /** 随机 nonce (防重放) */
   nonce: string;
   /** 是否已消费 */
@@ -75,6 +77,7 @@ export interface HarnessTokenSigningPayload {
   forbidden_paths: string[];
   project_root_hash?: string;
   diff_scope_hash?: string;
+  content_hash?: string;
   nonce: string;
 }
 
@@ -91,6 +94,8 @@ export interface IssueTokenInput {
   forbidden_paths?: string[];
   project_root_hash?: string;
   diff_scope_hash?: string;
+  /** v2.10: 签发时目标文件内容 hash（防同文件反复改） */
+  content_hash?: string;
   /** TTL 毫秒，默认 15min */
   ttl_ms?: number;
 }
@@ -133,6 +138,7 @@ export function toSigningPayload(token: HarnessTokenV2): HarnessTokenSigningPayl
     forbidden_paths: [...token.forbidden_paths],
     project_root_hash: token.project_root_hash,
     diff_scope_hash: token.diff_scope_hash,
+    content_hash: token.content_hash,
     nonce: token.nonce,
   };
 }
