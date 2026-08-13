@@ -247,12 +247,16 @@ function run() {
           if (nn4.indexOf(DEFENSE_DIR_PREFIXES[_dp]) === 0) { isDefensePrefix4 = true; break; }
         }
         if (isDefensePrefix4) {
-          isHarnessFile = true;
-          // S4-HIGH1-fix: 仅当 cwd 是 harness 目录时，这些前缀才属于 harness 自身防线代码。
-          // 原代码不置 isHarnessSelf → harness cwd 下相对路径写 mcp/scripts/sentinel/hooks
-          // 被判定为「非 harness 自身」→ 豁免可单因子放行，绕过双因子自保护。
-          if (isHarnessCwd357) isHarnessSelf = true;
-          console.error('[Harness] 🔗 cwd兜底检测: cwd=' + cwd357 + ' → 相对路径 ' + n + ' 判定为Harness管辖文件' + (isHarnessCwd357 ? ' [harness-self]' : ''));
+          // v2.9.2-fix: 只有 cwd 真含 harness 时，防线前缀才属于「harness 自身」。
+          // 原逻辑 CWD_MARKERS 混含被管控项目（wenstar-cc）→ wenstar-cc 的 src/ 文件
+          // 被误判 isHarnessFile=true → 走 LOCKDOWN/admin 而非豁免/token 路径（误伤正常开发）。
+          // wenstar-cc cwd 下 src/ 是被管控项目文件，保持 isHarnessFile=false（走豁免/流水线令牌）。
+          if (isHarnessCwd357) {
+            isHarnessFile = true;
+            isHarnessSelf = true;
+            console.error('[Harness] 🔗 cwd兜底检测[harness-self]: cwd=' + cwd357 + ' → 相对路径 ' + n + ' 判定为Harness自身文件');
+          }
+          // 被管控项目（wenstar-cc 等）cwd 下的 src/ 防线前缀 → 不是 harness 自身，交由下方 token/豁免流程处理
         } else if (isHarnessCwd357) {
           // MID-A-fix: harness 根级治理文件白名单（防线前缀之外的根级可执行/配置）
           // 用模块级 HARNESS_ROOT_FILES（isExemptionApplicable 共享，保证豁免一致性）
