@@ -398,6 +398,26 @@ function collectStatus() {
       status: fs.existsSync(path.join(HARNESS_DIR, '.claude', 'harness-pre-check.cjs')) ? 'green' : 'red',
       detail: `就绪 | ${hookAudits.length} 审计 | ${bypassCount} 绕过`,
     },
+    {
+      // v2.11: CLI 通讯入口（harness-cli.cjs）——按需命令，就绪 = 脚本存在 + 语法可执行 + 最近使用时间
+      name: 'CLI 通讯',
+      status: (() => {
+        try {
+          const cli = path.join(HARNESS_DIR, 'scripts', 'harness-cli.cjs');
+          if (!fs.existsSync(cli)) return 'red';
+          const r = require('child_process').spawnSync(process.execPath, ['--check', cli], { timeout: 8000, stdio: 'ignore' });
+          return r.status === 0 ? 'green' : 'red';
+        } catch (_) { return 'red'; }
+      })(),
+      detail: (() => {
+        try {
+          const cli = path.join(HARNESS_DIR, 'scripts', 'harness-cli.cjs');
+          if (!fs.existsSync(cli)) return '脚本缺失';
+          const mtime = fs.statSync(cli).mtimeMs;
+          return `就绪 | 安装 ${new Date(mtime).toLocaleDateString('zh-CN')} ${new Date(mtime).toLocaleTimeString('zh-CN')}`;
+        } catch (_) { return '未知'; }
+      })(),
+    },
   ];
 
   return {
