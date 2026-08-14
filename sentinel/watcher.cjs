@@ -83,29 +83,33 @@ function createWatcher(watchDir, onChange, opts = {}) {
     return false;
   }
 
-  function fileChanged(filePath) {
-    if (!shouldWatch(filePath)) return;
+  function fileChanged(absPath) {
+    if (!shouldWatch(absPath)) return;
 
-    const entry = fileState.get(filePath);
+    // 🔴 P0-fix v2 (S4 评审): key 与轮询 scanDir 统一为「相对 watchDir」路径，
+    // 但 statSync 必须用绝对路径——哨兵进程 cwd 是 HARNESS_ROOT，相对路径解析不到 watchDir 下文件。
+    const relPath = normalize(path.relative(watchDir, absPath));
+    const entry = fileState.get(relPath);
     const now = Date.now();
 
     if (entry) {
       // 防抖：同一文件在 debounceMs 内重复触发 → 重置定时器
       if (entry.timer) clearTimeout(entry.timer);
       entry.timer = setTimeout(() => {
-        const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+        const stat = fs.statSync(absPath, { throwIfNoEntry: false });
         const mtime = stat ? stat.mtimeMs : now;
         if (mtime > entry.mtime + 50) {
           entry.mtime = mtime;
-          onChange(filePath);
+          onChange(relPath);
         }
       }, debounceMs);
     } else {
-      // 首次检测
-      const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+      // 首次检测 — P9-fix 语义对齐: 运行期首见也触发 onChange（对齐 scanDir），
+      // 否则 fs.watch 先到登记 + 轮询被 mtime 闸门挡住 → 单次写入的新文件绕过 Sentinel。
+      const stat = fs.statSync(absPath, { throwIfNoEntry: false });
       const mtime = stat ? stat.mtimeMs : now;
-      fileState.set(filePath, { mtime, timer: null });
-      // 不给首次变更发回调（只有真正的修改才触发）
+      fileState.set(relPath, { mtime, timer: null });
+      if (initialScanDone) onChange(relPath);
     }
   }
 
@@ -162,9 +166,12 @@ function createWatcher(watchDir, onChange, opts = {}) {
     try {
       fsWatcher = fs.watch(watchDir, { recursive: true }, (eventType, filename) => {
         if (!filename || eventType !== 'change') return;
-        const absPath = path.join(watchDir, filename);
-        const relPath = normalize(filename);
-        if (shouldWatch(relPath)) {
+        // 🔴 P0-fix (2026-08-14): Windows fs.watch 递归回调偶发返回绝对路径，
+        // 原逻辑 path.join(watchDir, filename) 把它当相对段硬拼 → 回调拼 root 前缀后
+        // 产生 src/D:/tools/... 幽灵双前缀 → 误拦截 + 回滚失败 + 日志风暴。
+        // 统一：绝对路径直接用、相对路径才 join watchDir；fileChanged 内用绝对路径 statSync、relPath 作 key。
+        const absPath = path.isAbsolute(filename) ? filename : path.join(watchDir, filename);
+        if (shouldWatch(absPath)) {
           fileChanged(absPath);
         }
       });

@@ -396,7 +396,12 @@ for (const root of WATCH_ROOTS) {
   try {
     // MID-4-fix: watcher 回调传相对项目根的路径（root 前缀 + relPath），
     // 修复 dist 等非 src 监控根下 relPath 被误拼成 src/ 前缀导致路径错配。
-    const w = createWatcher(fullPath, (relPath) => onFileChanged(root + relPath.replace(/\\/g, '/')));
+    const w = createWatcher(fullPath, (relPath) => {
+      const p = relPath.replace(/\\/g, '/');
+      // 🔴 P0-fix 双保险 (S4 评审): 真正识别绝对路径——watcher 正常输出相对 watchDir 路径走 root+p；
+      // 万一未来有绝对路径混入，转成项目根相对路径，绝不拼出 src/D:/... 幽灵前缀。
+      onFileChanged(path.isAbsolute(p) ? path.relative(projectRoot, p) : root + p);
+    });
     w.start();
     watchers.push({ root, watcher: w });
   } catch (err) {
