@@ -387,6 +387,10 @@ const watchers = [];
 // S4 三轮评审决定: 回退 MED-3（.claude 深度监控）。
 // 原因: 引入两个 HIGH 新问题（.claude/harness 幻影前缀误判保护区 + onFileChanged 路径错拼导致轮询监控失效），
 //       且 watcher 默认排除 .claude 是防自写回滚的必要设计。.claude 防线文件保护改由 bash-write-guard 承担。
+// 🔴 v2.13-fix (2026-08-15, S2 决策 A): .claude fs.watch 实时通道重新启用（对齐轮询通道）。
+//    watcher 回调统一用 relPath 判断后，.claude root 下文件的 relPath 不再含 /.claude/ 前缀 → 实时通道激活。
+//    这是有意为之（用户裁决 A）：消除双通道不对称，.claude 钩子脚本属 T1 保护区，
+//    实时监控 + unlock/flow 令牌闭环是更强保护，非削弱。node_modules 等排除洞由 shouldWatch startsWith 补齐。
 for (const root of WATCH_ROOTS) {
   const fullPath = path.join(projectRoot, root);
   if (!fs.existsSync(fullPath)) {

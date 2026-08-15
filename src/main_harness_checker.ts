@@ -571,6 +571,63 @@ function checkMeetingEntityPoints(projectRoot: string, files: string[]): CheckRe
 // CK-06: SQLite save() 调用完整性检查
 // ════════════════════════════════════════════════════════════════════
 
+// ── CK-06 辅助层 (v2.13-fix 2026-08-15) ──
+// 重构 CK-06 检测为单遍 O(n) 状态机，消除 19 个误报。
+// 核心: 方法开始 = 行首签名 + 括号归0 + 行尾{；方法结束 = 花括号配平（嵌套块不误判）；
+//       词法清洗剥离字符串/注释/模板保证括号计数可靠；保守优先（宁可漏检不误报）。
+
+interface LexState { blockComment: boolean; template: boolean; str: "'" | '"' | null; }
+
+/** 跨行有状态词法清洗：把字符串/模板/注释内容替换为空格（保持长度），返回"纯代码" */
+function cleanCode(line: string, st: LexState): { clean: string; st: LexState } {
+  const out: string[] = new Array(line.length).fill(' ');
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i], n = line[i + 1];
+    if (st.str) {
+      if (c === '\\') { i += 2; continue; }
+      if (c === st.str) st.str = null;
+      i++; continue;
+    }
+    if (st.blockComment) {
+      if (c === '*' && n === '/') { st.blockComment = false; i += 2; continue; }
+      i++; continue;
+    }
+    if (st.template) {
+      if (c === '`') st.template = false;
+      i++; continue;
+    }
+    if (c === '/' && n === '/') break;
+    if (c === '/' && n === '*') { st.blockComment = true; i += 2; continue; }
+    if (c === '`') { st.template = true; i++; continue; }
+    if (c === "'" || c === '"') { st.str = c; i++; continue; }
+    out[i] = c; i++;
+  }
+  return { clean: out.join(''), st };
+}
+
+function braceDelta(code: string): number {
+  let n = 0;
+  for (const ch of code) { if (ch === '{') n++; else if (ch === '}') n--; }
+  return n;
+}
+function parenDelta(code: string): number {
+  let n = 0;
+  for (const ch of code) { if (ch === '(') n++; else if (ch === ')') n--; }
+  return n;
+}
+
+const METHOD_SIG_RE = /^\s*(?:(?:private|public|protected|async|static|readonly|export|function)\s+)*([A-Za-z_$][\w$]*)\s*\(/;
+const WRITE_METHOD_NAME_RE = /^(insert|update|delete|write|save|store|persist|upsert)/;
+const PERSIST_PRIMITIVES = new Set(['save', 'scheduleFlush', 'flush', 'flushNow', 'shutdownFlush']);
+const BLOCK_OPEN_RE = /\{\s*$/;
+const PERSIST_SIGNALS = ['.save()', 'scheduleFlush', '.flush()', '.export()'];
+const DELEGATE_SIGNALS = ['.write(', '.writeRaw(', '.writeMemory('];
+
+function hasPersistSignal(raw: string): boolean {
+  return PERSIST_SIGNALS.some(s => raw.includes(s)) || DELEGATE_SIGNALS.some(s => raw.includes(s));
+}
+
 function checkSQLiteSaveCalls(projectRoot: string, files: string[]): CheckResult {
   const start = Date.now();
   const violations: Violation[] = [];
@@ -591,42 +648,60 @@ function checkSQLiteSaveCalls(projectRoot: string, files: string[]): CheckResult
     const content = readFileSync(absPath, 'utf-8');
     const lines = content.split('\n');
 
-    // 检查每个写入方法是否包含 save/flush 调用
-    let inWriteMethod = false;
-    let methodStartLine = 0;
-    let hasSaveCall = false;
+    // 单遍 O(n) 状态机 (v2.13-fix 2026-08-15): 括号配平替代逐行正则，消除嵌套 } 误判 / 调用行误当方法开始
+    let inMethod = false, methodStartLine = 0, hasSave = false, depth = 0, bodyLines = 0;
+    let sigName: string | null = null, sigStartLine = 0, sigParens = 0, sigLines = 0;
+    const lex: LexState = { blockComment: false, template: false, str: null };
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
+      const raw = lines[i];
+      const { clean } = cleanCode(raw, lex);
 
-      // 检测写入方法开始
-      if (/(?:async\s+)?(?:insert|update|delete|write|save|store|persist|upsert)\w*\s*\(/.test(line) && !isCommentLine(lines[i])) {
-        inWriteMethod = true;
-        methodStartLine = i + 1;
-        hasSaveCall = false;
-        continue;
-      }
-
-      // 检测方法结束
-      if (inWriteMethod && line === '}' && !lines[i].startsWith('  ')) {
-        continue; // 可能只是内部块结束
-      }
-      if (inWriteMethod && /^\s*\}\s*$/.test(line) && i - methodStartLine > 1) {
-        // 简单判断方法结束
-        if (!hasSaveCall) {
-          violations.push({
-            line: methodStartLine,
-            file,
-            message: `写入方法无防抖落盘调用: 从行 ${methodStartLine} 开始的方法缺少 .save()/scheduleFlush() 调用`,
-          });
+      // 模式1: 方法体内
+      if (inMethod) {
+        if (hasPersistSignal(raw)) hasSave = true;
+        depth += braceDelta(clean);
+        if (depth <= 0) { // 括号配平归0 = 方法结束（嵌套块闭合 } 深度>0 不触发）
+          if (depth === 0 && bodyLines > 0 && !hasSave) {
+            violations.push({
+              line: methodStartLine,
+              file,
+              message: `写入方法无防抖落盘调用: 从行 ${methodStartLine} 开始的方法缺少 .save()/scheduleFlush() 调用`,
+            });
+          }
+          inMethod = false; depth = 0; hasSave = false; bodyLines = 0;
         }
-        inWriteMethod = false;
+        if (inMethod && clean.trim().length > 0) bodyLines++;
         continue;
       }
 
-      // 检查是否有 save/flush 调用
-      if (inWriteMethod && (line.includes('.save()') || line.includes('scheduleFlush') || line.includes('.flush()'))) {
-        hasSaveCall = true;
+      // 模式2: 多行签名续行确认
+      if (sigName) {
+        if (++sigLines > 50) { sigName = null; sigParens = 0; continue; }
+        sigParens += parenDelta(clean);
+        if (sigParens > 0) continue;
+        if (BLOCK_OPEN_RE.test(clean.trim())) {
+          inMethod = true; depth = 1; hasSave = false; bodyLines = 0;
+          methodStartLine = sigStartLine;
+        }
+        sigName = null; sigParens = 0;
+        continue;
+      }
+
+      // 模式0: 探测方法签名候选（行首签名 + 括号归0 + 行尾{ 才确认，排除 this.write()/writeFileSync()/updateDynamics() 等调用）
+      const m = METHOD_SIG_RE.exec(clean);
+      if (m && WRITE_METHOD_NAME_RE.test(m[1]) && !PERSIST_PRIMITIVES.has(m[1])) {
+        const openParenIdx = m.index + m[0].length - 1;
+        const afterParen = clean.slice(openParenIdx + 1);
+        const p = 1 + parenDelta(afterParen);
+        if (p === 0) {
+          if (BLOCK_OPEN_RE.test(afterParen)) {
+            inMethod = true; depth = 1; hasSave = false; bodyLines = 0;
+            methodStartLine = i + 1;
+          }
+        } else if (p > 0) {
+          sigName = m[1]; sigStartLine = i + 1; sigParens = p; sigLines = 0;
+        }
       }
     }
   }

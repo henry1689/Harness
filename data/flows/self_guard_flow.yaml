@@ -174,6 +174,7 @@ stages:
     gate_type: condition
     next_stage_pass: S2_Solution_Design
     next_stage_reject: END
+    runner_mode: local
 
   # ==================== S2 方案设计（🔴 唯一人工确认节点） ====================
   - stage_id: S2_Solution_Design
@@ -217,6 +218,7 @@ stages:
       run_modify_script: false
     gate_type: human
     next_stage: S3_Code_Implement
+    runner_mode: local
 
   # ==================== S3 编码落地（自动流转+编译回流） ====================
   - stage_id: S3_Code_Implement
@@ -244,6 +246,7 @@ stages:
     gate_type: condition
     next_stage_pass: S4_SelfReview
     next_stage_reject: S3_Code_Implement
+    runner_mode: local
 
   # ==================== S4 SelfReview 机器评审（🔴 SG-R10+SG-R13 强制执行） ====================
   - stage_id: S4_SelfReview
@@ -317,6 +320,7 @@ stages:
     gate_type: condition
     next_stage_pass: S6_Compatibility_Check
     next_stage_reject: S3_Code_Implement
+    runner_mode: local
 
   # ==================== S6 兼容性校验（自动回流） ====================
   - stage_id: S6_Compatibility_Check
@@ -348,6 +352,7 @@ stages:
     gate_type: condition
     next_stage_pass: S7_Archive
     next_stage_reject: S3_Code_Implement
+    runner_mode: local
 
   # ==================== S7 归档闭环 + Token 签发 ====================
   - stage_id: S7_Archive
@@ -384,3 +389,4 @@ stages:
     gate_type: condition
     next_stage_pass: END
     next_stage_reject: S3_Code_Implement
+    runner_mode: local

@@ -68,9 +68,10 @@ function createWatcher(watchDir, onChange, opts = {}) {
 
   function shouldWatch(filePath) {
     const n = normalize(filePath);
-    // 忽略目录
+    // 忽略目录（v2.13-fix: 补 startsWith 相对路径头匹配——relPath 如 node_modules/x.ts 开头即排除，
+    // 防 fs.watch 通道在相对路径下把 node_modules 等嵌套文件漏放行）
     for (const dir of excludeDirs) {
-      if (n.includes('/' + dir + '/') || n.endsWith('/' + dir)) return false;
+      if (n.startsWith(dir + '/') || n.includes('/' + dir + '/') || n.endsWith('/' + dir)) return false;
     }
     // 忽略测试文件
     for (const suffix of IGNORE_SUFFIXES) {
@@ -84,11 +85,12 @@ function createWatcher(watchDir, onChange, opts = {}) {
   }
 
   function fileChanged(absPath) {
-    if (!shouldWatch(absPath)) return;
-
     // 🔴 P0-fix v2 (S4 评审): key 与轮询 scanDir 统一为「相对 watchDir」路径，
     // 但 statSync 必须用绝对路径——哨兵进程 cwd 是 HARNESS_ROOT，相对路径解析不到 watchDir 下文件。
     const relPath = normalize(path.relative(watchDir, absPath));
+    // 🔴 v2.13-fix: 排除判断用 relPath（.claude 是 excludeDirs，若用 absPath 则 .claude root 下
+    // 所有文件的绝对路径都含 /.claude/ 子串 → 被排除 → .claude 实时通道全失效）
+    if (!shouldWatch(relPath)) return;
     const entry = fileState.get(relPath);
     const now = Date.now();
 
@@ -169,11 +171,10 @@ function createWatcher(watchDir, onChange, opts = {}) {
         // 🔴 P0-fix (2026-08-14): Windows fs.watch 递归回调偶发返回绝对路径，
         // 原逻辑 path.join(watchDir, filename) 把它当相对段硬拼 → 回调拼 root 前缀后
         // 产生 src/D:/tools/... 幽灵双前缀 → 误拦截 + 回滚失败 + 日志风暴。
-        // 统一：绝对路径直接用、相对路径才 join watchDir；fileChanged 内用绝对路径 statSync、relPath 作 key。
+        // 统一：绝对路径直接用、相对路径才 join watchDir；fileChanged 内用绝对路径 statSync、relPath 作 key 并统一判断。
+        // v2.13-fix: 排除判断统一在 fileChanged 内用 relPath 做（.claude root 下 absPath 恒含 /.claude/ 会自排除）
         const absPath = path.isAbsolute(filename) ? filename : path.join(watchDir, filename);
-        if (shouldWatch(absPath)) {
-          fileChanged(absPath);
-        }
+        fileChanged(absPath);
       });
       fsWatcher.on('error', () => { /* 静默处理 */ });
     } catch (_) {
