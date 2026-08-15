@@ -180,5 +180,25 @@ module.exports = {
       },
       kill_timeout: 3000,
     },
+    {
+      // 🛡️ Agent 进程行为管控 — 自动识别并终止失控 Agent（高频 spawn 弹窗的 claude.exe 进程树）
+      // 补齐「进程行为」管控维度：文件写入由 Hook/Sentinel 管，进程 spawn 由本守护进程管。
+      name: 'harness-agent-guard',
+      script: 'scripts/agent-guard.cjs',
+      cwd: HARNESS_ROOT,
+      interpreter: 'node',
+      autorestart: true,
+      max_restarts: 5,
+      restart_delay: 3000,
+      listen_timeout: 3000,
+      error_file: path.join(HARNESS_ROOT, 'data', 'logs', 'agent-guard-error.log'),
+      out_file: path.join(HARNESS_ROOT, 'data', 'logs', 'agent-guard-out.log'),
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs: true,
+      env: {
+        NODE_ENV: 'production',
+      },
+      kill_timeout: 3000,
+    },
   ],
 };

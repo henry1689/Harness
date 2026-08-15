@@ -418,6 +418,26 @@ function collectStatus() {
         } catch (_) { return '未知'; }
       })(),
     },
+    {
+      // v2.14: Agent 进程行为管控（agent-guard.cjs）——自动识别并终止失控 Agent
+      name: 'Agent 管控',
+      status: (() => {
+        try {
+          const hb = readJSON(path.join(DATA_DIR, 'agent-guard-heartbeat.json'), null);
+          if (!hb) return 'red';
+          const age = (Date.now() - hb.ts) / 1000;
+          return age < 30 ? 'green' : 'red';
+        } catch (_) { return 'red'; }
+      })(),
+      detail: (() => {
+        try {
+          const hb = readJSON(path.join(DATA_DIR, 'agent-guard-heartbeat.json'), null);
+          if (!hb) return '未部署';
+          const mode = hb.mode === 'dry-run' ? 'DRY-RUN' : 'LIVE';
+          return `${hb.agents} Agent 监控中 | ${hb.killCountToday} 今日终止 | ${mode}`;
+        } catch (_) { return '未知'; }
+      })(),
+    },
   ];
 
   return {
