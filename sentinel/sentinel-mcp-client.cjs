@@ -207,7 +207,7 @@ async function checkFile(filePath, opts = {}) {
   const httpResult = await checkViaHTTP(filePath);
   if (httpResult !== null) return httpResult;
 
-  // 2) 降级：直接读本地令牌文件（v2.10: 传 projectRoot 供 content_hash 校验）
+  // 2) 降级：直接读本地令牌文件（v2.11: 不传 projectRoot，content_hash 仅由 pre-check 修改前校验）
   const token = checkTokenLocal(n, opts.project);
   if (token) {
     // 🔴 不在此处消费令牌——令牌在 git pre-commit hook 中一次性消费。
