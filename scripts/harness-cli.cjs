@@ -28,7 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawnSync, execSync } = require('child_process');
 
 const HARNESS_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(HARNESS_DIR, 'data');
@@ -294,14 +294,23 @@ function cmdWebui() {
 function cmdPm2() {
   const sub = args[1];
   const app = args[2];
+  // pm2 全局安装，Windows 下 spawnSync('npx', shell:false) 会 ENOENT（npx 是 .cmd）→ 用 execSync
+  // 与 harness 现有模式一致（pm2-recover.cjs / harness-watchdog.cjs 均用 execSync('pm2 ...')）
+  let cmd;
   if (sub === 'status') {
-    const r = run('npx', HARNESS_DIR, ['pm2', 'status'], 30000);
-    console.log(r.stdout || r.stderr || '');
-  } else if (['start', 'restart', 'stop'].includes(sub) && app) {
-    const r = run('npx', HARNESS_DIR, ['pm2', sub, app], 30000);
-    console.log(r.stdout || r.stderr || '');
+    cmd = 'pm2 status';
+  } else if (['start', 'restart', 'stop'].includes(sub) && app && /^[a-zA-Z0-9_-]+$/.test(app)) {
+    // start 走 ecosystem 范式（pm2 start ecosystem.config.cjs --only <app>），app 白名单防注入
+    cmd = sub === 'start' ? `pm2 start ecosystem.config.cjs --only ${app}` : `pm2 ${sub} ${app}`;
   } else {
     console.error('❌ pm2 用法: status | start|restart|stop <app>');
+    process.exit(1);
+  }
+  try {
+    const out = execSync(cmd, { encoding: 'utf-8', timeout: 30000, cwd: HARNESS_DIR, windowsHide: true });
+    console.log(out);
+  } catch (e) {
+    console.error((e.stdout || '') + (e.stderr || '') || e.message);
     process.exit(1);
   }
 }
