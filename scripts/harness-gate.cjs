@@ -348,8 +348,10 @@ function main() {
       //   - secret 缺失 → 信任 token 文件本身（token 由 MCP 用 secret 原子写入，
       //     文件存在 + 未过期 + 覆盖文件 + 版本v2 已通过前面的检查 = MCP 已背书）
       if (tokenVerify && tokenVerify.isTokenSecretAvailable()) {
-        // v2.10: 传 repoRoot 供 content_hash 校验（读文件内容比对）
-        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong', projectRoot: repoRoot });
+        // v2.11: 不传 projectRoot → content_hash 校验跳过。gate 是「提交前」时序，
+        // content_hash(签发时内容) 此时必然不匹配 → 合法 commit 被拦（v2.10 时序缺陷）。
+        // content_hash 仅由 pre-check（修改前 hook）校验——那里才能区分第一次/反复修改。
+        const v2Result = tokenVerify.verifyTokenV2(token, stagedFile, { requireStrength: 'strong' });
         if (!v2Result.allowed) {
           console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
           continue;
