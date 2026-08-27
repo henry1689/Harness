@@ -316,10 +316,15 @@ mcpServer.registerTool(
     // v2.9: 传 exempt_files 给 S4.5 — 豁免文件只放宽复杂度收敛，S1/S2/S5/S6/S7 全量保留
     // MID-2-fix: 原地挂载（不浅拷贝）——ConvergenceGate 内 state.convergence_round 原地自增，
     // 浅拷贝会让收敛轮次停滞在 round=1（人工转交/HARD_LOCKOUT 失效）。
-    if (Array.isArray(exempt_files) && exempt_files.length > 0) {
-      state.s4_exempt_files = exempt_files;
-    }
-    delegateFnMap.set('S4.5_Convergence_Gate', async (stage: any, st: any) => convergenceEvaluate(stage, st));
+    // v2.11-fix: 原实现直接引用 `state` 但本函数作用域内未定义（mcp/ 不在 tsconfig include，
+    // tsc 抓不到）→ 非空 exempt_files 时抛 ReferenceError，S4.5 无法闭环。改为在 delegate
+    // 处理器内用 FlowEngine 传入的 st（真实 state 引用）原地挂载，语义不变。
+    delegateFnMap.set('S4.5_Convergence_Gate', async (stage: any, st: any) => {
+      if (Array.isArray(exempt_files) && exempt_files.length > 0) {
+        st.s4_exempt_files = exempt_files;
+      }
+      return convergenceEvaluate(stage, st);
+    });
 
     const engine = new FlowEngine({
       delegateReviewFn: async (stage: any, state: any) => review(stage, state),
