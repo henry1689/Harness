@@ -281,11 +281,10 @@ mcpServer.registerTool(
     const trivial = isTrivialChange(msg, files, PROJECT_ROOT);
 
     // P5: ProjectBrain — 构建 IntentSpec 用于 DiffScopeGuard
+    // v2.11: buildIntentSpec 接口无 files/projectRoot 字段且内部不使用（死参数）→ 去掉，修 TS2353
     const intentSpec = buildIntentSpec({
       title: msg?.slice(0, 80) || 'Unnamed intent',
       description: msg || '',
-      files,
-      projectRoot: PROJECT_ROOT,
     });
     console.error(`[harness-mcp] IntentSpec: ${intentSpec.id} | risk: ${risk} | scope: ${intentSpec.scope.allowed_paths.length} allowed, ${intentSpec.scope.forbidden_paths.length} forbidden`);
 
@@ -587,10 +586,10 @@ mcpServer.registerTool(
           success: true,
           generated_at: rules.generated_at,
           run_count: rules.run_count,
-          risk_reviews: (rules.risk_reviews || []).map(r => ({
+          risk_reviews: (rules.risk_reviews || []).map((r: any) => ({
             file: r.file, rejectCount: r.rejectCount, mainCause: r.mainCause, suggestion: r.suggestion,
           })),
-          behavior_hints: (rules.behavior_hints || []).map(h => ({
+          behavior_hints: (rules.behavior_hints || []).map((h: any) => ({
             file: h.file, rejectCount: h.rejectCount, runCount: h.runCount, suggestion: h.suggestion,
           })),
           standard_suggestions: rules.standard_suggestions || [],
@@ -629,6 +628,7 @@ mcpServer.registerTool(
 	      expires_at: Date.now() + 30 * 60 * 1000,
 	      consumed: false,
 	      source: 'mcp-api',
+	      sig: '', // v2.11: 预置字段修 TS2339（对象字面量缺 sig，后续赋值报错）
 	    };
 	    // 🔴 S2-安全收紧 ②: 解锁令牌 HMAC 签名（与 harness-unlock.cjs 一致），防 Agent 伪造解锁文件
 	    token.sig = signUnlockToken(token);
