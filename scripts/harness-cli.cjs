@@ -9,6 +9,8 @@
  *   node scripts/harness-cli.cjs status                    # 防线状态
  *   node scripts/harness-cli.cjs exempt list               # 豁免列表
  *   node scripts/harness-cli.cjs exempt add <file> --project <根> --minutes N --reason "..." [--ops a,b] [--relaxed a,b]  # 豁免签发(走密码)
+ *   node scripts/harness-cli.cjs owner-closure issue <manifest.json> --project <根> --minutes N --password <密码>
+ *   node scripts/harness-cli.cjs owner-closure list
  *   node scripts/harness-cli.cjs unlock status|lock        # harness 自身解锁状态/锁定
  *   node scripts/harness-cli.cjs token verify <file> --project <根>  # token 校验
  *   node scripts/harness-cli.cjs token list                # token 列表
@@ -121,8 +123,19 @@ function cmdExempt() {
   if (sub === 'list') {
     const map = ec.loadExemptions();
     const list = [];
-    for (const [k, rec] of map) list.push({ file: k, expires_at: ec.getExpiry(rec), reason: rec.reason || '' });
-    print({ count: list.length, exemptions: list }, list.length === 0 ? '无豁免' : list.map(x => `${x.file} | 至 ${new Date(x.expires_at).toLocaleTimeString('zh-CN')} | ${x.reason || ''}`).join('\n'));
+    // B3-fix: 补输出 relaxed_checks + 剩余分钟——此前 list 只给 file/expires_at/reason，
+    // Agent 拿它自查永远看不到 relaxed_checks → 误判“--relaxed 没写入”（本会话实证过的误诊）。
+    for (const [k, rec] of map) {
+      const exp = ec.getExpiry(rec);
+      list.push({
+        file: k,
+        expires_at: exp,
+        remaining_min: Math.max(0, Math.round((exp - Date.now()) / 60000)),
+        relaxed_checks: Array.isArray(rec.relaxed_checks) ? rec.relaxed_checks : null,
+        reason: rec.reason || '',
+      });
+    }
+    print({ count: list.length, exemptions: list }, list.length === 0 ? '无豁免' : list.map(x => `${x.file} | 剩${x.remaining_min}min | ${JSON.stringify(x.relaxed_checks || [])} | ${x.reason || ''}`).join('\n'));
     return;
   }
 
@@ -150,6 +163,59 @@ function cmdExempt() {
   }
 
   console.error('❌ exempt 用法: list | add');
+  process.exit(1);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 子命令: owner-closure
+// ════════════════════════════════════════════════════════════════════
+
+function cmdOwnerClosure() {
+  const core = require('./owner-closure-core.cjs');
+  const sub = args[1];
+
+  if (sub === 'list') {
+    const records = core.listOwnerClosures();
+    const summary = records.map(record => ({
+      closure_id: record.closure_id,
+      status: record.status,
+      approval_ref: record.approval_ref,
+      expires_at: record.expires_at,
+      files: record.files.map(item => item.path),
+    }));
+    print({ count: summary.length, owner_closures: summary }, summary.length
+      ? summary.map(item => `${item.closure_id} | ${item.status} | ${item.approval_ref} | 至 ${new Date(item.expires_at).toLocaleTimeString('zh-CN')}`).join('\n')
+      : '无 owner closure');
+    return;
+  }
+
+  if (sub === 'issue') {
+    const manifestPath = args[2];
+    const project = getArg('--project') || WENSTAR_CC;
+    const minutes = parseInt(getArg('--minutes') || '15', 10) || 15;
+    const password = getArg('--password') || process.env.HARNESS_PASS || '';
+    if (!manifestPath || !password) {
+      console.error('❌ 用法: owner-closure issue <manifest.json> --project <根> --minutes N --password <密码>');
+      process.exit(1);
+    }
+    const manifest = readJSON(path.resolve(manifestPath));
+    if (!manifest) {
+      console.error('❌ manifest 不存在或不是合法 JSON');
+      process.exit(1);
+    }
+    const record = core.issueOwnerClosure({ manifest, password, projectRoot: project, minutes });
+    print({
+      closure_id: record.closure_id,
+      status: record.status,
+      expires_at: record.expires_at,
+      approval_ref: record.approval_ref,
+      files: record.files,
+      allowed_blocking_rules: record.allowed_blocking_rules,
+    }, `✅ owner closure 已签发: ${record.closure_id}（至 ${new Date(record.expires_at).toLocaleTimeString('zh-CN')}）`);
+    return;
+  }
+
+  console.error('❌ owner-closure 用法: issue <manifest.json> | list');
   process.exit(1);
 }
 
@@ -329,6 +395,9 @@ function help() {
 豁免:
   exempt list                        豁免列表
   exempt add <file> --project <根> --minutes N --reason "..." [--ops a,b] [--relaxed a,b] --password <密码>
+Owner-adopted closure:
+  owner-closure issue <manifest.json> --project <根> --minutes N --password <密码>
+  owner-closure list
 解锁:
   unlock status | lock                harness 自身解锁状态/锁定
 token:
@@ -350,6 +419,7 @@ token:
   switch (cmd) {
     case 'status': return cmdStatus();
     case 'exempt': return cmdExempt();
+    case 'owner-closure': return cmdOwnerClosure();
     case 'unlock': return cmdUnlock();
     case 'token': return cmdToken();
     case 'check': return cmdCheck();

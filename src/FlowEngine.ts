@@ -26,6 +26,8 @@ import type {
   StageResult,
   FlowRunState,
   FlowStatus,
+  TerminalEndReason,
+  HumanApprovalEvidence,
   GateResolution,
   TriggerContext,
   RunMode,
@@ -39,6 +41,7 @@ import { GlobalMemoStore } from './GlobalMemoStore.js';
 import { AuditLogger } from './AuditLogger.js';
 import { RulesLazyLoader, type SlimStageContext } from './RulesLazyLoader.js';
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 // ════════════════════════════════════════════════════════════════════
 // 类型
@@ -66,8 +69,12 @@ export interface FlowResult {
   run_id: string;
   /** 流程是否成功完成 */
   success: boolean;
-  /** 终止原因（aborted / circuit_breaker / completed） */
-  end_reason: string;
+  /** 终止原因（机器可区分，见 types.ts TerminalEndReason） */
+  end_reason: TerminalEndReason;
+  /** H0: 流水线终态（completed / aborted / free_mode）——由 state 派生，与 success/end_reason 机械一致 */
+  flow_status?: FlowStatus;
+  /** H0: 运行模式（pipeline / free）——供 token 签发 policy 校验 mode=pipeline */
+  mode?: RunMode;
   /** 各 stage 的执行结果 */
   stage_results: StageResult[];
   /** 审计日志文件路径 */
@@ -80,6 +87,11 @@ export interface FlowResult {
 // 引擎
 // ════════════════════════════════════════════════════════════════════
 
+/** H1: SHA-256 摘要（审计记录用——存哈希不存原文，防止敏感方案全文进入审计卷宗） */
+function createHash256(s: string): string {
+  return createHash('sha256').update(s ?? '').digest('hex');
+}
+
 export class FlowEngine {
   private readonly gateController: GateController;
   private readonly stageRunner: StageRunner;
@@ -89,6 +101,12 @@ export class FlowEngine {
   private state: FlowRunState | null = null;
   private _aborted = false;
   private _paused = false;
+  /** H0: 首个真实终止原因（幂等，不可被后续覆盖） */
+  private _endReason: TerminalEndReason | null = null;
+  /** H0: 终态审计事件是否已写入（每 run 仅一个 flow_complete 或 flow_abort） */
+  private _terminalLogged = false;
+  /** H1: 本次 run 的 S2 审批证据（start 时从 context 捕获，S2 注入 human_report/global memo） */
+  private _s2Evidence: HumanApprovalEvidence | null = null;
 
   constructor(options: FlowEngineOptions = {}) {
     // 🔴 自动批准模式：构造一个始终返回 'approved' 的回调
@@ -139,6 +157,10 @@ export class FlowEngine {
       this.config.global_implementation_rules,
     );
 
+    // H1: 捕获 S2 审批证据（类字段 + state 供 S4 review 匹配 confirmations）
+    this._s2Evidence = context.s2_evidence || null;
+    if (this.state) this.state.s2_evidence = context.s2_evidence;
+
     // 4. 初始化审计日志
     this.auditLogger = new AuditLogger(runId, this.config.flow_id);
     this.auditLogger.logFlowStart({
@@ -147,6 +169,13 @@ export class FlowEngine {
       modified_files: context.modifiedFiles,
       skip_s3_compile: context.skip_s3_compile === true,
     });
+    // H0: start 前 abort（auditLogger 未初始化时 abort() 无法写终态审计）→ 初始化后补记
+    if (this._endReason && !this._terminalLogged) {
+      this._terminalLogged = true;
+      if (this.state) this.state.flow_status = 'aborted';
+      const text = this._endReason === 'user_abort' ? '用户主动中止' : String(this._endReason);
+      this.auditLogger.logFlowAbort(text);
+    }
 
     console.log(`\n[FlowEngine] 🚀 流水线启动: ${this.config.flow_name} (${runId})`);
     console.log(`[FlowEngine]    风险: ${context.riskLevel} | 文件: ${context.modifiedFiles.join(', ')}`);
@@ -155,7 +184,8 @@ export class FlowEngine {
     try {
       const firstStage = this.config.stages[0].stage_id;
       await this.transitionTo(firstStage);
-      return this.buildResult(true, 'completed');
+      // H0: 由内部 state 派生终态，禁止双写——state=aborted 不可能被包装成 success=true
+      return this.deriveFinalResult();
     } catch (err) {
       return this.handleError(err);
     }
@@ -188,14 +218,66 @@ export class FlowEngine {
     // 由 GateController 的 callback 处理跳转
   }
 
-  /** 中止流水线 */
+  /** 中止流水线（幂等：终态已定即不可逆；completed 后调用不翻转、不追加审计） */
   abort(): void {
+    if (this._terminalLogged) return; // H0: 首个终态一旦确定，后续调用不得修改
     this._aborted = true;
     this._paused = false;
-    if (this.state) this.state.flow_status = 'aborted';
-    if (this.auditLogger) this.auditLogger.logFlowAbort('用户主动中止');
+    if (!this._endReason) {
+      this.recordAbort('user_abort', '用户主动中止');
+    }
     ToolWhitelistGuard.deactivate();
-    console.log('[FlowEngine] ⏹ 流水线已中止');
+    console.log(`[FlowEngine] ⏹ 流水线已中止 (${this._endReason})`);
+  }
+
+  /**
+   * H0: 统一中止记录——幂等写入终态审计。
+   * 首个真实原因保留；终态一旦确定即冻结；内部熔断不追加「用户主动中止」。
+   */
+  private recordAbort(endReason: TerminalEndReason, logText: string): void {
+    if (this._terminalLogged) return; // 终态已定（含 completed），不可逆
+    if (!this._endReason) this._endReason = endReason; // 首个真实原因不可覆盖
+    if (this.state) {
+      this.state.flow_status = 'aborted';
+      this.state.end_reason = endReason;
+    }
+    if (this.auditLogger) {
+      this._terminalLogged = true;
+      this.auditLogger.logFlowAbort(logText);
+    }
+    // auditLogger 未初始化（start 前 abort）→ 不设 _terminalLogged，由 start 初始化后补记
+  }
+
+  /**
+   * H0: 统一完成记录——幂等锁定 completed + 唯一 flow_complete。
+   * 终态已定时调用不翻转、不追加；start 前 abort 后 _terminalLogged 已置位不会走到此处。
+   */
+  private recordComplete(): void {
+    if (this._terminalLogged) return;
+    this._terminalLogged = true;
+    this._endReason = 'completed';
+    if (this.state) {
+      this.state.flow_status = 'completed';
+      this.state.end_reason = 'completed';
+    }
+    if (this.auditLogger) this.auditLogger.logFlowComplete({ total_stages: this.state?.stage_results.size ?? 0 });
+  }
+
+  /** H1: 由 S2 审批证据构造 human_report（非秘密，不含密码/token/签名） */
+  private buildEvidenceReport(ev: HumanApprovalEvidence): string {
+    return [
+      '# S2 审批证据',
+      `- approval_ref: ${ev.approval_ref}`,
+      `- approved_plan: ${ev.approved_plan}`,
+      `- change_classification: ${ev.change_classification}`,
+      `- global_architecture_decision: ${ev.global_architecture_decision}`,
+      `- confirmations: ${(ev.confirmations || []).join(', ') || '(无)'}`,
+    ].join('\n');
+  }
+
+  /** H1: 缺失 S2 审批证据时的稳定诊断（机器可区分，不泄露任何原文） */
+  static evidenceMissingDiagnostic(): string {
+    return 'S2_APPROVAL_EVIDENCE_MISSING: 未提供有效审批证据（approval_ref/approved_plan/change_classification/global_architecture_decision 均为空或纯空白）';
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -218,9 +300,7 @@ export class FlowEngine {
 
     // END 哨兵
     if (stageId === 'END') {
-      this.state.flow_status = 'completed';
-      this.state.updated_at = new Date().toISOString();
-      if (this.auditLogger) this.auditLogger.logFlowComplete({ total_stages: this.state.stage_results.size });
+      this.recordComplete(); // H0: 幂等锁定 completed + 唯一 flow_complete
       ToolWhitelistGuard.deactivate();
       console.log('[FlowEngine] ✅ 流水线完成');
       return;
@@ -270,6 +350,22 @@ export class FlowEngine {
       // 🔴 P9-fix: 把 S4.5 收敛分数（compliance_score）也写入审计，使分数可观察
       // 原来只记 resolution（passed/rejected），分数只在进程日志，用户/看板看不到
       const gateDetail = (result.machine_signal?.metrics || {}) as Record<string, unknown>;
+      // P3-fix: gate_resolve 审计附加 reject_reason 明细（前 8 条）——此前只落分数/轮次，
+      // 事后无法追溯“为何拒”（本会话 P0/P3 报告实证）。reject_reason 即 gap 标准摘要串。
+      const rejectReasons = (result.machine_signal as { reject_reason?: unknown })?.reject_reason;
+      if (Array.isArray(rejectReasons) && rejectReasons.length > 0) {
+        (gateDetail as Record<string, unknown>).reject_reason = rejectReasons.slice(0, 8);
+      }
+      // H1: S2 审批成功时附加 evidence 摘要（非秘密；approved_plan 仅存 SHA-256，不泄露原文全文）
+      if (stage.gate_type === 'human' && resolution === 'human_approved' && this._s2Evidence) {
+        const ev = this._s2Evidence;
+        (gateDetail as Record<string, unknown>).s2_evidence_status = 'provided';
+        (gateDetail as Record<string, unknown>).approval_ref = ev.approval_ref;
+        (gateDetail as Record<string, unknown>).change_classification = ev.change_classification;
+        (gateDetail as Record<string, unknown>).global_architecture_decision_sha256 = createHash256(ev.global_architecture_decision);
+        (gateDetail as Record<string, unknown>).approved_plan_sha256 = createHash256(ev.approved_plan);
+        (gateDetail as Record<string, unknown>).confirmations_count = (ev.confirmations || []).length;
+      }
       this.auditLogger.logGateResolve(stageId, stage.gate_type, resolution, gateDetail);
     }
 
@@ -289,8 +385,10 @@ export class FlowEngine {
 
     // 🔴 after_action 处理
     if (stage.after_action === 'inject_global_memo' && resolution === 'human_approved') {
-      if (this.memoStore && result.human_report) {
-        this.memoStore.save(result.human_report);
+      // H1: S2 evidence 注入——local human stage 无 human_report 时，用结构化审批证据构造并进入 memo
+      const s2Report = result.human_report || (this._s2Evidence ? this.buildEvidenceReport(this._s2Evidence) : '');
+      if (this.memoStore && s2Report) {
+        this.memoStore.save(s2Report);
         this.state.global_memo = this.memoStore.content;
         if (this.auditLogger) this.auditLogger.logMemoInjected(stageId, this.memoStore.content.length);
         console.log('[FlowEngine] 📌 全局备忘录已注入');
@@ -302,11 +400,11 @@ export class FlowEngine {
 
     // 🔴 human gate 超时/驳回 → 直接中止流水线，不进入下一阶段
     if (resolution === 'human_timeout' || resolution === 'human_denied') {
-      if (this.state) this.state.flow_status = 'aborted';
-      this.abort();
-      if (this.auditLogger) {
-        this.auditLogger.logFlowAbort(`human gate ${resolution}: ${stageId}`);
-      }
+      this.recordAbort(
+        resolution === 'human_timeout' ? 'human_timeout' : 'human_denied',
+        `human gate ${resolution}: ${stageId}`,
+      );
+      ToolWhitelistGuard.deactivate();
       console.log(`[FlowEngine] ⏹ human gate ${resolution} → 流水线中止`);
       return;
     }
@@ -319,11 +417,7 @@ export class FlowEngine {
         const maxS3 = this.config?.max_s3_retries ?? 3;
         if (this.state.s3_retry_count > maxS3) {
           console.error(`[FlowEngine] 🔴 S3 驳回熔断: 已回流 ${this.state.s3_retry_count}/${maxS3} 次，触发强制锁定 → 需人工解锁`);
-          if (this.auditLogger) {
-            this.auditLogger.logFlowAbort(`S3 驳回回流 ${this.state.s3_retry_count}/${maxS3} 次超限，强制锁定——需人工解锁`);
-          }
-          if (this.state) this.state.flow_status = 'aborted';
-          this.abort();
+          this.recordAbort('retry_limit', `S3 驳回回流 ${this.state.s3_retry_count}/${maxS3} 次超限，强制锁定——需人工解锁`);
           ToolWhitelistGuard.deactivate();
           return;
         }
@@ -334,11 +428,7 @@ export class FlowEngine {
         const maxRetries = this.config?.max_stage_retries ?? 5;
         if (this.state.stage_retry_count > maxRetries) {
           console.error(`[FlowEngine] 🔴 回流熔断: ${stageId}→${nextStage} 已达上限 ${maxRetries} 次`);
-          if (this.auditLogger) {
-            this.auditLogger.logFlowAbort(`重试次数 ${this.state.stage_retry_count}/${maxRetries} 超限，强制锁定`);
-          }
-          if (this.state) this.state.flow_status = 'aborted';
-          this.abort();
+          this.recordAbort('retry_limit', `重试次数 ${this.state.stage_retry_count}/${maxRetries} 超限，强制锁定`);
           ToolWhitelistGuard.deactivate();
           return;
         }
@@ -505,6 +595,8 @@ export class FlowEngine {
       run_id: runId,
       success: true,
       end_reason: 'free_mode',
+      flow_status: 'completed',
+      mode: 'free',
       stage_results: [],
     };
   }
@@ -518,19 +610,13 @@ export class FlowEngine {
 
     if (err instanceof CircuitBreakerError) {
       console.error(`[FlowEngine] 🔴 熔断: ${errorMsg}`);
-      if (this.state) this.state.flow_status = 'aborted';
-      if (this.auditLogger) {
-        this.auditLogger.logFlowAbort(`熔断: ${errorMsg}`);
-      }
+      this.recordAbort('circuit_breaker', `熔断: ${errorMsg}`);
       ToolWhitelistGuard.deactivate();
       return this.buildResult(false, 'circuit_breaker');
     }
 
     console.error(`[FlowEngine] 💥 异常: ${errorMsg}`);
-    if (this.state) this.state.flow_status = 'aborted';
-    if (this.auditLogger) {
-      this.auditLogger.logFlowAbort(errorMsg);
-    }
+    this.recordAbort('stage_error', errorMsg);
 
     // P7-B1: 尝试回滚 S3 阶段已修改的文件
     const modifiedFiles = this.state?.modified_files;
@@ -548,10 +634,10 @@ export class FlowEngine {
     }
 
     ToolWhitelistGuard.deactivate();
-    return this.buildResult(false, 'error');
+    return this.buildResult(false, 'stage_error');
   }
 
-  private buildResult(success: boolean, endReason: string): FlowResult {
+  private buildResult(success: boolean, endReason: TerminalEndReason): FlowResult {
     const stageResults: StageResult[] = [];
     if (this.state) {
       for (const [, result] of this.state.stage_results) {
@@ -563,7 +649,30 @@ export class FlowEngine {
       run_id: this.state?.run_id ?? 'unknown',
       success,
       end_reason: endReason,
+      flow_status: this.state?.flow_status,
+      mode: this.state?.mode ?? 'pipeline',
       stage_results: stageResults,
     };
+  }
+
+  /**
+   * H0: 由内部 state 派生终态结果——单一真值源，消除 success/endReason 双写。
+   * completed 终态优先（recordComplete 锁定）；存在 abort 终止原因 → abort 终态；
+   * running（异常泄漏）→ fail-closed。
+   */
+  private deriveFinalResult(): FlowResult {
+    const st = this.state;
+    if (st?.flow_status === 'completed' || this._endReason === 'completed') {
+      if (st) st.flow_status = 'completed';
+      return this.buildResult(true, 'completed');
+    }
+    if (this._aborted || this._endReason) {
+      if (st) st.flow_status = 'aborted';
+      return this.buildResult(false, this._endReason || 'stage_error');
+    }
+    if (!st) return this.buildResult(false, 'stage_error');
+    if (st.flow_status === 'aborted') return this.buildResult(false, this._endReason || 'stage_error');
+    // running（异常泄漏）→ fail-closed
+    return this.buildResult(false, 'stage_error');
   }
 }
