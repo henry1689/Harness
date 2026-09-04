@@ -178,11 +178,17 @@ function scoreStandard(
   }
 
   // 2. DelegateReviewer 违规扣分
+  // P0-fix(去重): S4 review 通道对同一标准至多计 1 次扣分。reviewer blocking 多为过程性
+  // 义务/确认项，全文文本会被多个标准的关键词正则命中；多条义务叠同一标准会造成
+  // 单标准被 -40/-60（如 DS-15 被 STATIC+ROBUST+体检文案叠扣到 40）。多条真实内容级
+  // 违规仍由 CK 通道（mappedCKChecks）各自逐条计分，不受此去重影响。
+  let reviewerDeducted = false;
   for (const violation of reviewViolations) {
+    if (reviewerDeducted) break;
     if (std.violationTagPatterns.length === 0) continue;
 
-    const matched = std.violationTagPatterns.some(p => p.test(violation));
-    if (matched) {
+    if (std.violationTagPatterns.some(p => p.test(violation))) {
+      reviewerDeducted = true;
       totalChecks++;
       failedChecks++;
       deductions.push({ source: 'Reviewer', amount: REVIEW_VIOLATION_DEDUCTION, reason: violation.slice(0, 100) });
