@@ -746,6 +746,21 @@ function checkSystemicPattern(projectRoot: string, files: string[], extraExclude
 
   // 3. 判定：共性 vs 个性
   if (systemicHits.length > 0) {
+    // A-full: 若全部命中的是"类型引用/导入/注释"等非可执行行 → 疑似启发式噪声（特征提取把
+    // 裸标识符当"关系赋值"模式，结果全仓命中 import type / @param 注释——非同类逻辑，不阻断）。
+    // 实证: chat.ts/m7 的 61 文件 138 处命中全为 `import type { FusionStorageAdapter }` 与注释。
+    const NOISE_LINE_RE = /^\s*(import\s|export\s|from\s|type\s|interface\s|declare\s|@|\*|\/\/)/;
+    const allNoise = systemicHits.every(h => NOISE_LINE_RE.test(String(h.snippet || '').trim()));
+    if (allNoise && systemicHits.length > 0) {
+      return {
+        id: 'CK-06.5', name: '举一反三系统性扫描', passed: true, severity: 'warn',
+        violations: [{
+          file: n[0] || '',
+          message: `⚠️ 举一反三: 命中 ${systemicHits.length} 处但全为类型引用/导入/注释（疑似启发式噪声），降 warn 不阻断；若属真实同类逻辑请在 S2 声明全仓覆盖。`,
+        }],
+        durationMs: Date.now() - start, cacheable: false,
+      };
+    }
     const uniqueFiles = new Set(systemicHits.map(h => h.file));
     violations.push({
       file: n[0] || '',
@@ -1163,7 +1178,9 @@ function checkGlobalSurvey(projectRoot: string, files: string[]): CheckResult {
         const content = readFileSync(srcFile, 'utf-8');
         for (const modifiedFile of n) {
           const baseName = basename(modifiedFile).replace('.ts', '').replace('.tsx', '');
-          const importRe = new RegExp(`from\\s+['"].*${escapeRegex(baseName)}['"]`, 'i');
+          // ESM 项目 import 恒带 .js/.ts/.tsx 扩展名，原正则 `.*${baseName}['"]` 要求裸文件名结尾 → .js 挡在引号前永不匹配 → import 链恒空 → CK-00 对任何被 import 的文件误报 FAIL。
+          // 修复: 文件名后允许可选扩展名后缀再跟引号。架构性修复（让 import 链检测真正覆盖 ESM 项目约定），非补丁。
+          const importRe = new RegExp(`from\\s+['"][^'"]*${escapeRegex(baseName)}(?:\\.(?:js|ts|tsx))?['"]`, 'i');
           if (importRe.test(content)) {
             importChain.push(relPath);
             break;

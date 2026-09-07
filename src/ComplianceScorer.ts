@@ -182,10 +182,17 @@ function scoreStandard(
   // 义务/确认项，全文文本会被多个标准的关键词正则命中；多条义务叠同一标准会造成
   // 单标准被 -40/-60（如 DS-15 被 STATIC+ROBUST+体检文案叠扣到 40）。多条真实内容级
   // 违规仍由 CK 通道（mappedCKChecks）各自逐条计分，不受此去重影响。
+  //
+  // A-full(P0后半): 5 个无条件"过程义务"不计 S4.5 文本分——它们是 S5(tsc)/S6(行为) 真验的
+  // 待办指令，非 S4 检测到的内容违规。只要计分就必然拖多个标准各 -20 → 核心文件结构性
+  // 地板 ~80-85（chat.ts 62-74 / m7 81 实证），与改动质量无关。内容正确性仍由 CK 通道 +
+  // 真实 reviewer 发现（如 CLASSIFY_FALSE_SPECIFIC / FG 红线确认缺失）计分。
+  const PROCESS_OBLIGATION_PREFIXES = ['[静态质量·强制]', '[鲁棒·强制]', '[Hook·强制]', '[Hook·体检]', '[文档·强制]'];
   let reviewerDeducted = false;
   for (const violation of reviewViolations) {
     if (reviewerDeducted) break;
     if (std.violationTagPatterns.length === 0) continue;
+    if (PROCESS_OBLIGATION_PREFIXES.some(p => violation.startsWith(p))) continue;
 
     if (std.violationTagPatterns.some(p => p.test(violation))) {
       reviewerDeducted = true;
