@@ -1,16 +1,26 @@
 /**
- * rollback.js — 未授权变更自动回滚 (v2.0 — Git 锁竞争重试)
+ * rollback.js — 未授权变更自动回滚 (v3.0 — 基线恢复，非破坏性)
  * ============================================================
- * 当哨兵检测到文件被未经授权的修改时，自动执行 git checkout 回滚。
+ * 🔴 v3.0 语义修正（2026-09-10 事故，见 docs/harness/06_Sentinel回滚缺陷-2026-09-10.md）
+ *   v2.x 用 `git checkout -- <file>` 回滚，其语义是「用 **index（暂存区）** 覆盖工作区」，
+ *   **不是**「恢复编辑前内容」。后果：会连同该文件**全部未暂存改动**一起抹掉
+ *   （实证：src/types.ts 的 enhance-v1 类型扩展被销毁 → tsc 21 处报错）；
+ *   且文件若有已暂存改动，`git checkout --` 后 `git status` 仍为 `M ` → 校验恒判失败、空转重试。
+ *
+ *   v3.0 起：
+ *     1. 优先用 **baseline（最后授权内容）** 恢复 —— 精确撤销本次未授权改动，不触碰其它工作；
+ *     2. 任何破坏性动作前**先隔离（quarantine）**当前内容，永不静默销毁；
+ *     3. 无基线且文件已被 git 跟踪 → **拒绝回滚并 fail-loud**（回不去就明说，不猜）；
+ *     4. 校验判据 = 「恢复后内容哈希 == 基线哈希」，不再依赖 `git status --porcelain`；
+ *     5. 内容已与基线一致 → 视为幂等无操作（already），不计错误、不触发升级。
+ *   git 仅作为「无基线 + untracked 新文件」时的兜底判断来源，不再承担回滚动作。
+ *
  * 支持干运行模式（dry-run），仅报告不回滚。
  *
- * v2.0: 增加 Git 锁竞争重试机制（指数退避，最多 5 次），
- *       对抗 Bash 脚本中 writeFileSync + git commit 的原子操作窗口。
- *
  * 使用:
- *   const rollback = createRollback('D:/tools/wenstar-cc');
+ *   const rollback = createRollback('D:/tools/wenstar-cc', { baseline });
  *   const result = await rollback.revert('src/webui/chat.ts', { dryRun: false });
- *   // → { reverted: true, file: 'src/webui/chat.ts', hash: 'abc123' }
+ *   // → { reverted: true, file: '...', hash: '...', method: 'baseline' }
  */
 
 'use strict';
@@ -19,144 +29,119 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-/** 重试配置 */
-const MAX_RETRIES = 5;
-const BASE_DELAY_MS = 500;   // 首次重试延迟
-const MAX_DELAY_MS = 8000;   // 延迟上限
+// v3.0: Git 锁竞争重试配置（MAX_RETRIES/BASE_DELAY_MS/MAX_DELAY_MS）与 sleepSync/isLockContention
+// 已随 `git checkout` 回滚路径一并移除——基线恢复是纯文件写入，无 git 锁竞争。
+
+/** 隔离区（放在 data/sentinel 下，不在 Sentinel 的 WATCH_ROOTS 内 → 不会自激触发新事件） */
+const QUARANTINE_ROOT = path.resolve(__dirname, '..', 'data', 'sentinel', 'quarantine');
 
 /**
- * 同步延迟（Windows 兼容）
- * @param {number} ms
+ * @param {string} projectRoot
+ * @param {{ baseline?: { has:(p:string)=>boolean, restore:(p:string)=>{restored:boolean,already?:boolean,hash?:string,reason?:string}, currentHash:(p:string)=>string|null } }} [options]
  */
-function sleepSync(ms) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    // 忙等待 — 仅用于几百毫秒的锁竞争重试
-    // 超过 200ms 用 ping 方式降低 CPU 占用
-    if (ms > 200) break;
-  }
-  if (ms > 200) {
-    try {
-      execSync(`ping 127.0.0.1 -n ${Math.ceil(ms / 1000) + 1} >nul`, { timeout: ms + 2000 });
-    } catch (_) { /* ping 失败不影响 */ }
-  }
-}
+function createRollback(projectRoot, options = {}) {
+  const baseline = options.baseline || null;
 
-/**
- * 判断是否为 Git 锁竞争错误
- * @param {string} errMsg
- * @returns {boolean}
- */
-function isLockContention(errMsg) {
-  return /index\.lock.*File exists/i.test(errMsg) ||
-         /Unable to create.*index\.lock/i.test(errMsg) ||
-         /Another git process/i.test(errMsg);
-}
-
-/** @param {string} projectRoot */
-function createRollback(projectRoot) {
   if (!fs.existsSync(path.join(projectRoot, '.git'))) {
     console.error(`[sentinel:rollback] ⚠️ ${projectRoot} 不是 git 仓库，回滚仅支持 git 管理的项目`);
+  }
+
+  /**
+   * 隔离当前内容（任何破坏性动作前的强制前置）。
+   * 永不失败到「销毁」——写不进去就返回 ok:false，调用方必须据此放弃破坏性动作。
+   * @returns {{ok:boolean, path?:string, reason?:string}}
+   */
+  function quarantine(filePath) {
+    try {
+      const abs = path.join(projectRoot, String(filePath).replace(/\\/g, '/'));
+      if (!fs.existsSync(abs)) return { ok: true, reason: '文件不存在，无需隔离' };
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const dest = path.join(QUARANTINE_ROOT, stamp, String(filePath).replace(/\\/g, '/'));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(abs, dest);
+      return { ok: true, path: dest };
+    } catch (err) {
+      return { ok: false, reason: (err && err.message) || String(err) };
+    }
+  }
+
+  /** 判断文件是否被 git 跟踪（tracked=false 即 untracked/新文件） */
+  function isTrackedByGit(filePath) {
+    try {
+      const out = execSync(`git ls-files --error-unmatch -- "${filePath}"`, {
+        cwd: projectRoot, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      return out.length > 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   // ── 公开 API ──
 
   /**
-   * 回滚单个文件（v2.0: 增加 Git 锁竞争重试）。
+   * 回滚单个文件。
+   * v3.0: 优先 baseline 恢复；无基线时不破坏（隔离 + fail-loud），untracked 新文件隔离后删除。
    *
    * @param {string} filePath - 相对于项目根目录的路径
    * @param {{ dryRun?: boolean, retries?: number }} opts
-   * @returns {Promise<{ reverted: boolean, file: string, hash?: string, error?: string, attempts?: number }>}
+   * @returns {Promise<{ reverted: boolean, file: string, hash?: string, error?: string, reason?: string, already?: boolean, method?: string, quarantine?: string, attempts?: number }>}
    */
   async function revert(filePath, opts = {}) {
     const dryRun = opts.dryRun !== false;
-    const maxRetries = opts.retries || MAX_RETRIES;
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        // 先获取当前状态确认文件确实被改了
-        const statusOut = execSync(`git status --porcelain -- "${filePath}"`, {
-          cwd: projectRoot, encoding: 'utf-8', timeout: 5000,
-        }).trim();
-
-        if (!statusOut) {
-          return { reverted: false, file: filePath, reason: '文件未变更（可能已被其他方式回滚）', attempts: attempt + 1 };
-        }
-
-        if (dryRun) {
-          const diffOut = execSync(`git diff --stat -- "${filePath}"`, {
-            cwd: projectRoot, encoding: 'utf-8', timeout: 5000,
-          }).trim();
-          const lines = diffOut.split('\n')[0] || '';
-          const match = lines.match(/(\d+) (insertion|deletion)/);
-          const changes = match ? match[1] + ' ' + match[2] + 's' : 'unknown';
-          return { reverted: false, file: filePath, dryRun: true, diff: changes, attempts: attempt + 1 };
-        }
-
-        // 真实回滚
-        const beforeHash = execSync(`git rev-parse --short HEAD`, {
-          cwd: projectRoot, encoding: 'utf-8', timeout: 5000,
-        }).trim();
-
-        execSync(`git checkout -- "${filePath}"`, {
-          cwd: projectRoot, encoding: 'utf-8', timeout: 10000,
-        });
-
-        // 验证回滚成功
-        const afterStatus = execSync(`git status --porcelain -- "${filePath}"`, {
-          cwd: projectRoot, encoding: 'utf-8', timeout: 5000,
-        }).trim();
-
-        if (afterStatus) {
-          // P6-FIX: untracked 文件（??）无法被 git checkout 回滚 — 直接删除
-          if (afterStatus.startsWith('??') || afterStatus.startsWith('? ')) {
-            try {
-              const absPath = path.join(projectRoot, filePath);
-              if (fs.existsSync(absPath)) {
-                fs.unlinkSync(absPath);
-                console.error(`[sentinel:rollback] 🗑 已删除未跟踪文件: ${filePath}`);
-                return { reverted: true, file: filePath, hash: beforeHash, attempts: attempt + 1 };
-              }
-              return { reverted: false, file: filePath, error: 'untracked 文件不存在于磁盘', attempts: attempt + 1 };
-            } catch (unlinkErr) {
-              return { reverted: false, file: filePath, error: `无法删除未跟踪文件: ${unlinkErr.message || unlinkErr}`, attempts: attempt + 1 };
-            }
-          }
-          return { reverted: false, file: filePath, error: 'git checkout 后文件仍有变更', attempts: attempt + 1 };
-        }
-
-        if (attempt > 0) {
-          console.error(`[sentinel:rollback] ↩ 已回滚（第${attempt + 1}次尝试）: ${filePath} (HEAD: ${beforeHash})`);
-        } else {
-          console.error(`[sentinel:rollback] ↩ 已回滚: ${filePath} (HEAD: ${beforeHash})`);
-        }
-        return { reverted: true, file: filePath, hash: beforeHash, attempts: attempt + 1 };
-
-      } catch (err) {
-        const msg = err.message || String(err);
-
-        // Git 锁竞争 → 重试
-        if (isLockContention(msg) && attempt < maxRetries - 1) {
-          const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
-          console.error(`[sentinel:rollback] 🔄 Git 锁竞争，${delay}ms 后重试（${attempt + 1}/${maxRetries}）: ${filePath}`);
-          await sleep(delay);
-          continue;
-        }
-
-        // 其他错误或重试耗尽
-        if (attempt >= maxRetries - 1 && isLockContention(msg)) {
-          return {
-            reverted: false, file: filePath,
-            error: `Git 锁竞争，${maxRetries} 次重试后仍失败: ${msg}`,
-            attempts: attempt + 1,
-          };
-        }
-
-        return { reverted: false, file: filePath, error: msg, attempts: attempt + 1 };
+    // ══ v3.0 主路径：基线恢复 ══
+    if (baseline && baseline.has(filePath)) {
+      const curHash = baseline.currentHash(filePath);
+      if (dryRun) {
+        return { reverted: false, file: filePath, dryRun: true, method: 'baseline', diff: '将恢复至基线内容', attempts: 1 };
       }
+      const res = baseline.restore(filePath);
+      if (res.restored) {
+        console.error(`[sentinel:rollback] ↩ 已按基线恢复: ${filePath} (基线 ${String(res.hash).slice(0, 12)})`);
+        return { reverted: true, file: filePath, hash: res.hash, method: 'baseline', attempts: 1 };
+      }
+      if (res.already) {
+        // 幂等：恢复动作自身会重写文件 → 再触发一次事件。此处识别为无操作，避免日志/升级风暴。
+        return { reverted: false, already: true, file: filePath, hash: res.hash, reason: res.reason, method: 'baseline', attempts: 1 };
+      }
+      // 基线存在但恢复失败 → 隔离 + fail-loud（绝不动 git）
+      const q = quarantine(filePath);
+      return {
+        reverted: false, file: filePath, method: 'baseline', quarantine: q.path,
+        error: `基线恢复失败：${res.reason}${q.ok ? '（当前内容已隔离，可人工找回）' : '（隔离亦失败：' + q.reason + '）'}`,
+        attempts: 1,
+      };
     }
 
-    return { reverted: false, file: filePath, error: '重试耗尽', attempts: maxRetries };
+    // ══ 无基线兜底：绝不静默销毁 ══
+    if (!dryRun) {
+      const q = quarantine(filePath);
+      const tracked = isTrackedByGit(filePath);
+      if (!tracked) {
+        // 未授权的新文件 → 隔离后删除（内容已在隔离区，可找回）
+        try {
+          const abs = path.join(projectRoot, String(filePath).replace(/\\/g, '/'));
+          if (fs.existsSync(abs)) {
+            fs.unlinkSync(abs);
+            console.error(`[sentinel:rollback] 🗑 已删除未授权新文件（已隔离至 ${q.path || '失败'}）: ${filePath}`);
+            return { reverted: true, file: filePath, method: 'quarantine-delete', quarantine: q.path, attempts: 1 };
+          }
+          return { reverted: false, file: filePath, reason: '文件不存在', attempts: 1 };
+        } catch (err) {
+          return { reverted: false, file: filePath, error: `无法删除未授权新文件: ${(err && err.message) || err}`, attempts: 1 };
+        }
+      }
+      // 已被 git 跟踪但无基线 → 拒绝破坏性回滚（git checkout 会销毁未暂存工作）
+      return {
+        reverted: false, file: filePath, method: 'refused-no-baseline', quarantine: q.path,
+        error: `无基线，拒绝破坏性回滚（git checkout 会销毁未暂存工作）。当前内容已隔离至 ${q.path || '失败'}，请人工确认后处理。`,
+        attempts: 1,
+      };
+    }
+
+    // dry-run + 无基线：仅报告
+    return { reverted: false, file: filePath, dryRun: true, method: 'no-baseline', diff: '无基线（实时模式将隔离并告警，不破坏性回滚）', attempts: 1 };
   }
 
   /**
@@ -200,14 +185,6 @@ function createRollback(projectRoot) {
   }
 
   return { revert, revertBatch, getStatus };
-}
-
-/**
- * 异步延迟（Promise-based）
- * @param {number} ms
- */
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 module.exports = { createRollback };

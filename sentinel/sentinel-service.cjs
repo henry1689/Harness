@@ -22,6 +22,7 @@ const fs = require('fs');
 
 const { createWatcher } = require('./watcher.cjs');
 const { createRollback } = require('./rollback.cjs');
+const { createBaseline } = require('./baseline.cjs');
 const { checkFile } = require('./sentinel-mcp-client.cjs');
 const { createEscalation } = require('./escalation.cjs');
 const { loadRiskPolicy } = require('../scripts/risk-policy-loader.cjs');
@@ -174,7 +175,11 @@ const stats = {
 
 // ── 哨兵 ──
 
-const rollback = createRollback(projectRoot);
+// v3.0(2026-09-10): 基线快照 —— 回滚语义修正（见 docs/harness/06_Sentinel回滚缺陷-2026-09-10.md）
+//   回滚 = 恢复到「最后一次授权内容」，不再用 git checkout（后者会用 index 覆盖工作区，
+//   销毁未暂存工作）。启动时先全量播种基线（磁盘现状 = 已知状态）。
+const baseline = createBaseline(projectRoot);
+const rollback = createRollback(projectRoot, { baseline });
 const escalation = createEscalation(projectRoot);
 
 /** 批次队列 */
@@ -259,6 +264,8 @@ async function processFileChange(filePath, isBatchAlert) {
   if (result.allowed) {
     // 分支1: 令牌有效 → 正常放行（无论是否豁免）
     stats.allowed++;
+    // v3.0: 授权写入 → 推进基线（此后若出现未授权改动，回滚将精确恢复到本次授权态）
+    try { baseline.refresh(filePath); } catch (_) { /* 基线刷新失败不阻断放行 */ }
     console.error(`${prefix} ✅ 放行: ${filePath} — ${result.reason}`);
     archiveEvent('allowed', { file: filePath, risk: result.risk, reason: result.reason, timestamp });
     return;
@@ -268,6 +275,8 @@ async function processFileChange(filePath, isBatchAlert) {
     // 分支2: 豁免命中 + 无令牌 → 记录「豁免内修改」但【不回滚、不升级】
     // 终结 boot 重放循环: 豁免期内改写只记录，豁免过期后再写才回滚。
     stats.exempt++;
+    // v3.0: 豁免 = 授权 → 同样推进基线
+    try { baseline.refresh(filePath); } catch (_) { /* 基线刷新失败不阻断 */ }
     console.error(`${prefix} 🟡 豁免内修改(无令牌): ${filePath} — id: ${exemptRecord.id || 'v1'} 豁免期内不回滚`);
     archiveEvent('exempt_allowed', {
       file: filePath, risk: result.risk, reason: '豁免内修改(无令牌)', timestamp,
@@ -299,6 +308,25 @@ async function processFileChange(filePath, isBatchAlert) {
     if (escResult.escalated) {
       console.error(`${prefix} ${escResult.action}`);
     }
+  } else if (revertResult.already) {
+    // v3.0: 幂等无操作——恢复动作本身会重写文件 → 再触发一次事件。
+    // 内容已与基线一致 → 不计错误、不升级、不打告警，避免日志/熔断风暴。
+    archiveEvent('noop', { file: filePath, reason: revertResult.reason || '内容已与基线一致', timestamp });
+  } else if (revertResult.method === 'refused-no-baseline') {
+    // v3.0: 无基线且文件已被 git 跟踪 → 拒绝破坏性回滚（fail-loud）。
+    // 这是本次修复的核心：宁可报「无法自动回滚」，也不做会销毁未暂存工作的 git checkout。
+    stats.errors++;
+    archiveEvent('refused_no_baseline', {
+      file: filePath, error: revertResult.error, quarantine: revertResult.quarantine,
+      reason: result.reason, timestamp,
+    });
+    console.error(`${prefix} 🛑 拒绝破坏性回滚（无基线）: ${filePath}`);
+    console.error(`${prefix}    ${revertResult.error || ''}`);
+    console.error(`${prefix}    ⚠️ 需人工介入：确认该改动是否合法。合法 → 取豁免/令牌后重写以推进基线；非法 → 从隔离区比对后决定。`);
+    try {
+      const escResult = escalation.recordRevert(filePath, { risk: result.risk, reason: result.reason });
+      if (escResult.escalated) console.error(`${prefix} ${escResult.action}`);
+    } catch (_) {}
   } else if (revertResult.dryRun) {
     stats.reverted++;
     archiveEvent('reverted', {
@@ -418,6 +446,20 @@ if (watchers.length === 0) {
   process.exit(1);
 }
 console.error(`[sentinel] ✅ 已启动 ${watchers.length}/${WATCH_ROOTS.length} 个监控器`);
+
+// ── v3.0: 基线全量播种（回滚 = 恢复基线，无基线则无法回滚 → 启动必须先登记已知状态）──
+// 只补缺失项，不覆盖已有基线（避免重启把「授权态」冲掉）。
+// 干运行模式（--dry）不落盘，保持「仅记录不操作」语义。
+if (dryRun) {
+  console.error('[sentinel] 🧬 基线播种: 已跳过（--dry 干运行模式不落盘）');
+} else {
+  try {
+    const seed = baseline.seedDirs(WATCH_ROOTS);
+    console.error(`[sentinel] 🧬 基线播种完成: 新增 ${seed.seeded} / 已有 ${seed.skipped} / 失败 ${seed.failed}（${seed.dirs} 个根目录）→ ${baseline.dir}`);
+  } catch (err) {
+    console.error(`[sentinel] ⚠️ 基线播种失败（回滚将退化为「拒绝破坏性回滚 + 隔离告警」）: ${err.message}`);
+  }
+}
 
 // ── 定期状态报告（P7: 汇总所有 watcher）──
 
