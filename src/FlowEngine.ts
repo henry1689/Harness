@@ -486,6 +486,32 @@ export class FlowEngine {
       console.error(`[FlowEngine] 📦 S7-B 归档校验失败 → 回退 ${nextStage} 补全归档产物 (archive_invalid)`);
     }
 
+    // ── P0-A2: 确认阻塞提前终局 ──
+    // 内容合规分已达标（≥90，即已够 S4.5 的转交门槛），唯一阻塞是「评审确认未声明」。
+    // s2_evidence 在一次 run 内固定不可变 → 回流 S3 修码永远无法消除确认缺失（审计实证：
+    // 曾出现 rounds 3–20 逐轮同因空转）。故此处直接终局，让 Agent 携「待声明 key 清单」重开 run。
+    // 注意：必须在回流计数自增【之前】判定，否则会先被 s3_retry_count 阈值改道 S1（E-02），
+    // 白烧一轮架构重审后才终局。
+    const _sig = (result.machine_signal || {}) as {
+      metrics?: { unresolved_confirmations?: number; compliance_score?: number };
+    };
+    if (
+      stageId.startsWith('S4.5') &&
+      resolution === 'condition_rejected' &&
+      (_sig.metrics?.unresolved_confirmations ?? 0) > 0 &&
+      (_sig.metrics?.compliance_score ?? 0) >= 90
+    ) {
+      this.recordAbort(
+        'confirmations_pending',
+        `S4.5 内容合规分 ${_sig.metrics?.compliance_score}% 已达标，但 ${_sig.metrics?.unresolved_confirmations} 项评审确认未声明` +
+        `（s2_evidence 在一次 run 内固定，回流 S3 无效）——请重开 harness_run_flow，在 s2_evidence.confirmations 声明对应 key 后继续；` +
+        `完整待声明清单见本次 run 的 S4.5 human_report。`,
+      );
+      ToolWhitelistGuard.deactivate();
+      console.error(`[FlowEngine] ⏹ 确认阻塞提前终局 (confirmations_pending): ${_sig.metrics?.unresolved_confirmations} 项确认未声明`);
+      return;
+    }
+
     // 🔴 回流计数器：检测是否回到 S3 或更高序号回退
     if (this.isStageRegression(stageId, nextStage)) {
       // S3 专属计数（S4/S5/S6 驳回→S3）

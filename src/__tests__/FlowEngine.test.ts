@@ -375,3 +375,58 @@ describe('FlowEngine', () => {
     });
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// P0-A2: 确认阻塞提前终局（回归护栏）
+// ════════════════════════════════════════════════════════════════════
+// 背景：该钩子曾在 2026-09-08 实现并验证（报告 docs/harness-p0a-p1-...md），
+// 但从未进入任何提交，2026-09-10 因未提交工作被回滚而静默消失——
+// 实测表现为：内容分 90.7 达标却仍白烧 3 轮 S3 回流，被 E-02 硬止收场。
+// 本组用例锁定该行为，防止再次丢失。
+
+/** 构造一个只覆盖 S4.5 的 delegate 映射（其余 stage 走 makePassReview） */
+function engineWithS45(s45: StageOutput): FlowEngine {
+  return new FlowEngine({
+    delegateReviewFn: makePassReview(),
+    delegateReviewFnMap: new Map([
+      ['S4.5_Convergence_Gate', async (): Promise<StageOutput> => s45],
+    ]),
+    autoApproveHumanGate: true,
+  });
+}
+
+describe('P0-A2 确认阻塞提前终局', () => {
+  it('S4.5 内容分≥90 且仅剩确认未声明 → 立即终局 confirmations_pending，不回流 S3', async () => {
+    const engine = engineWithS45({
+      machine_signal: {
+        passed: false, risk_level: 'mid',
+        reject_reason: ['内容合规分 95% 已达标，但仍有 3 项评审确认未声明'],
+        metrics: { compliance_score: 95, unresolved_confirmations: 3 },
+      },
+      human_report: '# 待声明确认 3 项',
+    });
+    const result = await engine.start('wenstaros_core_repair_flow.yaml', makeHighRiskContext());
+
+    expect(result.success).toBe(false);
+    expect(result.end_reason).toBe('confirmations_pending');
+    expect(result.flow_status).toBe('aborted');
+    expect(result.run_status).toBe('aborted');
+    // 🔴 关键：未回流 —— S4.5 只被进入一次（若钩子失效会多次进入直至 E-02 改道）
+    expect(result.stage_results.filter(s => s.stage_id === 'S4.5_Convergence_Gate').length).toBe(1);
+  });
+
+  it('内容分未达 90 时仍正常回流（不误终局）——由 E-02 硬止收场', async () => {
+    const engine = engineWithS45({
+      machine_signal: {
+        passed: false, risk_level: 'mid',
+        reject_reason: ['内容不足'],
+        metrics: { compliance_score: 85, unresolved_confirmations: 3 },
+      },
+      human_report: '# 分数不足',
+    });
+    const result = await engine.start('wenstaros_core_repair_flow.yaml', makeHighRiskContext());
+
+    expect(result.end_reason).toBe('s3_patch_loop'); // 走完回流路径，未被提前终局
+    expect(result.stage_results.filter(s => s.stage_id === 'S4.5_Convergence_Gate').length).toBe(1);
+  });
+});
