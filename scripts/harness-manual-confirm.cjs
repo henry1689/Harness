@@ -62,7 +62,9 @@ if (cmd === 'list') {
   console.log(`✅ 已确认 [${i}] ${it.verify_item}（验:${it.verifier}）；${left === 0 ? '全部完成 → 重跑 harness_run_flow 即放行 S7。' : `仍待人工 ${left} 项。`}`);
 } else if (cmd === 'confirm-all') {
   const t = load(key);
-  const who = verifier || 'owner';
+  // 🔴 F4 修参数错位：`confirm-all <key> <验收人>` 只有 3 个位置参数，验收人落在 idxRaw 位；
+  // 原实现只读 verifier（第 4 位）→ 传入的验收人被静默丢弃、一律记成 'owner'（治理记录虚假归属）。
+  const who = idxRaw || verifier || 'owner';
   const at = new Date().toISOString();
   for (const it of t.items) { it.confirmed = true; it.confirmed_at = it.confirmed_at || at; it.verifier = it.verifier || who; }
   save(t);

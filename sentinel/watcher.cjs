@@ -115,8 +115,23 @@ function createWatcher(watchDir, onChange, opts = {}) {
     }
   }
 
-  /** 扫描目录，发现新增/变更文件 */
+  /**
+   * 扫描目录，发现新增 / 变更 / **删除** 文件。
+   *
+   * 🔴 F2(2026-09-11): 原实现只按 mtime 判「修改」、按「首次出现」判「新增」，
+   * **文件消失不会触发任何事件** → 未授权的 `rm` 完全绕过 Sentinel
+   * （实测：删除 src/ 下受管文件后事件计数纹丝不动，防御为零）。
+   * 现在每轮全量扫描后比对 fileState，登记过但磁盘确已不存在 → 上报删除事件，
+   * 交由上层按同一 token/豁免判定处置（有基线则从基线恢复该文件）。
+   */
   function scanDir(dir) {
+    const seen = new Set();
+    scanInto(dir, seen);
+    detectDeletions(seen);
+  }
+
+  /** 递归收集「本轮磁盘上实际存在的受管文件」记入 seen，并处理新增/变更 */
+  function scanInto(dir, seen) {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
@@ -124,10 +139,11 @@ function createWatcher(watchDir, onChange, opts = {}) {
         const relPath = normalize(path.relative(watchDir, fullPath));
 
         if (entry.isDirectory()) {
-          if (!excludeDirs.includes(entry.name)) scanDir(fullPath);
+          if (!excludeDirs.includes(entry.name)) scanInto(fullPath, seen);
         } else if (entry.isFile() && shouldWatch(relPath)) {
           const stat = fs.statSync(fullPath, { throwIfNoEntry: false });
           if (!stat) continue;
+          seen.add(relPath);
           const existing = fileState.get(relPath);
           if (!existing) {
             // 🔴 P9-fix: 新文件也触发 onChange（原来只登记不触发 → Agent 新建的源文件修改全部漏报）
@@ -148,6 +164,22 @@ function createWatcher(watchDir, onChange, opts = {}) {
         }
       }
     } catch (_) { /* 目录不可读 → 跳过 */ }
+  }
+
+  /**
+   * 删除检测：fileState 中已登记但本轮未见、且磁盘确已不存在 → 上报。
+   * 二次确认（existsSync）是必要的：目录不可读 / 命中 excludeDirs 时文件不在 seen 里，
+   * 但它其实还在磁盘上——不加这层就会对合法文件误报删除。
+   */
+  function detectDeletions(seen) {
+    if (!initialScanDone) return; // 首次扫描只登记，不判删除
+    for (const relPath of [...fileState.keys()]) {
+      if (seen.has(relPath)) continue;
+      if (fs.existsSync(path.join(watchDir, relPath))) continue; // 仍在磁盘 → 不误报
+      fileState.delete(relPath);
+      console.error(`[sentinel:watcher] 🗑 检测到文件删除（受管文件消失）: ${relPath}`);
+      onChange(relPath);
+    }
   }
 
   // ── 公开 API ──
