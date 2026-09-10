@@ -260,23 +260,61 @@ export class EvolutionEngine {
   private scanAuditDir(dir: string): void {
     if (!existsSync(dir)) return;
     this.scanRecursive(dir, (filePath, data) => {
-      const event = data.event as string || '';
-      let type: ObservedEvent['type'] | null = null;
-
-      if (event === 'convergence_check' || event === 'convergence_bypass') type = 'audit_convergence';
-      else if (event === 'convergence_lockout') type = 'audit_lockout';
-      else if (event === 'tool_blocked') type = 'hook_denial';
-      else if (event === 'bypass' || event === 'convergence_bypass') type = 'audit_bypass';
-
-      if (type) {
+      // P1-fix: AuditLogger 实际输出为「run 包装文件」{ run_id, entries: [...] }——此前把整个
+      // 文件当单条事件读顶层 data.event → 恒 undefined → totalAuditEvents 恒 0（35 天 audit 目录 0 入账）。
+      // 现在展开 entries[]（保留旧 event-level 文件兼容：无 entries 时把 data 本身当单条）。
+      const entries = Array.isArray((data as { entries?: unknown }).entries)
+        ? (data as { entries: unknown[] }).entries
+        : null;
+      const items: unknown[] = entries ?? [data];
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        const classified = this.classifyAuditSubEvent(item as Record<string, unknown>);
+        if (!classified) continue;
         this.events.push({
-          type,
-          timestamp: (data.timestamp as string) || new Date().toISOString(),
-          file: (data.file as string) || (data.file_path as string) || '',
-          detail: data,
+          type: classified.type,
+          timestamp: classified.ts,
+          file: classified.file,
+          detail: classified.extra,
         });
       }
     });
+  }
+
+  /** P1: 单条 audit 事件分类——对齐 AuditLogger 真实 schema（gate_resolve/flow_abort/stage_enter） */
+  private classifyAuditSubEvent(sub: Record<string, unknown>): {
+    type: ObservedEvent['type']; ts: string; file: string; extra: Record<string, unknown>;
+  } | null {
+    const event = (sub.event as string) || '';
+    const detail = (sub.detail && typeof sub.detail === 'object' ? sub.detail : {}) as Record<string, unknown>;
+    const resolution = (detail.resolution as string) || '';
+    const ts = (sub.timestamp as string) || new Date().toISOString();
+    const file = String((detail.file as string) || (detail.file_path as string) || '');
+    const stage = String((sub.stage_id as string) || (detail.stage_id as string) || '');
+
+    if (event === 'gate_resolve') {
+      // S4.5 收敛拒绝（每轮一条）→ audit_convergence；人工放行/拒绝 → audit_bypass
+      if (resolution === 'condition_rejected' && stage.includes('S4.5')) {
+        return { type: 'audit_convergence', ts, file, extra: { ...detail, stage_id: stage, round: detail.convergence_round } };
+      }
+      if (resolution === 'human_approved' || resolution === 'human_denied') {
+        return { type: 'audit_bypass', ts, file, extra: { ...detail, stage_id: stage } };
+      }
+      return null;
+    }
+    if (event === 'flow_abort') {
+      const reason = String(detail.reason || '');
+      if (/熔断|锁定|lockout|超限/.test(reason)) return { type: 'audit_lockout', ts, file, extra: detail };
+      return null;
+    }
+    if (event === 'tool_blocked' || event === 'hook_denied') {
+      return { type: 'hook_denial', ts, file, extra: detail };
+    }
+    // 兼容旧 event-level 文件形态
+    if (event === 'convergence_check' || event === 'convergence_bypass') return { type: 'audit_convergence', ts, file, extra: detail };
+    if (event === 'convergence_lockout') return { type: 'audit_lockout', ts, file, extra: detail };
+    if (event === 'bypass') return { type: 'audit_bypass', ts, file, extra: detail };
+    return null;
   }
 
   private scanRecursive(dir: string, onFile: (path: string, data: Record<string, unknown>) => void): void {

@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "harness:s2-evidence-v2",
+  "title": "S2EvidenceV2",
+  "type": "object",
+  "required": ["approval_ref", "problem_nature", "patch_plan", "arch_structural_plan", "final_approved_plan", "confirmations"],
+  "properties": {
+    "approval_ref": { "type": "string" },
+    "problem_nature": { "type": "string", "enum": ["specific_bug", "coupling_debt", "arch_structural_defect"] },
+    "patch_plan": {
+      "type": "object",
+      "required": ["is_available", "change_scope"],
+      "properties": {
+        "is_available": { "type": "boolean" },
+        "change_scope": { "type": "array", "items": { "type": "string" } },
+        "short_term_effect": { "type": "string" },
+        "debt_risks": { "type": "string" },
+        "associated_debt_id": { "type": ["string", "null"] },
+        "payback_milestone": { "type": ["string", "null"] },
+        "not_available_reason": { "type": ["string", "null"] }
+      }
+    },
+    "arch_structural_plan": {
+      "type": "object",
+      "required": ["is_available", "change_scope"],
+      "properties": {
+        "is_available": { "type": "boolean" },
+        "change_scope": { "type": "array", "items": { "type": "string" } },
+        "benefit": { "type": "string" },
+        "dependencies": { "type": "array", "items": { "type": "string" } },
+        "estimated_workload": { "type": "string" },
+        "not_available_reason": { "type": ["string", "null"] }
+      }
+    },
+    "final_approved_plan": { "type": "string", "enum": ["patch", "arch_structural"] },
+    "allow_full_rewrite": { "type": "array", "items": { "type": "string" } },
+    "skip_manual_verification": { "type": "boolean" },
+    "confirmations": { "type": "array", "items": { "type": "string" } }
+  }
+}

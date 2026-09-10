@@ -10,8 +10,10 @@ flow_id: wenstaros_core_repair_flow
 flow_name: WenStarOS TS内核缺陷修复&架构重构流水线
 version: 2.0
 max_jump_limit: 10
-max_stage_retries: 5
-max_s3_retries: 6
+# S3 单阶段回流重试上限：到达 3 轮不再继续编码，强制跳转 S1→S2 架构重审（E-01/E-02 enhance-v1）
+# —— 与全局 max_stage_retries 职责分离，不可混淆
+max_stage_retries: 20
+max_s3_retries: 3
 global_memo_key: wenstaros_arch_global_constraint
 global_arch_constraint: |
   # 全局不可突破架构铁律（每阶段启动自动注入）
@@ -20,7 +22,7 @@ global_arch_constraint: |
   3. FamilyGraph.ts为太虚境户籍唯一数据源，角色扮演使用独立分支FG，禁止污染主库；
   4. UUID(TXS-xxxx)全链路belong_entity_uuid四层标注机制不可删减；
   5. SQLiteAdapter为唯一持久写入通道，修改存储逻辑必须校验防抖save()落盘；
-  6. 会晤模式_meetingEntityName 12处判断点（chat.ts 精确行号：L570 / L679 / L760 / L775 / L847 / L1233 / L1235 / L1302 / L1338 / L1445 / L1484 / L1501）必须完整同步，禁止角色信息泄漏；S4 独立评审必须 grep 逐点核验全部 12 处，输出「12 点逐项核验清单」（格式：行号 | 状态[✓/✗/不适用] | 证据），任一不适用但未说明原因则评审驳回；
+  6. 会晤模式_meetingEntityName 传播点必须以 chat.ts 内 MEETING_PROP_POINTS 编目（V15，319-334 行，当前 14 点 L0-L13）为唯一权威索引，禁止角色信息泄漏；S4 独立评审必须 grep 核验 MEETING_PROP_POINTS 数组与实际代码是否同步（不依赖硬编码行号，行号会随重构漂移），输出「传播点逐项核验清单」（格式：阶段 | 状态[✓/✗/不适用] | 证据），任一不适用但未说明原因则评审驳回；
   7. 新旧两套角色扮演管线规则必须同步修改，切换开关ROLEPLAY_STRUCTURED_ENABLED两边兼容；
   8. 数据写入遵循「只增不删」，历史卷宗、记忆、黑钻记录禁止直接删除；
   9. chat.ts内22段finalKnowledgeText注入顺序不可随意调换，避免LLM提示词逻辑错乱；
@@ -352,13 +354,14 @@ stages:
       run_command: true
       write_file: false
     gate_type: condition
-    next_stage_pass: S6_Function_Verify
+    next_stage_pass: S6-A_Function_Verify_Machine
     next_stage_reject: S3_Code_Implement
     runner_mode: local
 
-  # ====================== S6 全场景功能&数据库核验（全本地脚本执行） ======================
-  - stage_id: S6_Function_Verify
-    stage_name: 多场景功能验证+数据库标注审计
+  # ====================== S6-A 全场景功能&数据库核验（全本地脚本执行） ======================
+  # H-02(enhance-v1) 拆分：S6 = S6-A（机器硬校验，本 stage）+ S6-B（人工验收门控）
+  - stage_id: S6-A_Function_Verify_Machine
+    stage_name: 机器硬校验（编译/测试/CK-09·10/落盘检索）
     work_manual: |
       🔴【全部本地脚本执行——LLM 仅读取结果做最终判定】
 
@@ -416,23 +419,107 @@ stages:
       run_db_script: true
       write_file: false
     gate_type: condition
-    next_stage_pass: S7_Change_Archive
+    next_stage_pass: S6-B_Manual_Verify
     next_stage_reject: S3_Code_Implement
     runner_mode: local
 
-  # ====================== S7 变更归档&流程闭环 ======================
-  - stage_id: S7_Change_Archive
+  # ====================== S6-B 人工验收门控（H-02） ======================
+  # 机器不可自动判定的行为级验收：生成 manual_verification_ticket，人工逐项确认后方可归档。
+  # 🔴 落地语义（非字面「真阻塞」）：引擎无运行中暂停/恢复原语，故未确认时由 FlowEngine
+  #   悬挂终局 run_status=await_manual_verification（不签发 token）；人工用
+  #   scripts/harness-manual-confirm.cjs 确认后，以同一批文件重跑 harness_run_flow
+  #   （change_key 稳定 → 命中同一张任务单）即自动放行 S7。
+  # 免人工条件：data/harness_globals.json → manual_verification_enabled=false，
+  #   或 s2_evidence.skip_manual_verification=true。
+  # next_stage_reject 为兜底（仅当 delegate 自身异常时可达；正常未确认路径被引擎悬挂拦截）。
+  - stage_id: S6-B_Manual_Verify
+    stage_name: 人工验收门控（行为级场景逐项确认）
+    work_manual: |
+      🔴【delegate 进程内执行——无 LLM 参与】
+
+      本 stage 由 s6ManualVerifyDelegate 执行：
+        1. 计算本次变更指纹 change_key（排序后 modified_files 的 SHA-256 短哈希）；
+        2. 若已免人工（总开关或 s2_evidence.skip_manual_verification）→ 直接放行 S7；
+        3. 否则读/建 data/manual_tickets/<change_key>.json 人工验收任务单；
+        4. 未全部确认 → 驳回：FlowEngine 悬挂终局（run_status=await_manual_verification，不签发令牌）；
+        5. 已全部确认（确认后重跑）→ 放行 S7。
+
+      人工确认命令（由操作者执行，非 Agent）：
+        node D:/AI文件/harness/scripts/harness-manual-confirm.cjs list <change_key>
+        node D:/AI文件/harness/scripts/harness-manual-confirm.cjs confirm <change_key> <序号> <验收人> [备注]
+    tool_whitelist:
+      read_file: true
+      run_command: false
+      run_db_script: false
+      write_file: false
+    gate_type: condition
+    next_stage_pass: S7-A_Change_Archive
+    next_stage_reject: S3_Code_Implement
+    runner_mode: delegate
+
+  # ====================== S7-A 变更归档&流程闭环 ======================
+  # H-01(enhance-v1) 拆分：S7 = S7-A（产出结构化归档产物）+ S7-B（归档完整性硬校验）
+  - stage_id: S7-A_Change_Archive
     stage_name: 变更台账归档+流程闭环
     work_manual: |
       1. 汇总本次所有修改文件、风险等级、改动代码范围；
-      2. 记录S4评审风险点、S5编译测试问题、S6数据库校验结果；
+      2. 记录S4评审风险点、S5编译测试问题、S6机器校验与人工验收结果；
       3. 保存回滚方案、验证用例清单，写入项目变更台账；
       4. 输出完整修复总结：根因、改动内容、核验证据、长期注意事项；
       5. 提示：大型重构(≥3文件/数据库变更)需执行三轮对比审计后提交。
+      6. 🔴【H-01 强制：结构化归档产物】除上述文本总结外，必须产出 s7_archive_payload
+         并写入 data/archives/<run_id>.json（S7-B 机器校验的唯一输入，缺则驳回返本 stage）。
+         字段结构（严格按 src/schemas/s7-archive-payload.ts，勿自造字段名）：
+           {
+             "change_summary": "<改动摘要>",
+             "rollback_plan": {
+               "modified_files": ["<逐项列出本次修改文件，须与本次 diff 完全一致，不得漏记或多记>"],
+               "rollback_steps": "<回滚步骤说明，非空>"
+             },
+             "verification_checklist": [ { "item": "<验证项>", "evidence": "<证据>" } ],
+             "debt_marker": {
+               "is_patch": <true|false>,
+               "debt_item_id": "<is_patch=true 时必填：tech_debt_ledger 债务号，且须真实存在>",
+               "three_round_review_plan": "<改动 ≥3 文件（大重构）时必填>"
+             },
+             "audit_ref": "<审计/卷宗引用>",
+             "exemption_id": "<S4.5 综合分 <98 时必填：exemptions.json 中真实存在的豁免编号>"
+           }
+         🔴 校验规则 R1-R5 见 src/s7/S7ArchiveValidator.ts：
+           R1 必填字段完整；R2 补丁(is_patch=true)必须绑定存在的 debt_item_id；
+           R3 rollback_plan.modified_files 与本次 diff 一致（漏记/多记均驳回）；
+           R4 S4.5 打分 <98（即经 HUMAN_BYPASS 放行）必须携带存在的 exemption_id；
+           R5 ≥3 文件的大重构必须填写 three_round_review_plan。
     tool_whitelist:
       read_file: true
       write_file: true
       run_command: false
     gate_type: auto
-    next_stage: END
+    next_stage: S7-B_Archive_Validate
     runner_mode: local
+
+  # ====================== S7-B 归档完整性硬校验（H-01） ======================
+  # delegate 进程内校验（无 LLM）：读 data/archives/<run_id>.json → S7ArchiveValidator R1-R5。
+  # 通过 → END（run_status=completed，签发令牌）；失败 → 回退 S7-A 补全归档产物
+  #   （FlowEngine 标记 _archiveInvalid，若最终因回流熔断中止则 run_status=archive_invalid）。
+  - stage_id: S7-B_Archive_Validate
+    stage_name: 归档完整性硬校验（R1-R5）
+    work_manual: |
+      🔴【delegate 进程内执行——无 LLM 参与】
+
+      本 stage 由 s7ArchiveValidateDelegate 执行，校验 S7-A 落盘的 data/archives/<run_id>.json：
+        R1 diff 清单与本次 modified_files 一致（无漏记/多记）；
+        R2 补丁类改动必须登记 tech_debt_ledger 债务（debt_marker.has_patch=true → debt_id 存在）；
+        R3 依赖豁免的改动必须引用存在的豁免记录（exemption_ref）；
+        R4 回滚方案非空且可执行（rollback_plan.steps 非空）；
+        R5 大型重构（≥3 文件）必须有验证清单（verification_checklist 非空）。
+      全部通过 → 放行 END；任一失败 → 回退 S7-A 补全归档产物。
+    tool_whitelist:
+      read_file: true
+      run_command: false
+      run_db_script: false
+      write_file: false
+    gate_type: condition
+    next_stage_pass: END
+    next_stage_reject: S7-A_Change_Archive
+    runner_mode: delegate

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "harness:full-review-evidence",
+  "title": "FullReviewEvidence",
+  "type": "object",
+  "required": ["run_id", "convergence_round", "summary", "ck_reports", "ds_score_details"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "convergence_round": { "type": "integer" },
+    "summary": { "type": "string" },
+    "dim_review": { "type": "object" },
+    "ck_reports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ck_id", "passed", "violations"],
+        "properties": {
+          "ck_id": { "type": "string" },
+          "passed": { "type": "boolean" },
+          "severity": { "type": "string" },
+          "violations": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    "ds_score_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ds_id", "score_delta", "reason", "suggest_fix"],
+        "properties": {
+          "ds_id": { "type": "string" },
+          "score_delta": { "type": "number" },
+          "reason": { "type": "string" },
+          "suggest_fix": { "type": "string" },
+          "machine_sourced": { "type": "boolean" }
+        }
+      }
+    },
+    "uuid_chain_check": { "type": "object" },
+    "coupling_analysis": { "type": "object" },
+    "risk_markers": { "type": "array", "items": { "type": "string" } },
+    "classification_check": { "type": "object" }
+  }
+}

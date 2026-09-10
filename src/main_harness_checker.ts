@@ -745,37 +745,27 @@ function checkSystemicPattern(projectRoot: string, files: string[], extraExclude
   }
 
   // 3. 判定：共性 vs 个性
+  // P0-B2: 名称碰撞命中 ≠ 共性缺陷 → 一律降 warn + 候选清单，不再自动硬拒。
+  // 实证：关系赋值特征对 `familyGraph`/`FamilyGraph.` 基名 substring 命中 → 92 处正常引用全仓爆炸；
+  //       方法名特征对通用方法（.getFullYear/.allowed）→ 17 处普通调用误判"同类未修"。
+  //       特征提取纯基于名字，无法区分"同名普通使用"与"同款缺陷复现"；自动硬 FAIL 只会打地鼠。
+  //       真实共性问题改由 S4 reviewer 共性/个性归类维度（内容通道，能读 diff 语义）判定 + S2 声明闭环。
   if (systemicHits.length > 0) {
-    // A-full: 若全部命中的是"类型引用/导入/注释"等非可执行行 → 疑似启发式噪声（特征提取把
-    // 裸标识符当"关系赋值"模式，结果全仓命中 import type / @param 注释——非同类逻辑，不阻断）。
-    // 实证: chat.ts/m7 的 61 文件 138 处命中全为 `import type { FusionStorageAdapter }` 与注释。
-    const NOISE_LINE_RE = /^\s*(import\s|export\s|from\s|type\s|interface\s|declare\s|@|\*|\/\/)/;
-    const allNoise = systemicHits.every(h => NOISE_LINE_RE.test(String(h.snippet || '').trim()));
-    if (allNoise && systemicHits.length > 0) {
-      return {
-        id: 'CK-06.5', name: '举一反三系统性扫描', passed: true, severity: 'warn',
-        violations: [{
-          file: n[0] || '',
-          message: `⚠️ 举一反三: 命中 ${systemicHits.length} 处但全为类型引用/导入/注释（疑似启发式噪声），降 warn 不阻断；若属真实同类逻辑请在 S2 声明全仓覆盖。`,
-        }],
-        durationMs: Date.now() - start, cacheable: false,
-      };
-    }
     const uniqueFiles = new Set(systemicHits.map(h => h.file));
     violations.push({
       file: n[0] || '',
-      message: `🔴 共性问题: 特征模式在 ${uniqueFiles.size} 个额外文件中发现 ${systemicHits.length} 处同类问题，必须一起修复！`,
+      message: `⚠️ 举一反三: 特征模式命中 ${uniqueFiles.size} 个额外文件 ${systemicHits.length} 处同名候选（名称碰撞≠共性缺陷，降 warn 不自动阻断）。若确属同类缺陷请在 S2 声明全仓覆盖；真实共性由 S4 reviewer 共性/个性归类维度独立判定。`,
     });
     for (const hit of systemicHits.slice(0, 10)) {
       violations.push({
         line: hit.line, file: hit.file,
-        message: `同类模式 "${hit.pattern}" → ${hit.file}:L${hit.line}: ${hit.snippet.slice(0, 80)}`,
+        message: `同名候选 "${hit.pattern}" → ${hit.file}:L${hit.line}: ${hit.snippet.slice(0, 80)}`,
       });
     }
     if (systemicHits.length > 10) {
       violations.push({
         file: '全仓库',
-        message: `...还有 ${systemicHits.length - 10} 处同类问题未列出。S2 方案必须覆盖全部。`,
+        message: `...还有 ${systemicHits.length - 10} 处同名候选未列出。`,
       });
     }
   } else {
@@ -788,8 +778,8 @@ function checkSystemicPattern(projectRoot: string, files: string[], extraExclude
   return {
     id: 'CK-06.5',
     name: '举一反三系统性扫描',
-    passed: systemicHits.length === 0, // 有同类问题 → 需要扩大方案
-    severity: systemicHits.length > 0 ? 'fail' : 'pass',
+    passed: true, // P0-B2: 不再因名称碰撞硬 FAIL（DS-23 由 reviewer 内容通道把关）
+    severity: systemicHits.length > 0 ? 'warn' : 'pass',
     violations,
     durationMs: Date.now() - start,
     cacheable: false,

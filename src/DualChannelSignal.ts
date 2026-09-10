@@ -11,7 +11,7 @@
  *   - machine_signal 绝不被拼接到 human_report 中展示
  */
 
-import type { MachineSignal, MachineSignalMetrics, StageOutput } from './types.js';
+import type { MachineSignal, MachineSignalMetrics, ReviewDetails, StageOutput } from './types.js';
 
 // ════════════════════════════════════════════════════════════════════
 // 工厂函数 — 构造标准 signal
@@ -95,7 +95,27 @@ export function validateMachineSignal(raw: unknown): MachineSignal {
     metrics: obj.metrics && typeof obj.metrics === 'object'
       ? obj.metrics as MachineSignalMetrics
       : undefined,
+    // H1: 保留合法对象形态的 review_details（S4→S4.5 契约通道）。
+    // 非法类型 → 缺失（undefined），由 ConvergenceGate 检测 REVIEW_DETAILS_MISSING fail-closed。
+    review_details: isValidReviewDetails(obj.review_details) ? obj.review_details : undefined,
   };
+}
+
+/**
+ * H1: 校验 review_details 是否合法对象形态（ReviewDetails 契约全字段为数组）。
+ * 合法 → 原样保留供 S4.5 ConvergenceGate invariant 检查；
+ * 非法/缺失 → 返回 false，调用方置 undefined → ConvergenceGate fail-closed。
+ */
+function isValidReviewDetails(raw: unknown): raw is ReviewDetails {
+  if (!raw || typeof raw !== 'object') return false;
+  const d = raw as Record<string, unknown>;
+  return (
+    Array.isArray(d.checked_dimensions) &&
+    Array.isArray(d.blocking) &&
+    Array.isArray(d.confirmations_met) &&
+    Array.isArray(d.confirmations_missing) &&
+    Array.isArray(d.advisories)
+  );
 }
 
 /** 校验双通道输出完整性 */

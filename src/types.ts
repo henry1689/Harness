@@ -78,6 +78,20 @@ export type StageStatus = 'pending' | 'running' | 'completed' | 'rejected' | 'sk
 /** 整个 Flow 的运行状态 */
 export type FlowStatus = 'idle' | 'running' | 'paused' | 'completed' | 'aborted';
 
+/** H0: 终态原因——机器可区分，禁止折叠为 error，禁止给内部熔断追加 user_abort */
+export type TerminalEndReason =
+  | 'completed'
+  | 'free_mode'
+  | 'retry_limit'
+  | 'human_denied'
+  | 'human_timeout'
+  | 'circuit_breaker'
+  | 'stage_error'
+  | 'user_abort'
+  | 'confirmations_pending'        // P0-A2: S4.5 内容达标但仅剩确认未声明（s2_evidence run 内固定 → 提前终局）
+  | 's3_patch_loop'                // E-02(enhance-v1): S3 补丁循环强制回审，S2 复批仍为旧证据 → 终局要求新方案
+  | 'manual_verification_required'; // H-02(enhance-v1): S6-B 人工验收未完成 → 悬挂终局（不签发 token）
+
 /** 门控决议结果（统一枚举） */
 export type GateResolution =
   | 'auto_passed'
@@ -106,10 +120,14 @@ export interface MachineSignal {
   passed: boolean;
   /** 风险等级 */
   risk_level: RiskLevel;
-  /** 驳回原因列表（条件门控解析此字段） */
+  /** 驳回原因列表（条件门控解析此字段）——H1: 仅承载最终 blocking violations（兼容镜像） */
   reject_reason: string[];
   /** 可选的量化指标 */
   metrics?: MachineSignalMetrics;
+  /** H1: 结构化评审详情——checked IDs、blocking、确认满足/缺失、advisory（ConvergenceGate 只读此结构化输入） */
+  review_details?: ReviewDetails;
+  /** H-04(enhance-v1): S4.5 完整评审证据（summary+full 分离；机器字段永不裁剪），供回流注入 memo 与 S7 审计 */
+  full_review_evidence?: import('./schemas/full-review-evidence.js').FullReviewEvidence;
 }
 
 /** 量化指标（S4 架构评审 / S5 编译测试 / S6 功能验证 共用） */
@@ -134,6 +152,50 @@ export interface MachineSignalMetrics {
   compliance_score?: number;
   /** S4.5 收敛轮次 */
   convergence_round?: number;
+  /** P0-A: 内容分达标但仍未声明的评审确认数（结构化簿记闸门） */
+  unresolved_confirmations?: number;
+  /** H-02(enhance-v1): S6-B 人工验收未完成 → true。FlowEngine 据此悬挂终局（run_status=await_manual_verification） */
+  await_manual_verification?: boolean;
+  /** H-02(enhance-v1): 本次 S6-B 对应的变更指纹（任务单寻址键，见 data/manual_tickets/） */
+  manual_ticket_key?: string;
+  /** H1: S4.5 typed diagnostics——blocking/advisory/confirmation 分通道结构化计数（不混 channel） */
+  s4_checked_dimensions?: number;
+  s4_blocking_count?: number;
+  s4_confirmations_met?: number;
+  s4_confirmations_missing?: number;
+  s4_advisory_count?: number;
+  /** H1: S4 review_details typed invariant 机器码诊断（分号分隔，空=无降级） */
+  s4_review_invariant?: string;
+}
+
+/** H1: 单个评审发现（结构化，rule=稳定规则标识） */
+export interface ReviewFinding {
+  rule: string;
+  detail: string;
+}
+
+/** H1: 需 S2 evidence.confirmations 精确匹配确认的前置事实 */
+export interface ConfirmationRequirement {
+  key: string;
+  label: string;
+}
+
+/** H1: 单个评审维度结果——checked=true 表示该维度已执行；空 blocking=已检查且通过 */
+export interface ReviewDimensionResult {
+  dimension_id: string;
+  checked: boolean;
+  blocking_violations: ReviewFinding[];
+  required_confirmations: ConfirmationRequirement[];
+  advisories: ReviewFinding[];
+}
+
+/** H1: MachineSignal 携带的结构化评审详情 */
+export interface ReviewDetails {
+  checked_dimensions: string[];
+  blocking: ReviewFinding[];
+  confirmations_met: string[];
+  confirmations_missing: string[];
+  advisories: ReviewFinding[];
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -285,6 +347,20 @@ export interface StageResult {
 // 流水线运行状态
 // ════════════════════════════════════════════════════════════════════
 
+/** H1: S2 审批证据——非秘密、可序列化、与本次 run 绑定；不含密码/token/签名 */
+export interface HumanApprovalEvidence {
+  approval_ref: string;
+  approved_plan: string;
+  change_classification: string;
+  global_architecture_decision: string;
+  confirmations: string[];
+  /** E-02(enhance-v1): S3 补丁循环强制回审时旧证据标记被取代（不删除，保留审计溯源） */
+  superseded?: boolean;
+  superseded_at?: string;
+  /** H-02(enhance-v1): S2 方案声明免人工验收 → S6-B 自动放行 */
+  skip_manual_verification?: boolean;
+}
+
 /** 流水线触发上下文 */
 export interface TriggerContext {
   /** 用户原始消息 */
@@ -299,10 +375,22 @@ export interface TriggerContext {
   isTrivial: boolean;
   /** 触发该流水线的用户标识 */
   triggeredBy?: string;
+  /** H1: 本次 run 的 S2 审批证据（非秘密；缺失/无效时 S2 fail-closed） */
+  s2_evidence?: HumanApprovalEvidence;
   /** 项目根目录（供 ConvergenceGate 运行 CK 检查） */
   projectRoot?: string;
   /** 🔴 P9: 修复编译错误专用豁免标志（true = S3 跳过编译检查，仅用于清理历史错误） */
   skip_s3_compile?: boolean;
+}
+
+/** E-02(enhance-v1): 运行期机器信号（随 run 归档，供 S7 审计溯源；不影响 DFA 跳转） */
+export interface RunSignal {
+  /** 信号标识（如 's3_stuck_in_patch_loop'） */
+  signal: string;
+  /** 发生时间（ISO） */
+  at: string;
+  /** 附加明细 */
+  detail?: Record<string, unknown>;
 }
 
 /** 整个 Flow 的运行时状态 */
@@ -313,6 +401,10 @@ export interface FlowRunState {
   flow_id: string;
   /** 流水线整体状态 */
   flow_status: FlowStatus;
+  /** H0: 首个真实终止原因（幂等，不可被后续覆盖；completed 时为 'completed'） */
+  end_reason?: TerminalEndReason;
+  /** H1: 本次 run 的 S2 审批证据（供 S4 确认项精确匹配；非秘密） */
+  s2_evidence?: HumanApprovalEvidence;
   /** 当前所在 stage_id */
   current_stage: string;
   /** 连续 auto 跳转计数（熔断用） */
@@ -321,6 +413,10 @@ export interface FlowRunState {
   stage_retry_count: number;
   /** 🔴 S3 专属驳回回流计数（独立于通用计数，max_s3_retries 限制） */
   s3_retry_count: number;
+  /** E-02(enhance-v1): 已触发 S3 补丁循环强制回审（旧 s2_evidence 已 superseded，需新方案重开） */
+  s3_patch_loop?: boolean;
+  /** E-02(enhance-v1): 运行期机器信号序列（随 run 归档，供 S7 审计溯源） */
+  run_signals?: RunSignal[];
   /** 🔴 S4.5 收敛轮次计数 */
   convergence_round: number;
   /** 🔴 S4.5 收敛历史（每轮得分快照） */

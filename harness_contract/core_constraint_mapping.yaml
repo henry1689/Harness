@@ -1,0 +1,110 @@
+# 🟡MEDIUM_SKELETON_ONLY（M-02）
+# 说明：10 铁律(FT) / 9 实现规则(IR) ↔ DS-xx / CK-xx 显式映射骨架。
+# 现状仍是纯 prompt 文本注入；本文件让机器可查「改哪里违背哪条顶层铁律」。
+# 尚未被全阶段注入改造消费（ContractResolver 仅接口，见 src/contract/ContractResolver.ts）。
+# 映射取值依据 wenstaros_core_repair_flow.yaml global_arch_constraint 十条 + CK 清单 + DS 命名。
+
+version: "1.0"
+generated: "2026-09-09"
+
+constraints:
+  # ── 顶层架构铁律 FT-01~FT-10 ──
+  - constraint_id: FT-01
+    title: 九层认知管线无循环依赖，chat.ts 仅顶层编排
+    desc: M1-M9 无反向依赖，禁止越层直接调用
+    mapped_ds: ["DS-01"]
+    mapped_ck: ["CK-01"]
+    violation_severity: fail
+  - constraint_id: FT-02
+    title: PFC 唯一顶层上下文门控，chat.ts 薄调度
+    desc: PrefrontalCortex 唯一门控；chat.ts 禁止堆业务
+    mapped_ds: ["DS-02"]
+    mapped_ck: ["CK-02"]
+    violation_severity: fail
+  - constraint_id: FT-03
+    title: FamilyGraph 户籍唯一数据源，分支 FG 隔离
+    mapped_ds: ["DS-03"]
+    mapped_ck: ["CK-03"]
+    violation_severity: fail
+  - constraint_id: FT-04
+    title: UUID TXS-xxxx 四层 belong_entity_uuid 标注不可删
+    mapped_ds: ["DS-04"]
+    mapped_ck: ["CK-04"]
+    violation_severity: fail
+  - constraint_id: FT-05
+    title: SQLiteAdapter 唯一持久写入通道，防抖 save()
+    mapped_ds: ["DS-05"]
+    mapped_ck: ["CK-06"]
+    violation_severity: fail
+  - constraint_id: FT-06
+    title: 会晤 _meetingEntityName 以 MEETING_PROP_POINTS 编目为唯一权威
+    mapped_ds: ["DS-06"]
+    mapped_ck: ["CK-05"]
+    violation_severity: fail
+  - constraint_id: FT-07
+    title: 新旧角色扮演双管线同步，ROLEPLAY_STRUCTURED_ENABLED 兼容
+    mapped_ds: ["DS-07"]
+    mapped_ck: []
+    violation_severity: warn
+  - constraint_id: FT-08
+    title: 数据只增不删（历史卷宗/记忆/黑钻禁删）
+    mapped_ds: ["DS-08"]
+    mapped_ck: ["CK-09"]
+    violation_severity: fail
+  - constraint_id: FT-09
+    title: chat.ts 22 段 finalKnowledgeText 注入顺序不可调换
+    mapped_ds: ["DS-09"]
+    mapped_ck: []
+    violation_severity: fail
+  - constraint_id: FT-10
+    title: 高风险文件修改全量 import 依赖评估
+    mapped_ds: ["DS-10"]
+    mapped_ck: ["CK-07", "CK-00"]
+    violation_severity: fail
+
+  # ── 实现规则 IR-01~IR-09（样例映射，接入期补全） ──
+  - constraint_id: IR-01
+    title: 顶层架构强制对齐
+    mapped_ds: ["DS-11", "DS-12"]
+    mapped_ck: ["CK-00"]
+    violation_severity: fail
+  - constraint_id: IR-02
+    title: 变更范围围栏与三级风险管控
+    mapped_ds: ["DS-12"]
+    mapped_ck: ["CK-00"]
+    violation_severity: fail
+  - constraint_id: IR-03
+    title: 上下游依赖全域校验
+    mapped_ds: ["DS-13"]
+    mapped_ck: ["CK-07"]
+    violation_severity: fail
+  - constraint_id: IR-04
+    title: 代码与文档双向同步
+    mapped_ds: ["DS-14"]
+    mapped_ck: []
+    violation_severity: warn
+  - constraint_id: IR-05
+    title: 双层代码质量准入（静态质量 + 鲁棒加固）
+    mapped_ds: ["DS-15"]
+    mapped_ck: []
+    violation_severity: fail
+  - constraint_id: IR-06
+    title: 共性/个性归类强制核验
+    mapped_ds: ["DS-16", "DS-23"]
+    mapped_ck: ["CK-06.5"]
+    violation_severity: fail
+  - constraint_id: IR-07
+    title: 全流程审计卷宗永久归档
+    mapped_ds: ["DS-17"]
+    mapped_ck: []
+    violation_severity: warn
+  - constraint_id: IR-08
+    title: 核心链路 Hook 侦测与运行态自检
+    mapped_ds: ["DS-18"]
+    mapped_ck: []
+    violation_severity: warn
+  - constraint_id: IR-09
+    title: LLM 全局优化提案弹性机制
+    mapped_ds: ["DS-19"]
+    mapped_ck: []
+    violation_severity: warn

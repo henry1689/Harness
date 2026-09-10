@@ -13,6 +13,9 @@
 
 import type { WhitelistKey } from './types.js';
 import { WhitelistViolationError } from './types.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
+import { isFullFileRewrite } from './writeguard/writeRatio.js';
 
 /** 白名单操作到实际文件系统操作的映射 */
 interface ActionMapping {
@@ -101,6 +104,12 @@ export class ToolWhitelistGuard {
   private static _blockedCount: number = 0;
   private static _allowedCount: number = 0;
 
+  // ── H-05(enhance-v1): 整文件覆写防护状态 ──
+  /** S2 审批白名单 allow_full_rewrite（仅来自 s2_evidence，禁止环境变量/CLI 绕过） */
+  private static _fullRewriteAllowlist: string[] = [];
+  /** 写审计（每个 S3 写操作记录：文件/操作/变更占比/是否拦截），供 audit 与测试读取 */
+  private static _writeAudit: Array<{ file: string; action: string; ratio: number | null; blocked: boolean; stage: string }> = [];
+
   // ════════════════════════════════════════════════════════════════
   // 公开 API
   // ════════════════════════════════════════════════════════════════
@@ -115,6 +124,9 @@ export class ToolWhitelistGuard {
     this._activeStageId = stageId;
     this._blockedCount = 0;
     this._allowedCount = 0;
+    this._writeAudit = [];
+    // H-05: 非 S3 阶段清空白名单（每阶段独立；仅 S3 允许 S2 声明的整文件重写白名单）
+    if (!stageId.startsWith('S3')) this._fullRewriteAllowlist = [];
     console.log(`[ToolWhitelistGuard] 🔒 已激活 (${stageId}), ${Object.keys(whitelist).length} 条规则`);
   }
 
@@ -237,6 +249,65 @@ export class ToolWhitelistGuard {
       blocked: this._blockedCount,
       stageId: this._activeStageId,
     };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // H-05(enhance-v1): 整文件覆写防护
+  // ════════════════════════════════════════════════════════════════
+
+  /**
+   * 注入 S2 审批允许整文件重写的文件白名单（allow_full_rewrite）。
+   * 🔴 来源唯一性：仅由 FlowEngine 在 S2 批准后从 s2_evidence.allow_full_rewrite 注入；
+   *    禁止环境变量/临时 CLI 绕过本闸门。
+   */
+  static setFullRewriteAllowlist(files: string[]): void {
+    this._fullRewriteAllowlist = (files || []).map(f => f.replace(/\\/g, '/'));
+  }
+
+  /** 读取写审计（文件/操作/变更占比/是否拦截） */
+  static getWriteAudit(): Array<{ file: string; action: string; ratio: number | null; blocked: boolean; stage: string }> {
+    return [...this._writeAudit];
+  }
+
+  /**
+   * S3 写操作 + 变更占比硬闸：疑似整文件覆写(占比>阈值)且不在 S2 白名单 → 拒绝。
+   * 阈值来自 data/harness_globals.json（writeRatio.loadRewriteThreshold），不硬编码。
+   *
+   * @param action  操作名（write_file / edit_file…）
+   * @param filePath 目标文件路径（相对或绝对）
+   * @param newContent 写入的新内容
+   * @throws WhitelistViolationError('S3_FORBID_FULL_FILE_OVERWRITE')
+   */
+  static checkWriteWithRatio(action: string, filePath: string, newContent: string): void {
+    const stage = this._activeStageId;
+    // 仅 S3 落地阶段启用占比硬闸；非流水线模式直接放行（兼容旧行为）
+    if (!stage.startsWith('S3')) return;
+    if (!this._activeWhitelist) return;
+
+    const norm = filePath.replace(/\\/g, '/');
+    const abs = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+    let oldContent: string | null = null;
+    try { if (existsSync(abs)) oldContent = readFileSync(abs, 'utf-8'); } catch { oldContent = null; }
+    if (oldContent === null) {
+      // 新建文件不参与覆写判定
+      this._writeAudit.push({ file: norm, action, ratio: null, blocked: false, stage });
+      return;
+    }
+    const { suspected, ratio } = isFullFileRewrite(oldContent, newContent);
+    const allowlisted = this._fullRewriteAllowlist.some(w => norm === w || norm.endsWith('/' + w) || norm.includes(w));
+    if (suspected && !allowlisted) {
+      this._blockedCount++;
+      this._writeAudit.push({ file: norm, action, ratio, blocked: true, stage });
+      const msg =
+        `⛔ S3 增量修复禁止整文件覆写（变更占比 ${ratio} > 覆写阈值）。` +
+        `文件 "${norm}" 疑似整文件重写。如需大规模重构：回到 S2 归类为结构性重构并在 s2_evidence.allow_full_rewrite 声明白名单；紧急豁免仅走 exemptions.json 且须绑定 debt_id。`;
+      console.error(`[ToolWhitelistGuard] 🚫 ${msg}`);
+      throw new WhitelistViolationError(action, 'S3_FORBID_FULL_FILE_OVERWRITE');
+    }
+    this._writeAudit.push({ file: norm, action, ratio, blocked: false, stage });
+    if (suspected) {
+      console.warn(`[ToolWhitelistGuard] ⚠️ S3 大改写(白名单放行): ${norm} 变更占比 ${ratio}（s2_evidence allow_full_rewrite）`);
+    }
   }
 
   // ════════════════════════════════════════════════════════════════

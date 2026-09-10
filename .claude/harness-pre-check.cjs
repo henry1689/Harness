@@ -128,7 +128,7 @@ try {
     fs.writeFileSync(path.join(AUDIT_DIR, 'EMERGENCY_BLOCK_' + Date.now() + '.json'),
       JSON.stringify({ timestamp: new Date().toISOString(), error: String(fatalErr), rule: 'FAILSAFE' }, null, 2));
   } catch (_) {}
-  console.log(JSON.stringify({ decision: 'deny',
+  console.log(JSON.stringify({ decision: 'block',
     reason: 'Harness SelfGuard EMERGENCY BLOCK: pre-check hook crashed. Operation denied. Error: ' + String(fatalErr)
   }));
 }
@@ -168,7 +168,7 @@ function run() {
       fs.writeFileSync(path.join(AUDIT_DIR, 'PARSE_FAIL_' + Date.now() + '.json'),
         JSON.stringify({ timestamp: new Date().toISOString(), tool: input.tool_name || '', raw: String(raw || '').slice(0, 300), rule: 'FAIL-CLOSED' }, null, 2));
     } catch (_) {}
-    return { decision: 'deny',
+    return { decision: 'block',
       reason: '🛑 HARNESS FAIL-CLOSED: 无法从 hook 输入解析文件路径，操作已拒绝（链路心跳保护）。\n' +
         '工具: ' + (input.tool_name || 'unknown') + '\n' +
         '请重试，或将完整路径放入 tool_input.file_path。' };
@@ -228,7 +228,7 @@ function run() {
   // 3.5 🔴 相对路径 cwd 兜底检测（P7-hotfix: 修复并行窗口联动断裂）
   // 核心问题：两个 Claude Code 窗口并发时，项目窗口 cwd 在 wenstar-cc 内，
   // Edit/Write 传相对路径 "src/webui/chat.ts"，不含 "/wenstar-cc/" 标记；
-  // 旧代码在此处静默 return { decision: 'allow' }，S1-S7 从未触发。
+  // 旧代码在此处静默放行（顶层 decision 返回 allow 值），S1-S7 从未触发。
   if (!isHarnessFile) {
     // 🔴 P9-fix: 同时考虑 input.cwd（Claude Code 真实传给 hook 的字段）+ 进程 cwd
     var cwd357 = (input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd() || '').replace(/\\/g, '/');
@@ -302,13 +302,13 @@ function run() {
   if (isGrep && (n.indexOf('src/') === 0 || n.indexOf('data/') === 0 || n.indexOf('.claude/') === 0 || n.toLowerCase().indexOf('harness') !== -1)) {
     isHarnessFile = true;
   }
-  if (!isHarnessFile) return { decision: 'allow' };
+  if (!isHarnessFile) return { decision: 'approve' };
 
   // T1: 保护区 → hard deny (applies to ALL tool types)
   for (var i = 0; i < PROTECTED.length; i++) {
     if (n.indexOf(PROTECTED[i]) === 0 || n.indexOf('/' + PROTECTED[i]) !== -1) {
       archiveViolation(n);
-      return { decision: 'deny', reason: 'BLOCKED: Protected zone. Path "' + n + '" is read-only.' };
+      return { decision: 'block', reason: 'BLOCKED: Protected zone. Path "' + n + '" is read-only.' };
     }
   }
 
@@ -317,7 +317,7 @@ function run() {
   if (!isReadOnly && isHarnessSelf && isLowRisk(n)) {
     console.error('[Harness] 🔒 Harness自身低风险文件不走T2放行: ' + n + ' — 交给自保护双因子检查');
   } else if (isLowRisk(n)) {
-    return { decision: 'allow' };
+    return { decision: 'approve' };
   }
 
   // ══════════════════════════════════════════════════════════
@@ -336,7 +336,7 @@ function run() {
       // 对于写操作，仍需检查流水线令牌
       if (isReadOnly) {
         // 读操作：豁免直接放行
-        return { decision: 'allow',
+        return { decision: 'approve',
           description: '[SelfGuard] 🔑 LOCKDOWN豁免放行(Read): ' + n + ' — 一次性豁免令牌 ' + override.override_id + ' 有效期内' };
       }
       // 写操作：豁免 + 仍需流水线令牌（继续走下面逻辑）
@@ -345,7 +345,7 @@ function run() {
       // 无豁免 → 直接拒绝
       incrementSentinelDenial(n);
       console.error('[Harness] ☠️ LOCKDOWN DENY: ' + n + ' — 哨兵封禁中，无有效豁免令牌');
-      return { decision: 'deny',
+      return { decision: 'block',
         reason: '☠️ SENTINEL LOCKDOWN: 哨兵封禁模式激活中。所有 Harness 文件操作被拒绝。\n原因: ' + (sentinel.reason || '安全事件/系统维护') + '\n\n唯一放行方式: 通过 SelfGuard MCP 获取一次性豁免令牌 (sentinel_override)\n  POST http://127.0.0.1:18770/sentinel/override\n  MCP: sentinel_override { files: ["' + n + '"], reason: "..." }' };
     }
   }
@@ -356,13 +356,13 @@ function run() {
     if (!disc) {
       // SENTINEL 模式下不自动创建纪律令牌 → 拒绝读取
       console.error('[Harness] 🟡 SENTINEL DENY Read: ' + n + ' — 哨兵模式要求读取前先获取纪律令牌');
-      return { decision: 'deny',
+      return { decision: 'block',
         reason: '🟡 SENTINEL: 哨兵模式要求所有读操作先获取纪律令牌。\n' +
           '请通过 MCP harness_init_discipline 或 POST http://127.0.0.1:18770/mcp 获取纪律令牌后重试。\n' +
           '原因: ' + (sentinel.reason || '敏感时期/外部审计') };
     }
     // 纪律令牌存在 → 放行
-    return { decision: 'allow' };
+    return { decision: 'approve' };
   }
 
   // ── READ-ONLY TOOLS (Read/Grep): Discipline check + bypass logging ──
@@ -374,11 +374,11 @@ function run() {
       disc = createDisciplineToken(n, 'auto-created-on-first-read');
       archiveDisciplineBypass(n, 'Read/Grep without prior S1 declaration. Discipline token auto-created.');
       console.error('[Harness] ⚠️ DISCIPLINE BYPASS: Read/Grep on ' + n + ' without S1 declaration. Auto-creating discipline token.');
-      return { decision: 'allow',
+      return { decision: 'approve',
         description: '[SelfGuard] ⚠️ 无S1声明即读取Harness文件。已自动创建纪律令牌并记录绕过事件。下次请先运行 harness_init_discipline。' };
     }
     // Discipline token exists → silently allow read
-    return { decision: 'allow' };
+    return { decision: 'approve' };
   }
 
   // ── 🔴 WRITE TOOLS (Edit/Write): Full pipeline token enforcement ──
@@ -401,7 +401,7 @@ function run() {
     }
   }
   if (missingTokenFiles.length > 3) {
-    return { decision: 'deny',
+    return { decision: 'block',
       reason: 'BATCH LIMIT: ' + missingTokenFiles.length + ' 个文件无有效令牌（总数 ' + allModified.length + ' 个）。\n单次操作最多 3 个未授权源文件。\n有令牌的文件不受此限制。\n请为多余文件通过 harness_run_flow 获取令牌，或分批修改。' };
   }
 
@@ -432,7 +432,7 @@ function run() {
           '  2. 输入 Harness 管理员密码\n' +
           '  3. 解锁有效期 30 分钟\n' +
           '  4. 解锁后再调用 harness_run_flow 获取流水线令牌';
-      return { decision: 'deny',
+      return { decision: 'block',
         reason: '☠️ HARNESS 自保护锁定 ☠️\n\n' +
           '你正在尝试修改 Harness 监管系统自身的代码！\n' +
           '文件: ' + n + '\n' +
@@ -464,7 +464,7 @@ function run() {
     if (!scopeResult.allowed) {
       console.error('[Harness] DiffScopeGuard rejected token scope for pre-check target: ' + n);
       console.error(diffScope.formatScopeResult(scopeResult));
-      return { decision: 'deny',
+      return { decision: 'block',
         reason: 'DIFF SCOPE GUARD: token scope does not cover requested write set.\n' + diffScope.formatScopeResult(scopeResult)
       };
     }
@@ -473,7 +473,7 @@ function run() {
     if (token.usage_count > 1) {
       // 已被使用 → 拒绝（防止令牌复用）
       destroyTokenFile(n);
-      return { decision: 'deny', reason: 'TOKEN REUSED: This token was already consumed. Tokens are single-use only. Re-run harness_run_flow.' };
+      return { decision: 'block', reason: 'TOKEN REUSED: This token was already consumed. Tokens are single-use only. Re-run harness_run_flow.' };
     }
     // 更新 usage_count 落盘
     try {
@@ -502,7 +502,7 @@ function run() {
       } catch (_er) {}
     }
 
-    return { decision: 'allow' };
+    return { decision: 'approve' };
   }
 
   // 🔴 v2.9: 豁免不再完全放行。豁免只放宽「指定检查」，token 仍必需。
@@ -519,12 +519,12 @@ function run() {
       // v2.9.2-fix: toolName → HOOK_TOOL_NAME（原变量未定义 → 15 次 EMERGENCY_BLOCK 崩溃）
       if (typeof exemptionsCoreCoversOp === 'function' && !exemptionsCoreCoversOp(exemptionRecord, HOOK_TOOL_NAME)) {
         archiveExemptionDeny(n, exemptionRecord, HOOK_TOOL_NAME);
-        return { decision: 'deny',
+        return { decision: 'block',
           reason: '[Harness] 🔒 豁免不覆盖此操作: ' + n + ' (工具 ' + HOOK_TOOL_NAME + ' 不在豁免 operations 内)' };
       }
       archiveExemptionUse(n, exemptionRecord, { tool: HOOK_TOOL_NAME, deferred: true });
       console.error('[Harness] 🔑 EXEMPTION(deferred): ' + n + ' — 豁免期内但【仍需流水线令牌】(至 ' + new Date(exemptionRecord.expires_at).toLocaleTimeString('zh-CN') + ')');
-      return { decision: 'deny',
+      return { decision: 'block',
         reason: '[Harness] 🔒 豁免不替代流水线令牌: ' + n + ' — 文件在豁免期内(' + (exemptionRecord.reason || 'v1豁免') + ')，但豁免只放宽指定检查，仍需 token。请调 harness_run_flow 并传 exempt_files 包含此文件。' };
     }
   }
@@ -533,19 +533,19 @@ function run() {
   var osGuard = checkOSGuard(n);
   if (!osGuard.allowed) {
     archiveViolation(n);
-    return { decision: 'deny', reason: 'OS GUARD: ' + osGuard.reason };
+    return { decision: 'block', reason: 'OS GUARD: ' + osGuard.reason };
   }
 
   // 熔断冷却检查
   var cooldown = checkCooldown(n);
   if (cooldown && cooldown.active) {
-    return { decision: 'deny',
+    return { decision: 'block',
       reason: 'CIRCUIT BREAKER ACTIVE: ' + n + '\nRejected ' + (cooldown.count || '3+') + ' times. Cooldown until: ' + new Date(cooldown.until).toISOString() + '\nFile TEMPORARILY LOCKED.' };
   }
 
   var rejectResult = incrementBreaker(n, isHigh);
   if (rejectResult === -1) {
-    return { decision: 'deny',
+    return { decision: 'block',
       reason: 'CIRCUIT BREAKER TRIGGERED: ' + n + '\nRejected ' + (isHigh ? '3' : '5') + ' times. File LOCKED for 30 min. Manual review required.' };
   }
 
@@ -579,7 +579,7 @@ function run() {
     'Pipeline issues one-time token ONLY after ALL stages (including human gates) pass.\nOverride: reply "disable Harness free mode" (at your own risk).' +
     autoStartNote;
 
-  return { decision: 'deny', reason: reason };
+  return { decision: 'block', reason: reason };
 }
 
 /* ── (三) 多维令牌校验 ── */

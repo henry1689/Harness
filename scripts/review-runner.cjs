@@ -24,36 +24,29 @@ process.stdin.on('end', async () => {
     const { stage, state } = payload;
 
     if (!stage || !state) {
-      process.send?.({ error: 'Missing stage or state in input' });
+      process.stdout.write(JSON.stringify({ error: 'Missing stage or state in input' }));
       process.exit(1);
     }
 
-    // 注册 tsx loader 以支持 TypeScript ESM import
-    try { require('tsx/cjs'); } catch (_) { /* tsx 可能不在 node_modules 路径中 */ }
-
-    // 动态导入 ESM 模块
-    const { review } = await import('../src/DelegateReviewer.js');
+    // 🔴 tsx 4.x: require('tsx/cjs') 已失效，且与父进程注入的 --import tsx 冲突。
+    // 改用绝对路径 file:// URL import，由父进程 execArgv: ['--import','tsx'] 的 ESM loader 解析 .ts。
+    const { review } = await import('file:///D:/AI文件/harness/src/DelegateReviewer.js');
 
     // 执行评审（超时保护 60s）
     const timeout = setTimeout(() => {
-      process.send?.({ machine_signal: { passed: false, risk_level: 'high', reject_reason: ['DelegateReviewer 评审超时 (60s)'] }, human_report: '# ⚠️ 评审超时\n\n独立评审子进程在 60 秒内未完成。' });
+      process.stdout.write(JSON.stringify({ machine_signal: { passed: false, risk_level: 'high', reject_reason: ['DelegateReviewer 评审超时 (60s)'] }, human_report: '# ⚠️ 评审超时\n\n独立评审子进程在 60 秒内未完成。' }));
       process.exit(1);
     }, 60_000);
 
     const result = await review(stage, state);
     clearTimeout(timeout);
 
-    if (process.send) {
-      process.send(result);
-    } else {
-      // fallback: stdout
-      process.stdout.write(JSON.stringify(result));
-    }
-
+    // 🔴 tsx loader 会劫持 fork 的 IPC 通道，process.send 不可靠。统一用 stdout 输出 JSON 结果。
+    process.stdout.write(JSON.stringify(result));
     process.exit(0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.send?.({ machine_signal: { passed: false, risk_level: 'high', reject_reason: [`review-runner 执行异常: ${msg}`] }, human_report: `# ❌ 评审子进程异常\n\n\`\`\`\n${msg}\n\`\`\`` });
+    process.stdout.write(JSON.stringify({ machine_signal: { passed: false, risk_level: 'high', reject_reason: [`review-runner 执行异常: ${msg}`] }, human_report: `# ❌ 评审子进程异常\n\n\`\`\`\n${msg}\n\`\`\`` }));
     process.exit(1);
   }
 });

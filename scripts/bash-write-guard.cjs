@@ -484,7 +484,7 @@ function checkCommand(command, cwd) {
     const blind = isDangerousBlind(seg);
     if (blind) {
       archive('deny', { command: command.slice(0, 300), target: '无条件危险命令 (blind): ' + blind.source });
-      return { decision: 'deny', reason: '🛑 Bash-write-guard: 检测到无条件危险命令（harness 仓库 cwd 内）。\n匹配: ' + command.slice(0, 200) + '\n\n此类命令会清空/覆写工作区（含密钥、令牌、防线代码）。\n如需维护 Harness，请走解锁流程 + Edit/Write 工具。' };
+      return { decision: 'block', reason: '🛑 Bash-write-guard: 检测到无条件危险命令（harness 仓库 cwd 内）。\n匹配: ' + command.slice(0, 200) + '\n\n此类命令会清空/覆写工作区（含密钥、令牌、防线代码）。\n如需维护 Harness，请走解锁流程 + Edit/Write 工具。' };
     }
     for (const t of extractWriteTargets(seg)) {
       if (isTmp(t.path, state.cwd)) continue;
@@ -492,13 +492,13 @@ function checkCommand(command, cwd) {
       if (hitsCriticalPath(t.path, state.cwd)) {
         archive('deny', { command: command.slice(0, 300), target: t.path, reason: t.reason });
         return {
-          decision: 'deny',
+          decision: 'block',
           reason: `🛑 Bash-write-guard: 检测到对 Harness 关键安全文件的写操作。\n目标: ${t.path}\n命令: ${command.slice(0, 200)}\n\n这些文件（密码/密钥/令牌/防线代码）受 Harness 双因子保护，只允许通过正式流程修改。\n如需修改 Harness 自身代码，请走解锁流程（用户运行 harness-unlock.cjs）并使用 Edit/Write 工具。`,
         };
       }
     }
   }
-  return { decision: 'allow' };
+  return { decision: 'approve' };
 }
 
 /** 审计 */
@@ -520,15 +520,15 @@ function run() {
   const cwd = String(ti.cwd || input.cwd || '').trim() || process.cwd();
 
   // 只拦截 Bash
-  if (toolName !== 'Bash') return { decision: 'allow' };
+  if (toolName !== 'Bash') return { decision: 'approve' };
   if (!command) {
     archive('parse_fail', { reason: 'empty command', tool: toolName });
-    return { decision: 'deny', reason: '🛑 Bash-write-guard: 无法解析 Bash 命令（fail-closed）。' };
+    return { decision: 'block', reason: '🛑 Bash-write-guard: 无法解析 Bash 命令（fail-closed）。' };
   }
 
   const result = checkCommand(command, cwd);
   if (result === null) {
-    return { decision: 'deny', reason: '🛑 Bash-write-guard: 无法解析 Bash 命令（未闭合引号/heredoc，fail-closed）。' };
+    return { decision: 'block', reason: '🛑 Bash-write-guard: 无法解析 Bash 命令（未闭合引号/heredoc，fail-closed）。' };
   }
   return result;
 }

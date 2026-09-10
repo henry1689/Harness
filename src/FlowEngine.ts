@@ -73,6 +73,8 @@ export interface FlowResult {
   end_reason: TerminalEndReason;
   /** H0: 流水线终态（completed / aborted / free_mode）——由 state 派生，与 success/end_reason 机械一致 */
   flow_status?: FlowStatus;
+  /** H-02/H-01(enhance-v1): 扩展运行状态——completed | aborted | await_manual_verification | archive_invalid（扩展枚举，不改旧语义） */
+  run_status?: 'completed' | 'aborted' | 'await_manual_verification' | 'archive_invalid';
   /** H0: 运行模式（pipeline / free）——供 token 签发 policy 校验 mode=pipeline */
   mode?: RunMode;
   /** 各 stage 的执行结果 */
@@ -107,6 +109,10 @@ export class FlowEngine {
   private _terminalLogged = false;
   /** H1: 本次 run 的 S2 审批证据（start 时从 context 捕获，S2 注入 human_report/global memo） */
   private _s2Evidence: HumanApprovalEvidence | null = null;
+  /** H-02(enhance-v1): S6-B 人工验收悬挂——非空时为变更指纹，run_status 派生为 await_manual_verification */
+  private _awaitManualTicketKey: string | null = null;
+  /** H-01(enhance-v1): S7-B 归档校验失败过——终局若为 abort，run_status 派生为 archive_invalid（优先于 aborted） */
+  private _archiveInvalid = false;
 
   constructor(options: FlowEngineOptions = {}) {
     // 🔴 自动批准模式：构造一个始终返回 'approved' 的回调
@@ -288,6 +294,38 @@ export class FlowEngine {
    * 🔴 确定性跳转——AI 无权限干预。
    * 跳转目标由纯代码逻辑根据 gate_type 和 gate_resolution 计算。
    */
+  /** E-02(enhance-v1): 补丁循环历史驳回要点（注入 memo 供 S2 重审，紧凑文本） */
+  private buildPatchLoopBrief(fromStage: string): string {
+    const lines = ['## 🔴 S3 补丁循环 → 强制架构重审（enhance-v1 E-02）', `触发回流源: ${fromStage}`];
+    const hist = this.state?.convergence_history ?? [];
+    if (hist.length > 0) {
+      lines.push('S4.5 收敛历史: ' + hist.map(h => `r${h.round}=${h.overallScore}%(${h.decision})`).join(' → '));
+    }
+    const s4 = this.state?.stage_results?.get('S4_Arch_Review');
+    const rr = s4?.machine_signal?.reject_reason;
+    if (Array.isArray(rr) && rr.length > 0) {
+      lines.push('最近 S4 驳回要点:');
+      for (const r of rr.slice(0, 12)) lines.push(`  - ${r}`);
+    }
+    lines.push('→ S2 重审要求：重新输出「补丁 / 架构优化」两套方案并解释连续轮次未达标根因；补丁方案必须登记债务(tech_debt_ledger)；无新 s2_evidence 不放行 S3。');
+    return lines.join('\n');
+  }
+
+  /** H-04(enhance-v1): 将完整评审证据压缩为紧凑文本并入 memo（机器字段保留，长文本已由 ConvergenceGate 压缩） */
+  private injectFullReviewEvidenceToMemo(ev: import('./schemas/full-review-evidence.js').FullReviewEvidence): void {
+    if (!this.memoStore || !this.state || !ev) return;
+    const lines = ['## 📋 S4.5 完整评审证据（H-04：编码前必读全部明细，勿只看摘要）', `run=${ev.run_id} | round=${ev.convergence_round}`];
+    if (ev.ds_score_details.length > 0) {
+      lines.push('DS 扣分明细:');
+      for (const d of ev.ds_score_details) lines.push(`  - ${d.ds_id} ${d.score_delta}分 | ${d.reason} | 建议: ${d.suggest_fix}`);
+    }
+    const failCk = (ev.ck_reports ?? []).filter(c => !c.passed);
+    if (failCk.length > 0) lines.push('未通过 CK: ' + failCk.map(c => `${c.ck_id}(${(c.violations || []).map(v => v.message).join(';')})`).join(' | '));
+    const base = this.memoStore.content || '';
+    this.memoStore.save((base ? base + '\n\n' : '') + lines.join('\n'));
+    this.state.global_memo = this.memoStore.content ?? '';
+  }
+
   private async transitionTo(stageId: string): Promise<void> {
     if (this._aborted) {
       console.log('[FlowEngine] 流水线已中止，停止跳转');
@@ -310,6 +348,17 @@ export class FlowEngine {
     const stage = this.config.stages.find(s => s.stage_id === stageId);
     if (!stage) {
       throw new StageExecutionError(stageId, `配置中不存在 stage_id: ${stageId}`);
+    }
+
+    // E-02(enhance-v1): S3 补丁循环强制回 S1→S2 后，若 S2 仍携带被 superseded 的旧证据
+    // （引擎无运行中重新审批通路）→ 不给"旧证据自动复批→无限循环"留路：可行动终局，要求以新 s2_evidence 重开。
+    if (stageId === 'S2_Solution_Design' && this.state.s3_patch_loop && this.state.s2_evidence?.superseded) {
+      this.recordAbort('s3_patch_loop',
+        'S3 补丁循环已达上限并强制回架构重审，但 S2 仍携带被取代(superseded)的旧审批证据——引擎无运行中重新审批通路。' +
+        '请以「新 s2_evidence」重开 harness_run_flow：补丁方案必须绑定 tech_debt_ledger 债务登记，或改用架构重构方案。全部历史驳回证据已保留在本次 run 卷宗。');
+      ToolWhitelistGuard.deactivate();
+      console.error('[FlowEngine] ⏹ S3 补丁循环终局 (s3_patch_loop): 需新 s2_evidence 重开');
+      return;
     }
 
     // 更新状态
@@ -396,7 +445,7 @@ export class FlowEngine {
     }
 
     // 🔴 确定性跳转：纯代码逻辑决定下一 stage
-    const nextStage = this.determineNextStage(stage, resolution);
+    let nextStage = this.determineNextStage(stage, resolution); // E-02: let —— S3 补丁循环可强制改道 S1
 
     // 🔴 human gate 超时/驳回 → 直接中止流水线，不进入下一阶段
     if (resolution === 'human_timeout' || resolution === 'human_denied') {
@@ -409,19 +458,71 @@ export class FlowEngine {
       return;
     }
 
+    // ── H-01/H-02(enhance-v1): S6-B / S7-B 扩展终局语义 ──
+    // S6-B 人工验收未完成 → 悬挂终局：不回流 S3、不签发 token。
+    // 原因：FlowEngine 无运行中暂停/恢复原语，故落地形态为「悬挂 + 确认后重跑」；
+    //   任务单按 change_key（稳定变更指纹）寻址，重跑同一批文件即命中同一张单。
+    const _ms = result.machine_signal as { metrics?: { await_manual_verification?: boolean; manual_ticket_key?: string } } | undefined;
+    if (stageId.startsWith('S6') && resolution === 'condition_rejected' && _ms?.metrics?.await_manual_verification === true) {
+      this._awaitManualTicketKey = _ms.metrics.manual_ticket_key ?? null;
+      const key = this._awaitManualTicketKey ?? '(未生成)';
+      this.recordAbort('manual_verification_required',
+        `S6-B 人工验收未完成（变更指纹 ${key}）→ 悬挂终局，未签发写入令牌。` +
+        `请先运行 scripts/harness-manual-confirm.cjs 逐项确认，再以同一批文件重跑 harness_run_flow（change_key 相同 → 命中同一张任务单 → 自动放行 S7）。`);
+      ToolWhitelistGuard.deactivate();
+      console.error(`[FlowEngine] ⏸ S6-B 悬挂终局 (await_manual_verification): ${key}`);
+      return;
+    }
+    // S7-B 归档校验失败 → 标记 archive_invalid + 运行期信号（随 run 归档）。
+    // 回退 S7-A 重试；若最终因回流熔断中止，run_status 暴露为 archive_invalid 而非笼统 aborted。
+    if (stageId.startsWith('S7') && resolution === 'condition_rejected') {
+      this._archiveInvalid = true;
+      this.state.run_signals = this.state.run_signals ?? [];
+      this.state.run_signals.push({
+        signal: 's7_archive_invalid',
+        at: new Date().toISOString(),
+        detail: { from: stageId, to: nextStage, reasons: (result.machine_signal?.reject_reason ?? []).slice(0, 3) },
+      });
+      console.error(`[FlowEngine] 📦 S7-B 归档校验失败 → 回退 ${nextStage} 补全归档产物 (archive_invalid)`);
+    }
+
     // 🔴 回流计数器：检测是否回到 S3 或更高序号回退
     if (this.isStageRegression(stageId, nextStage)) {
       // S3 专属计数（S4/S5/S6 驳回→S3）
       if (nextStage.startsWith('S3')) {
         this.state.s3_retry_count++;
         const maxS3 = this.config?.max_s3_retries ?? 3;
-        if (this.state.s3_retry_count > maxS3) {
-          console.error(`[FlowEngine] 🔴 S3 驳回熔断: 已回流 ${this.state.s3_retry_count}/${maxS3} 次，触发强制锁定 → 需人工解锁`);
-          this.recordAbort('retry_limit', `S3 驳回回流 ${this.state.s3_retry_count}/${maxS3} 次超限，强制锁定——需人工解锁`);
-          ToolWhitelistGuard.deactivate();
-          return;
+        if (this.state.s3_retry_count >= maxS3) {
+          // E-02(enhance-v1): 不再直接锁死——达 max_s3_retries 轮编码未达标即强制回 S1→S2 架构重审。
+          // 旧 s2_evidence 标记 superseded（保留审计溯源）；机器信号入 state.run_signals（随 run 归档）；
+          // 计数器归零以开启新 S2 审批周期；历史驳回要点写入 memo 供 S2 重审读取。
+          //
+          // 🔴 E-02-hardstop: 计数器归零使「S3 熔断」永不可达 → 必须自带上界，否则当 S2 可被
+          // 自动放行（autoApproveHumanGate / 无证据守卫未命中）时会 S1→S2→S3→S4→S4.5→S1 无限循环。
+          // 语义：强制回架构重审只给一次机会；第二次仍达上限 → 自动修复不可达，终局要求人工介入。
+          const priorPatchLoops = (this.state.run_signals ?? []).filter(s => s.signal === 's3_stuck_in_patch_loop').length;
+          if (priorPatchLoops >= 1) {
+            this.recordAbort('s3_patch_loop',
+              `S3 补丁循环已强制回架构重审 ${priorPatchLoops} 次，编码仍达 ${maxS3} 轮未达标 → 自动修复不可达，终局。` +
+              '请人工介入：收敛问题定义与方案（可用 harness-manual-confirm.cjs 记录人工验收结论），或缩小改动范围后重开 run。');
+            ToolWhitelistGuard.deactivate();
+            console.error(`[FlowEngine] ⏹ S3 补丁循环硬止 (s3_patch_loop): 已重审 ${priorPatchLoops} 次仍未达标 → 终局`);
+            return;
+          }
+          const at = new Date().toISOString();
+          this.state.s3_retry_count = 0;
+          this.state.s3_patch_loop = true;
+          this.state.run_signals = this.state.run_signals ?? [];
+          this.state.run_signals.push({ signal: 's3_stuck_in_patch_loop', at, detail: { from: stageId, limit: maxS3 } });
+          if (this.state.s2_evidence) { this.state.s2_evidence.superseded = true; this.state.s2_evidence.superseded_at = at; }
+          if (this._s2Evidence) { this._s2Evidence.superseded = true; this._s2Evidence.superseded_at = at; }
+          const brief = this.buildPatchLoopBrief(stageId);
+          if (this.memoStore && brief) { this.memoStore.save(brief); this.state.global_memo = this.memoStore.content; }
+          console.error(`[FlowEngine] 🔴 S3 补丁循环: ${stageId}→S3 达 ${maxS3} 轮未达标 → WARN: 强制回退架构重审 S1→S2（旧 s2_evidence 已 superseded，需新方案）`);
+          nextStage = 'S1_Problem_Analysis'; // DFA 强制跳回架构预分析（S1 auto → S2 human）
+        } else {
+          console.log(`[FlowEngine] 🔄 S3 驳回回流 #${this.state.s3_retry_count}/${maxS3}: ${stageId}→${nextStage}`);
         }
-        console.log(`[FlowEngine] 🔄 S3 驳回回流 #${this.state.s3_retry_count}/${maxS3}: ${stageId}→${nextStage}`);
       } else {
         // 通用回流计数器（非 S3 驳回）
         this.state.stage_retry_count++;
@@ -434,6 +535,12 @@ export class FlowEngine {
         }
         console.log(`[FlowEngine] 🔄 回流 #${this.state.stage_retry_count}/${maxRetries}: ${stageId}→${nextStage}`);
       }
+    }
+
+    // H-04(enhance-v1): S4.5 驳回回流 S3 前，把完整评审证据(full_review_evidence)注入 memo——下游编码不再只见摘要
+    if (stageId.startsWith('S4.5') && resolution === 'condition_rejected' && nextStage.startsWith('S3')) {
+      const ev = (result.machine_signal as { full_review_evidence?: import('./schemas/full-review-evidence.js').FullReviewEvidence })?.full_review_evidence;
+      if (ev) this.injectFullReviewEvidenceToMemo(ev);
     }
 
     // 停用当前 stage 的白名单
@@ -650,9 +757,22 @@ export class FlowEngine {
       success,
       end_reason: endReason,
       flow_status: this.state?.flow_status,
+      run_status: this.deriveRunStatus(endReason),
       mode: this.state?.mode ?? 'pipeline',
       stage_results: stageResults,
     };
+  }
+
+  /**
+   * H-02/H-01(enhance-v1): run_status 派生（单一真值源，优先级从高到低）。
+   * await_manual_verification（S6-B 悬挂）> completed > archive_invalid（S7-B 校验失败终局）> aborted。
+   * 旧行为不变：非以上情形一律 aborted/completed（老 run 无 S6-B/S7-B 自然落回旧语义）。
+   */
+  private deriveRunStatus(endReason: TerminalEndReason): 'completed' | 'aborted' | 'await_manual_verification' | 'archive_invalid' {
+    if (this._awaitManualTicketKey) return 'await_manual_verification';
+    if (endReason === 'completed') return 'completed';
+    if (this._archiveInvalid) return 'archive_invalid';
+    return 'aborted';
   }
 
   /**

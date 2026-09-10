@@ -547,6 +547,15 @@ mcpServer.registerTool(
       }
       return convergenceEvaluate(stage, st);
     });
+    // H-01(enhance-v1): S7-B 归档完整性硬校验（进程内 delegate，无 LLM）
+    //   读 S7-A 落盘的 data/archives/<run_id>.json → S7ArchiveValidator R1-R5 → pass/reject 双通道
+    const { s7ArchiveValidateDelegate } = await import('../src/s7/S7ArchiveDelegate.js');
+    delegateFnMap.set('S7-B_Archive_Validate', s7ArchiveValidateDelegate);
+    // H-02(enhance-v1): S6-B 人工验收门控（进程内 delegate，无 LLM）
+    //   按 change_key（稳定变更指纹）读/建 data/manual_tickets/<change_key>.json；
+    //   未全确认 → 驳回（FlowEngine 悬挂终局 run_status=await_manual_verification，不签发 token）
+    const { s6ManualVerifyDelegate } = await import('../src/s6/S6ManualVerifyDelegate.js');
+    delegateFnMap.set('S6-B_Manual_Verify', s6ManualVerifyDelegate);
 
     // H1: 不再无条件自动批准。仅当本次 run 携带【有效】S2 审批证据时才批准 human gate；
     //     无证据 / 证据无效 → denied（fail-closed）。S2 是唯一 human gate 节点。
@@ -645,9 +654,20 @@ mcpServer.registerTool(
     const tokenNote = tokenResult.issued
       ? `Token issued for ${tokenResult.issuedCount} file(s).`
       : `No token issued: ${tokenResult.detail || 'unknown reason'}.`;
-    const humanGateNote = result.success
+    let humanGateNote = result.success
       ? `Pipeline completed. ${tokenNote}`
       : `Pipeline ${result.end_reason}. Human approval required for S1/S2 stages. No token issued.`;
+    // H-02/H-01(enhance-v1): 区分「悬挂待人工」与「归档校验失败」——二者非错误，需不同处置
+    if (result.run_status === 'await_manual_verification') {
+      humanGateNote =
+        '⏸ S6-B 人工验收未完成 → 本次未签发写入令牌。请运行 ' +
+        'node D:/AI文件/harness/scripts/harness-manual-confirm.cjs list ' +
+        '查看任务单，逐项 confirm 后，以同一批文件重跑 harness_run_flow（change_key 相同 → 命中同一张任务单 → 自动放行 S7）。';
+    } else if (result.run_status === 'archive_invalid') {
+      humanGateNote =
+        '📦 S7-B 归档校验失败并已回退 S7-A 补全归档产物，但回流达上限中止 → 无令牌。' +
+        '请在 S7-A 产出 data/archives/<run_id>.json（diff_files/rollback_plan/verification_checklist/debt_marker）后重跑。';
+    }
 
     return {
       content: [{
@@ -657,6 +677,8 @@ mcpServer.registerTool(
           run_id: result.run_id,
           end_reason: result.end_reason,
           flow_status: result.flow_status,
+          // H-02/H-01(enhance-v1): completed | aborted | await_manual_verification | archive_invalid
+          run_status: result.run_status,
           risk,
           files,
           stage_count: result.stage_results.length,

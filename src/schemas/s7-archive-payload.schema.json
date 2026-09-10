@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "harness:s7-archive-payload",
+  "title": "S7ArchivePayload",
+  "type": "object",
+  "required": ["change_summary", "rollback_plan", "verification_checklist", "debt_marker", "audit_ref"],
+  "properties": {
+    "change_summary": { "type": "string" },
+    "rollback_plan": {
+      "type": "object",
+      "required": ["modified_files", "rollback_steps"],
+      "properties": {
+        "modified_files": { "type": "array", "items": { "type": "string" } },
+        "rollback_steps": { "type": "string" }
+      }
+    },
+    "verification_checklist": { "type": "array", "items": { "type": "object" } },
+    "debt_marker": {
+      "type": "object",
+      "required": ["is_patch", "debt_item_id"],
+      "properties": {
+        "is_patch": { "type": "boolean" },
+        "debt_item_id": { "type": ["string", "null"] },
+        "three_round_review_plan": { "type": ["string", "null"] }
+      }
+    },
+    "audit_ref": { "type": "string" },
+    "exemption_id": { "type": ["string", "null"] }
+  }
+}

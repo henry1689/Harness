@@ -1,0 +1,49 @@
+# 🟡MEDIUM_SKELETON_ONLY（M-01）
+# 说明：DS/CK 项目化规则外置骨架。尚未被 ComplianceScorer/ConvergenceGate 加载；
+# 通用引擎仍走 TS 硬编码 fallback。接入期（M-01 完成）后，本文件成为 WenStar 契约唯一来源，
+# 支持按里程碑叠加（如 wenstar_p0_overlay.yaml、wenstar_p2_split_overlay.yaml）。
+#
+# 🟢FUTURE：白皮书/蓝皮书/三体 DNA 文档比对（L-02）将消费本契约的 ds/ck 结构做自动对齐。
+#
+# 字段约定见 01 方案 §4.5；权重/豁免当前为样例值，接入期以 DesignStandards.ts 现值为准做全量抽离。
+
+overlay_meta:
+  overlay_id: wenstar_v1.0_overlay
+  milestone: "full"
+  version: "1.0"
+  effective_date: "2026-09-09"
+
+# DS 规则（样例；全量 23 条抽离属 M-01 接入期工作）
+ds_rules:
+  DS-02:
+    weight: 15
+    enabled: true
+    exemption_conditions: []            # 例如 [{ milestone: "P2#8-split", until: "2026-12-31" }]
+  DS-05:
+    weight: 12
+    enabled: true
+    exemption_conditions: []
+  DS-06:
+    weight: 12
+    enabled: true
+    exemption_conditions: []
+  DS-09:
+    weight: 10
+    enabled: true
+    exemption_conditions: []
+  DS-23:
+    weight: 8
+    enabled: true
+    exemption_conditions: []            # CK-06.5 名称碰撞已降 warn（P0-B2），不在此豁免
+
+# CK 规则（样例）
+ck_rules:
+  CK-06:
+    enabled: true
+    severity: blocking
+  CK-06.5:
+    enabled: true
+    severity: warn                     # P0-B2：名称碰撞→warn；真共性交 S4 reviewer 内容通道
+  CK-08:
+    enabled: true
+    severity: blocking

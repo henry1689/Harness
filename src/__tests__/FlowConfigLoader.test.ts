@@ -18,7 +18,7 @@ describe('FlowConfigLoader', () => {
     expect(config.flow_id).toBe('wenstaros_core_repair_flow');
     expect(config.version).toBe('2');  // YAML 2.0 → Number → String('2')
     expect(config.max_jump_limit).toBe(10);
-    expect(config.stages).toHaveLength(8);
+    expect(config.stages).toHaveLength(10); // 8 → 10：H-01/H-02(enhance-v1) 拆出 S6-B / S7-B
 
     // 验证 global_arch_constraint 被正确解析
     expect(config.global_arch_constraint.length).toBeGreaterThan(100);
@@ -92,13 +92,43 @@ describe('FlowConfigLoader', () => {
     expect(s45.tool_whitelist.write_file).toBe(false);
   });
 
-  it('验证 S7 最终阶段配置', () => {
+  it('验证 S6 拆分（S6-A 机器校验 / S6-B 人工验收门控）', () => {
     const config = loadFlowConfig('wenstaros_core_repair_flow.yaml');
-    const s7 = config.stages[7];  // 索引从 6 → 7（因插入 S4.5）
+    const s6a = config.stages[6];
+    const s6b = config.stages[7];
 
-    expect(s7.stage_id).toBe('S7_Change_Archive');
-    expect(s7.gate_type).toBe('auto');
-    expect(s7.next_stage).toBe('END');
+    // S6-A：机器硬校验，condition gate，通过后进 S6-B（不再直接进 S7）
+    expect(s6a.stage_id).toBe('S6-A_Function_Verify_Machine');
+    expect(s6a.gate_type).toBe('condition');
+    expect(s6a.runner_mode).toBe('local');
+    expect(s6a.next_stage_pass).toBe('S6-B_Manual_Verify');
+    expect(s6a.next_stage_reject).toBe('S3_Code_Implement');
+
+    // S6-B：人工验收门控，delegate 进程内执行
+    expect(s6b.stage_id).toBe('S6-B_Manual_Verify');
+    expect(s6b.gate_type).toBe('condition');
+    expect(s6b.runner_mode).toBe('delegate');
+    expect(s6b.next_stage_pass).toBe('S7-A_Change_Archive');
+    expect(s6b.tool_whitelist.write_file).toBe(false);
+  });
+
+  it('验证 S7 拆分（S7-A 归档产出 / S7-B 归档硬校验）', () => {
+    const config = loadFlowConfig('wenstaros_core_repair_flow.yaml');
+    const s7a = config.stages[8]; // 索引从 6 → 8（因插入 S4.5 与 S6-B）
+    const s7b = config.stages[9];
+
+    // S7-A：产出结构化 s7_archive_payload，auto gate
+    expect(s7a.stage_id).toBe('S7-A_Change_Archive');
+    expect(s7a.gate_type).toBe('auto');
+    expect(s7a.next_stage).toBe('S7-B_Archive_Validate');
+    expect(s7a.work_manual).toContain('data/archives/');
+
+    // S7-B：归档完整性硬校验（delegate），失败回退 S7-A 补全
+    expect(s7b.stage_id).toBe('S7-B_Archive_Validate');
+    expect(s7b.gate_type).toBe('condition');
+    expect(s7b.runner_mode).toBe('delegate');
+    expect(s7b.next_stage_pass).toBe('END');
+    expect(s7b.next_stage_reject).toBe('S7-A_Change_Archive');
   });
 
   it('配置加载使用缓存', () => {

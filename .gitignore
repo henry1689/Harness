@@ -28,3 +28,9 @@ data/mcp-watchdog/watchdog_*.json
 data/.harness-secret
 data/exemptions.json
 data/sessions/
+
+# Harness runtime heartbeat / learn / wenstaros audit (运行时状态,不进 git)
+data/*-heartbeat.json
+data/learn/
+data/wenstaros-audit/
+data/heal-log.jsonl
