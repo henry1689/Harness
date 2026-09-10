@@ -34,3 +34,7 @@ data/*-heartbeat.json
 data/learn/
 data/wenstaros-audit/
 data/heal-log.jsonl
+
+# Harness runtime state (运行时数据, 不进 git)
+data/harness_db/
+data/owner-closures/

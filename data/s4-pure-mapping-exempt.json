@@ -5,11 +5,13 @@
   "files": [
     "src/m4/household/shared/RelationLabels.ts",
     "src/m4/household/RelationResolver.ts",
-    "src/m4/MemoryRetriever.ts"
+    "src/m4/MemoryRetriever.ts",
+    "src/m2/math.ts"
   ],
   "basenames": [
     "RelationLabels.ts",
     "RelationResolver.ts",
-    "MemoryRetriever.ts"
+    "MemoryRetriever.ts",
+    "math.ts"
   ]
 }
