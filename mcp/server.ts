@@ -664,9 +664,16 @@ mcpServer.registerTool(
         'node D:/AI文件/harness/scripts/harness-manual-confirm.cjs list ' +
         '查看任务单，逐项 confirm 后，以同一批文件重跑 harness_run_flow（change_key 相同 → 命中同一张任务单 → 自动放行 S7）。';
     } else if (result.run_status === 'archive_invalid') {
+      // F5(2026-09-11): 原文案写 `diff_files`，与实际 schema（rollback_plan.modified_files）不符，
+      // 会直接把 Agent 引向错误结构 → S7-B 必然再拒。此处按 src/schemas/s7-archive-payload.ts 如实列出。
       humanGateNote =
-        '📦 S7-B 归档校验失败并已回退 S7-A 补全归档产物，但回流达上限中止 → 无令牌。' +
-        '请在 S7-A 产出 data/archives/<run_id>.json（diff_files/rollback_plan/verification_checklist/debt_marker）后重跑。';
+        '📦 S7-B 归档校验失败 → 本次未签发写入令牌。' +
+        'S7-A 为本地空跑 stage（无 delegate），无法自动产出归档产物；请人工在 S7-A 产出 ' +
+        'data/archives/<run_id>.json 后重跑。字段结构（严格按 src/schemas/s7-archive-payload.ts，勿自造字段名）：' +
+        'change_summary；rollback_plan{modified_files[], rollback_steps}；verification_checklist[]；' +
+        'debt_marker{is_patch, debt_item_id, three_round_review_plan}；audit_ref；' +
+        'exemption_id（S4.5 综合分 <98 时必填）。' +
+        '校验规则 R1-R5 见 src/s7/S7ArchiveValidator.ts。';
     }
 
     return {

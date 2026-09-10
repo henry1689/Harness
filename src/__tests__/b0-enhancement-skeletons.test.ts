@@ -7,7 +7,6 @@
  *   3. 4 份 json-schema 静态可解析
  *   4. tech_debt_ledger CRUD + 候选池（node:sqlite，临时库用完即删）
  *   5. migrate CLI --validate-schema exit 0
- *   6. ContractResolver 🟡MEDIUM_SKELETON_ONLY 禁调用
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -18,7 +17,6 @@ import { validateS7ArchivePayload, type S7ArchivePayload } from '../schemas/s7-a
 import { validateManualTicket, allConfirmed, type ManualVerificationTicket } from '../schemas/manual-verification-ticket.js';
 import { validateFullEvidence, compressFullEvidence, assembleFullReviewEvidence, type FullReviewEvidence } from '../schemas/full-review-evidence.js';
 import { TechDebtLedger } from '../debt/techDebtLedger.js';
-import { ContractResolver } from '../contract/ContractResolver.js';
 
 const TEST_DB = join(process.cwd(), 'data', 'harness_db', '_b0_test_debt.sqlite');
 let ledger: TechDebtLedger | null = null;
@@ -157,8 +155,6 @@ describe('migrate CLI --validate-schema', () => {
   });
 });
 
-describe('M-02 ContractResolver 骨架禁调用', () => {
-  it('loadOverlay 抛 MEDIUM_SKELETON_ONLY', async () => {
-    await expect(new ContractResolver().loadOverlay('wenstar_v1.0_overlay')).rejects.toThrow('MEDIUM_SKELETON_ONLY');
-  });
-});
+// M-02 ContractResolver 骨架已于 2026-09-11 按 07 计划 P1-2 显式删除（去半成品）。
+// 该骨架自创建起零生产调用方（仅自身 + 断言其抛错的测试引用），从未接线。
+// 若将来真要落地契约映射，见 07 计划重新立项。
