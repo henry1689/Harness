@@ -474,16 +474,33 @@ export class FlowEngine {
       return;
     }
     // S7-B 归档校验失败 → 标记 archive_invalid + 运行期信号（随 run 归档）。
-    // 回退 S7-A 重试；若最终因回流熔断中止，run_status 暴露为 archive_invalid 而非笼统 aborted。
+    //
+    // 🔴 F3(2026-09-11) 回退上界：S7-A 是 `local/auto` 空跑 stage——回退给它**不会产出任何归档
+    // 产物**（无 delegate、无 conditionGateCheck），所以「回 S7-A 补全归档」这个环自动收敛不了。
+    // 原实现任由通用回流计数跑到 max_stage_retries(20) 才以 retry_limit 收场（实测烧满 20 轮）。
+    // 对齐 E-02 范式：只给一次回退机会，第二次仍失败即终局，run_status 由 _archiveInvalid 暴露为
+    // archive_invalid（而非笼统 aborted）。
     if (stageId.startsWith('S7') && resolution === 'condition_rejected') {
       this._archiveInvalid = true;
       this.state.run_signals = this.state.run_signals ?? [];
+      const priorInvalid = this.state.run_signals.filter(s => s.signal === 's7_archive_invalid').length;
+      const at = new Date().toISOString();
       this.state.run_signals.push({
         signal: 's7_archive_invalid',
-        at: new Date().toISOString(),
-        detail: { from: stageId, to: nextStage, reasons: (result.machine_signal?.reject_reason ?? []).slice(0, 3) },
+        at,
+        detail: { from: stageId, to: nextStage, occurrence: priorInvalid + 1, reasons: (result.machine_signal?.reject_reason ?? []).slice(0, 3) },
       });
-      console.error(`[FlowEngine] 📦 S7-B 归档校验失败 → 回退 ${nextStage} 补全归档产物 (archive_invalid)`);
+
+      if (priorInvalid >= 1) {
+        this.recordAbort('retry_limit',
+          `S7 归档校验已回退 ${priorInvalid} 次仍未产出合规归档产物 → 终局（run_status=archive_invalid）。` +
+          'S7-A 为本地空跑 stage，无法自动产出归档；请人工在 S7-A 产出 data/archives/<run_id>.json' +
+          '（change_summary / rollback_plan{modified_files,rollback_steps} / verification_checklist / debt_marker / audit_ref）后重跑。');
+        ToolWhitelistGuard.deactivate();
+        console.error(`[FlowEngine] ⏹ S7 归档校验硬止 (archive_invalid): 已回退 ${priorInvalid} 次仍未达标 → 终局`);
+        return;
+      }
+      console.error(`[FlowEngine] 📦 S7-B 归档校验失败 → 回退 ${nextStage} 补全归档产物（第 1 次，仅一次机会）(archive_invalid)`);
     }
 
     // ── P0-A2: 确认阻塞提前终局 ──

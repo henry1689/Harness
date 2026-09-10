@@ -430,3 +430,41 @@ describe('P0-A2 确认阻塞提前终局', () => {
     expect(result.stage_results.filter(s => s.stage_id === 'S4.5_Convergence_Gate').length).toBe(1);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// F3: S7 归档回退硬止（回归护栏）
+// ════════════════════════════════════════════════════════════════════
+// 背景：S7-A 是 local/auto 空跑 stage，回退给它不会产出任何归档产物 → 「回 S7-A 补全归档」
+// 这个环自动收敛不了。原实现任由通用回流计数跑到 max_stage_retries(20) 才收场（live 实测烧满 20 轮）。
+describe('F3 S7 归档回退硬止', () => {
+  it('S7-B 持续拒绝 → 仅回退 1 次即终局（不再空转到 20 轮）', async () => {
+    const engine = new FlowEngine({
+      // S4.5 / S6-B 等未注册的 delegate stage 走此 → 放行；只在 S7-B 上持续拒绝
+      delegateReviewFn: makePassReview(),
+      delegateReviewFnMap: new Map([
+        ['S7-B_Archive_Validate', async (): Promise<StageOutput> => ({
+          machine_signal: { passed: false, risk_level: 'mid', reject_reason: ['R1: 缺归档产物'], metrics: {} },
+          human_report: '# 归档校验失败',
+        })],
+      ]),
+      autoApproveHumanGate: true,
+    });
+    const result = await engine.start('wenstaros_core_repair_flow.yaml', makeHighRiskContext());
+
+    expect(result.success).toBe(false);
+    expect(result.end_reason).toBe('retry_limit');
+    expect(result.run_status).toBe('archive_invalid'); // 非笼统 aborted
+    const signals = (engine.getState()?.run_signals ?? []).filter(s => s.signal === 's7_archive_invalid');
+    expect(signals.length).toBe(2); // 第 1 次回退 + 第 2 次即终局（原实现会跑到 20）
+  });
+
+  it('S7-B 通过时正常走到 END（回归：硬止未误伤正常路径）', async () => {
+    const engine = new FlowEngine({
+      delegateReviewFn: makePassReview(),
+      autoApproveHumanGate: true,
+    });
+    const result = await engine.start('wenstaros_core_repair_flow.yaml', makeHighRiskContext());
+    expect(result.end_reason).toBe('completed');
+    expect(result.run_status).toBe('completed');
+  });
+});
