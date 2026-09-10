@@ -411,7 +411,21 @@ mcpServer.registerTool(
         change_classification: z.string().min(1),
         global_architecture_decision: z.string().min(1),
         confirmations: z.array(z.string()).default([]),
-      }).optional().describe('H1: S2 审批证据（非秘密；缺失/无效时 S2 fail-closed，返回 S2_APPROVAL_EVIDENCE_MISSING）'),
+        // H-03/P1-1: s2-evidence-v2 可选字段。**必须在 zod 里声明**——zod 对象默认丢弃未知键，
+        // 不声明就会在到达 normalizeS2Evidence 之前被静默剥掉（实测踩中：补丁方案被判成
+        // 「非补丁」→ 债务不登记）。声明为 optional，不参与必填校验。
+        problem_nature: z.enum(['specific_bug', 'coupling_debt', 'arch_structural_defect']).optional(),
+        final_approved_plan: z.enum(['patch', 'arch_structural']).optional(),
+        patch_plan: z.object({
+          is_available: z.boolean(),
+          change_scope: z.array(z.string()).optional(),
+          short_term_effect: z.string().optional(),
+          debt_risks: z.string().optional(),
+          not_available_reason: z.string().nullable().optional(),
+          associated_debt_id: z.string().nullable().optional(),
+          payback_milestone: z.string().nullable().optional(),
+        }).optional(),
+      }).optional().describe('H1: S2 审批证据（非秘密；缺失/无效时 S2 fail-closed，返回 S2_APPROVAL_EVIDENCE_MISSING）。补丁方案（final_approved_plan=patch 或 patch_plan.is_available=true）且未绑定 associated_debt_id → 批准瞬间自动登记技术债，结果见 s2_patch_debt_id。'),
       owner_closure_id: z.string().regex(/^oc_[a-f0-9]{16}$/).optional()
         .describe('一次性 owner-adopted closure ID；必须由本机密码门 CLI 预先签发并绑定精确 branch/HEAD/files/SHA/rules'),
     },
