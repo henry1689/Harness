@@ -12,7 +12,7 @@
 | S3 回流上限配置与文案矛盾(20 vs 3) | ✅ **E-01** | flow YAML `max_s3_retries: 3` + 职责注释 |
 | S3 补丁循环烧满 20 轮锁死、无架构重审 | ✅ **E-02** | FlowEngine S3≥max → 跳 S1→S2 + superseded + run_signal + 计数归零 + S2 旧证据终局护栏 |
 | S4.5 证据截断（下游只见摘要） | ✅ **H-04（全链路 live）** | ConvergenceGate 每次出口产 full_review_evidence；FlowEngine S4.5驳回→S3 回流注入 memo |
-| 债务散落无台账 | 🟠 **H-03 半落地（仍待 P1-1）** | 台账 DB + CRUD + S4.5 DS<98→候选池(live)；**S2 补丁→自动建 debt 未接**（依赖 M-03 s2-evidence-v2 接入，转专项） |
+| 债务散落无台账 | ✅ **H-03 三环齐备** | 台账 DB + CRUD + S4.5 DS<98→候选池 + **S2 补丁→自动建 debt（P1-1，2026-09-11）**；S7-B R2 校验 debt_id 存在 |
 | S3 整文件覆写无硬闸 | 🟠 **H-05 核心 live（调用点接线待专项）** | writeRatio 模块 + harness_globals.json 阈值 + ToolWhitelistGuard checkWriteWithRatio/allowlist/audit（进程内调用点接线待专项） |
 | S7 归档无机器校验 | ✅ **H-01 已接线并 live 验证** | S7ArchiveValidator(R1-R5)；`S7ArchiveDelegate` 注册于 mcp；YAML 拆 S7-A/S7-B；P0-2 live run 验证「缺归档 → 回退 → archive_invalid」 |
 | S6 行为验证降级"参考" | ✅ **H-02 已落地（形式调整）** | YAML 拆 S6-A(机器硬校验)/S6-B(人工验收门控)；任务单按 `change_key` 寻址；未确认 → 悬挂终局 `await_manual_verification`。⚠️ 原设计的「真阻塞」不可实现（引擎无暂停/恢复原语）→ 改为「悬挂 + 确认后重跑」，见 03 偏差说明 |
