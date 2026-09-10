@@ -77,6 +77,8 @@ function signUnlockToken(token: Record<string, unknown>): string {
 function normalizeS2Evidence(raw: unknown): {
   ok: boolean;
   evidence?: { approval_ref: string; approved_plan: string; change_classification: string; global_architecture_decision: string; confirmations: string[] };
+  /** H-03/P1-1: s2-evidence-v2 可选字段透传——原实现把它们整个丢弃，导致 S2 补丁方案无从登记债务 */
+  v2?: { problem_nature?: string; final_approved_plan?: string; patch_plan?: Record<string, unknown> | null };
   diagnostic?: string;
 } {
   if (!raw || typeof raw !== 'object') {
@@ -104,9 +106,16 @@ function normalizeS2Evidence(raw: unknown): {
     if (k && !seen.has(k)) { seen.add(k); confirmations.push(k); }
   }
 
+  // H-03/P1-1: 透传 s2-evidence-v2 的可选字段（不参与必填校验，仅供应急/建账使用）
+  const v2: { problem_nature?: string; final_approved_plan?: string; patch_plan?: Record<string, unknown> | null } = {};
+  if (typeof obj.problem_nature === 'string') v2.problem_nature = obj.problem_nature;
+  if (typeof obj.final_approved_plan === 'string') v2.final_approved_plan = obj.final_approved_plan;
+  if (obj.patch_plan && typeof obj.patch_plan === 'object') v2.patch_plan = obj.patch_plan as Record<string, unknown>;
+
   return {
     ok: true,
     evidence: { approval_ref, approved_plan, change_classification, global_architecture_decision, confirmations },
+    v2,
   };
 }
 
@@ -557,12 +566,34 @@ mcpServer.registerTool(
     const { s6ManualVerifyDelegate } = await import('../src/s6/S6ManualVerifyDelegate.js');
     delegateFnMap.set('S6-B_Manual_Verify', s6ManualVerifyDelegate);
 
+    // H-03/P1-1: S2「选补丁方案」→ 自动登记技术债（台账三环的第一环）。
+    // 链路：① S2 补丁 → createDebt + linkRun（此处） → ② S4.5 DS<98→候选池（已 live）
+    //       → ③ S7-B R2 校验补丁必须绑定存在的 debt_id（已 live）。
+    // 建账时点选在【human gate 判定 approved 的瞬间】：不早于批准，避免为未批准的方案落账。
+    const { ensurePatchDebt } = await import('../src/debt/s2PatchDebt.js');
+    type PatchDebtOutcome = Awaited<ReturnType<typeof ensurePatchDebt>>;
+    let patchDebt: PatchDebtOutcome | null = null;
+    // 经函数读取：赋值只发生在 humanGateCallback 闭包内，TS 控制流分析看不到，
+    // 直接读会被收窄成 never。显式返回类型的读取函数可绕开该收窄。
+    const readPatchDebt = (): PatchDebtOutcome | null => patchDebt;
+
     // H1: 不再无条件自动批准。仅当本次 run 携带【有效】S2 审批证据时才批准 human gate；
     //     无证据 / 证据无效 → denied（fail-closed）。S2 是唯一 human gate 节点。
     const humanGateCallback = async (stage: any): Promise<'approved' | 'denied'> => {
       if (stage?.stage_id === 'S2_Solution_Design') {
         // 到达此处时 validEvidence 已通过 normalizeS2Evidence 校验（非空非纯空白）
-        return validEvidence ? 'approved' : 'denied';
+        if (!validEvidence) return 'denied';
+        // 降级：sqlite 不可用 / 建账异常 → 跳过不阻断（只记录原因），绝不卡死已批准的流程
+        patchDebt = ensurePatchDebt(
+          { ...validEvidence, ...(ev.v2 || {}) } as Parameters<typeof ensurePatchDebt>[0],
+          { runId: engine.getState()?.run_id },
+        );
+        if (patchDebt.created) {
+          console.error(`[harness-mcp] 📒 S2 采纳补丁方案 → 已自动登记技术债: ${patchDebt.debt_id}`);
+        } else if (patchDebt.skipped_reason) {
+          console.error(`[harness-mcp] 📒 S2 补丁债务登记跳过: ${patchDebt.skipped_reason}`);
+        }
+        return 'approved';
       }
       // 非 S2 human gate（若有其他 human 节点）→ 保守 denied
       return 'denied';
@@ -700,6 +731,16 @@ mcpServer.registerTool(
           token_verdict: tokenResult.verdictCode ?? 'eligible',
           human_gate_note: humanGateNote,
           s2_evidence_status: evidenceStatus,
+          // H-03/P1-1: S2 补丁方案的债务登记结果——Agent 须把该 id 写进 S7-A 归档的
+          // data/archives/<run_id>.json → debt_marker.debt_item_id，S7-B 的 R2 才能通过。
+          s2_patch_debt_id: readPatchDebt()?.debt_id ?? undefined,
+          s2_patch_debt_note: (() => {
+            const pd = readPatchDebt();
+            if (pd === null) return undefined;
+            if (pd.created) return `已自动登记技术债 ${pd.debt_id}；请在 S7-A 归档的 debt_marker.debt_item_id 填写该 id（is_patch=true）。`;
+            if (pd.debt_id) return `复用已有技术债 ${pd.debt_id}；请在 S7-A 归档的 debt_marker.debt_item_id 填写该 id。`;
+            return `未登记债务：${pd.skipped_reason || '不适用'}`;
+          })(),
           s2_evidence_diagnostic: evidenceStatus === 'provided' ? undefined : (evidenceDiagnostic ?? 'S2_APPROVAL_EVIDENCE_MISSING'),
           owner_closure_id: ownerClosureClaim?.closure_id,
           owner_closure_status: ownerClosureClaim ? (tokenResult.issuedCount === files.length ? 'completed' : 'failed') : undefined,
