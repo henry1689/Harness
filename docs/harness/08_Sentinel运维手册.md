@@ -15,6 +15,8 @@
 | `data/sentinel/quarantine/<ISO时间戳>/<relPath>` | 破坏性动作前的隔离副本 | ❌ |
 | `data/sentinel/<日期>/<type>_<ts>.json` | 审计事件（allowed / reverted / exempt_allowed / noop / error / refused_no_baseline） | ❌ |
 | `data/logs/{self-,}sentinel-error.log` | 运行日志（console.error 通道） | ❌ |
+| `data/mcp-watchdog/start-<port>.lock` | **MCP 看守单实例锁**（v3.1 新增，见 §八） | ❌ |
+| `data/mcp-watchdog/sentinel-<sha1(项目根前12)>.lock` | **哨兵单实例锁**（v3.1 新增，见 §八） | ❌ |
 
 **监控范围（WATCH_ROOTS）**：`src/` `.claude/` `mcp/` `sentinel/` `scripts/` `hooks/` `data/flows/` `dist/`
 （`dist/` 走哈希基线自愈，不走 token/回滚）。
@@ -37,9 +39,19 @@
 
 > ⚠️ 两个组件判定不同，勿混淆：
 > - **Sentinel**：豁免**有效**（分支 2 不回滚）。
-> - **`.claude/harness-pre-check.cjs`**（仅作用于 harness cwd 的 Claude 会话）：`isExemptionApplicable`
->   对 harness 自身文件（`src/` `data/` `mcp/` 等防线前缀）**返回 false** → 豁免不生效，必须
->   「管理员解锁 + 流水线令牌」双因子。
+> - **`.claude/harness-pre-check.cjs`**（仅作用于 harness cwd 的 Claude 会话）：此前记载为
+>   「`isExemptionApplicable` 对 harness 自身防线前缀返回 false → 豁免不生效，必须
+>   「管理员解锁 + 流水线令牌」双因子」。
+>
+>   🔴 **2026-09-11 实测订正**：该记载与实际行为不符。对 harness 自身文件（本次验证覆盖
+>   `mcp/` `sentinel/` `.claude/` `src/` 四类前缀，共 7 个文件）而言，**「管理员解锁 +
+>   逐文件豁免（`--ops edit,write`）」这一对因子即足以放行 Edit**，Sentinel 相应记为
+>   `exempt_allowed`（分支 2，不回滚），无需流水线令牌。
+>   实测证据：解锁窗口内改 `src/NativeCommands.ts` → Edit 成功落盘 → 审计目录出现
+>   `exempt_allowed_<ts>.json`。
+>
+>   ⚠️ 但**流水线令牌仍是唯一能推进基线并留下 `allowed` 记录的路径**，且 S4.5 前的
+>   `harness_run_flow` 申报是流程合规要求。豁免只是「不阻断」的兜底授权，不等于流程合规。
 
 ---
 
@@ -144,8 +156,81 @@
 
 ## 七、变更 Sentinel 自身时的强制步骤
 
-1. 取该文件**有效豁免**（`src/sentinel/` 属 harness 自身防线，pre-check 层不豁免；但 Sentinel 层豁免有效）。
-2. 改完 **必须重启**：`npx pm2 restart harness-self-sentinel harness-sentinel`。
+1. 取该文件**有效豁免**（`--ops edit,write`）+ 管理员解锁。实测（2026-09-11）这对因子即足以
+   放行 Edit 且在 Sentinel 层不回滚，见 §二 订正说明。
+2. 改完 **必须重启**：`npx pm2 restart harness-self-sentinel harness-sentinel harness-mcp`。
+   （`sentinel/*.cjs` 与 `mcp/*.cjs` 都是长驻进程，模块已被 require 缓存，不重启等于没改。）
 3. 重启后确认日志出现：`🧬 基线播种完成: 新增 N / 已有 M / 失败 0`（M 应等于既有受管文件数，
    说明幂等播种未冲掉旧基线）。
 4. 全量回归：`NODE_OPTIONS="--max-old-space-size=4096" npx vitest run --no-file-parallelism`。
+
+---
+
+## 八、单实例锁（v3.1 新增，2026-09-11 闪屏事故产物）
+
+### 事故经过
+
+2026-09-11 下午出现「**node 控制台窗口一直闪、无法操作**」。采样 60 秒发现：
+同一个 MCP 被 **三份**看守进程同时拉起 —— `harness-auto-start.cjs` 用 `nohup` 拉起两份、
+pm2 的 `harness-mcp` 一份。三者抢同一端口 8765，只有一份能绑上，其余每 ~7 秒崩溃重拉一轮
+`npx`→`node`→`tsx`。
+
+放大器在 `mcp/start.cjs::startChild()`：每次重启都会走「端口清理」分支 →
+`taskkill /F /PID` **杀掉正常那份的 server.ts** → 正常那份发现子进程死亡又重启 → 抢回端口 →
+再被杀 → **两边互杀永动机**。因为都是看守进程内部的重启循环，**pm2 的 `↺` 计数完全不动**，
+从 pm2 侧看一切正常。
+
+### 锁机制
+
+| 项 | 值 |
+|---|---|
+| MCP 锁 | `data/mcp-watchdog/start-<port>.lock` |
+| 哨兵锁 | `data/mcp-watchdog/sentinel-<sha1(归一化项目根).slice(0,12)>.lock` |
+| 判定 | **mtime 心跳（15s 刷新）+ TTL（60s）为主，PID 存活为辅** |
+| 冲突行为 | 后来者打印 `🛑 已有…在运行` 并 `exit(0)`（**不报错**） |
+| 接管条件 | 锁龄 ≥ 60s，**或** 锁内 PID 已不存在（被 `taskkill /F` 后无退出钩子） |
+
+**为什么不用纯 PID 判定**：Windows PID 复用常见，会误判「持锁者还活着」而永久拒绝启动。
+**为什么不用纯 TTL 判定**：`taskkill /F` 后要空等满 60s 才能重启。两者结合取长补短。
+
+**写锁 vs 读锁的分工**（重要）：只有**服务自己**（`mcp/start.cjs`、`sentinel-service.cjs`）
+写锁；`harness-auto-start.cjs` 只**读**锁。若拉起方先占锁再 spawn，被拉起的子进程会误判
+「已有人」而自杀。
+
+### 关键设计点
+
+- **MCP 锁在 `runTscCompileCheck()` 之前获取** —— 那 60 秒 `npx tsc --noEmit` 正是竞态窗口
+  （端口还没 listen，只看端口的守卫会以为没实例）。败者在跑 tsc 和互杀逻辑之前就退出。
+- **哨兵锁在 `--unlock` 提前退出之后获取** —— 哨兵兼作签发豁免的 CLI，若锁在 `--unlock`
+  之前，`harness-cli.cjs exempt add` 会被常驻哨兵自己的锁挡住。
+- **锁按项目区分**：harness 自身与 wenstar-cc 两个哨兵各持一把锁，互不影响。
+- **fail-open**：锁机制自身抛异常时**继续启动**而不是拒绝 —— 宁可承担闪窗风险，
+  也不能让 MCP / 哨兵起不来。
+
+### `harness-auto-start.cjs` 顺带修掉的一个真 bug
+
+`ensureSentinel()` 原实现拿 `tasklist /FO CSV` 的输出找 `"sentinel-service"` 字符串来判断
+哨兵是否已在运行。但 **`tasklist` 根本不输出命令行**（只列映像名 / PID / 会话 / 内存），
+该守卫**恒为假** → 每次调用都会重复拉起哨兵。已改为读哨兵单实例锁。
+
+### 验证方法
+
+```bash
+# 1) 锁文件应存在且 pid 指向当前看守
+cat data/mcp-watchdog/start-8765.lock
+
+# 2) 主动拉起第二个看守 —— 应在跑 tsc 之前就打印 🛑 并 0 秒退出
+node mcp/start.cjs --root D:/tools/wenstar-cc
+
+# 3) 第二个哨兵同理
+node sentinel/sentinel-service.cjs --project D:/tools/wenstar-cc
+```
+
+### 排查「闪屏」的标准动作
+
+1. 采样：`Get-CimInstance Win32_Process -Filter "Name='node.exe'"` 每 300ms 一轮，看哪类进程
+   **反复以新 PID 出现**（首轮普查不算，只看重复出现的）。
+2. 看进程树：`ParentProcessId` 指向谁 —— 若父进程是 pm2 看守，说明是**看守内部**的重启循环，
+   pm2 的 `↺` 不会反映。
+3. 查端口归属：`netstat -ano | findstr :8765` —— 被谁占、有几个在抢。
+4. 锁文件若指向已死 PID → 直接删掉该 `.lock` 重启即可（锁会自动接管陈旧锁，通常无需手工删）。

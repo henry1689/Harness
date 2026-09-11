@@ -19,6 +19,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const { createWatcher } = require('./watcher.cjs');
 const { createRollback } = require('./rollback.cjs');
@@ -110,6 +111,75 @@ if (!projectRoot) {
 
 projectRoot = path.resolve(projectRoot);
 const auditDir = path.resolve(__dirname, '..', 'data', 'sentinel');
+
+// ── 🔴 A(v3.1): 单实例锁（防同一项目被重复拉起多份哨兵 → 互相回滚 / 子进程互杀闪窗）──
+// 与 mcp/start.cjs 同一机制：锁文件 mtime 心跳(15s) + TTL(60s) 为准，PID 存活为辅助信号
+// （单凭 PID 会被 Windows PID 复用误导；单凭 TTL 则被 taskkill /F 后要空等满 60s）。
+// 🔴 锁路径与 key 算法必须与 .claude/harness-auto-start.cjs::sentinelLockPath 保持一致。
+// 🔴 必须放在 --unlock 提前退出（上方）之后 —— 豁免签发走的就是本脚本的 CLI 路径，
+//    若在锁后面，`exempt add` 会被常驻哨兵自己的锁挡住。
+const LOCK_DIR = path.resolve(__dirname, '..', 'data', 'mcp-watchdog');
+const SENTINEL_LOCK_FILE = path.join(
+  LOCK_DIR,
+  'sentinel-' + crypto.createHash('sha1')
+    .update(projectRoot.replace(/\\/g, '/').toLowerCase())
+    .digest('hex').slice(0, 12) + '.lock',
+);
+const LOCK_HEARTBEAT_MS = 15_000;
+const LOCK_STALE_MS = 60_000;
+
+let sentinelLockHeld = false;
+let sentinelLockTimer = null;
+
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e && e.code === 'EPERM'; } // EPERM = 存在但不属于本进程
+}
+
+/** true = 本进程取得锁可以继续；false = 已有实例，本进程应立即退出 */
+function acquireSentinelLock() {
+  try {
+    if (fs.existsSync(SENTINEL_LOCK_FILE)) {
+      let ageMs = Infinity;
+      let holderPid = null;
+      try {
+        ageMs = Date.now() - fs.statSync(SENTINEL_LOCK_FILE).mtimeMs;
+        holderPid = JSON.parse(fs.readFileSync(SENTINEL_LOCK_FILE, 'utf-8')).pid;
+      } catch (_) { /* 损坏的锁文件按陈旧处理 */ }
+      if (ageMs < LOCK_STALE_MS && isPidAlive(holderPid)) return false;
+      console.error(`[sentinel] ♻️ 接管陈旧锁（持锁 PID ${holderPid ?? '未知'} 已不在/锁龄 ${Math.round(ageMs / 1000)}s）`);
+    }
+    if (!fs.existsSync(LOCK_DIR)) fs.mkdirSync(LOCK_DIR, { recursive: true });
+    fs.writeFileSync(SENTINEL_LOCK_FILE, JSON.stringify({
+      pid: process.pid, kind: 'sentinel', project: projectRoot, started_at: new Date().toISOString(),
+    }, null, 2), 'utf-8');
+    sentinelLockHeld = true;
+    sentinelLockTimer = setInterval(() => {
+      try { const t = new Date(); fs.utimesSync(SENTINEL_LOCK_FILE, t, t); } catch (_) {}
+    }, LOCK_HEARTBEAT_MS);
+    sentinelLockTimer.unref();
+    return true;
+  } catch (e) {
+    // fail-open：锁机制自身故障时不能让哨兵起不来
+    console.error(`[sentinel] ⚠️ 单实例锁不可用，继续启动: ${e.message}`);
+    return true;
+  }
+}
+
+function releaseSentinelLock() {
+  if (!sentinelLockHeld) return;
+  sentinelLockHeld = false;
+  if (sentinelLockTimer) { clearInterval(sentinelLockTimer); sentinelLockTimer = null; }
+  try { fs.unlinkSync(SENTINEL_LOCK_FILE); } catch (_) {}
+}
+
+if (!acquireSentinelLock()) {
+  console.error(`[sentinel] 🛑 该项目已有哨兵在运行（锁 ${SENTINEL_LOCK_FILE}），本进程退出。`);
+  console.error('[sentinel]    如确认前一份已死，删除该锁文件后重试。');
+  process.exit(0);
+}
+console.error(`[sentinel] 🔐 单实例锁已取得: ${SENTINEL_LOCK_FILE}`);
 
 // P7-A: 多目录监控 — Sentinel 现在覆盖 Harness 自身基础设施 + 被管控项目
 // 从统一风险策略 (risk-policy.json) 加载高风险目录，动态生成监测目标
@@ -243,7 +313,8 @@ async function processFileChange(filePath, isBatchAlert) {
       try {
         const { spawnSync } = require('child_process');
         const r = spawnSync(process.execPath, [path.resolve(__dirname, '..', 'scripts', 'dist-baseline.cjs'), '--verify', _normPath, '--project', projectRoot], {
-          encoding: 'utf-8', timeout: 60000, stdio: 'inherit', cwd: path.resolve(__dirname, '..'),
+          // 防控制台闪窗：pm2 拉起的哨兵无控制台，stdio:'inherit' + 无 windowsHide 会新建窗口
+          encoding: 'utf-8', timeout: 60000, stdio: 'inherit', windowsHide: true, cwd: path.resolve(__dirname, '..'),
         });
         if (r.status !== 0) console.error(`${prefix} ⚠️ dist 自愈校验异常 (exit ${r.status})`);
       } catch (e) {
@@ -482,14 +553,19 @@ process.on('SIGINT', () => {
   for (const w of watchers) w.watcher.stop();
   const uptime = Math.round((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
   console.error(`[sentinel] 运行 ${uptime}s, 共处理 ${stats.events} 个事件, ${stats.reverted} 次回滚, ${stats.batches} 个批次`);
+  releaseSentinelLock();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   if (batchTimer) clearTimeout(batchTimer);
   for (const w of watchers) w.watcher.stop();
+  releaseSentinelLock();
   process.exit(0);
 });
+
+// 兜底：非信号退出路径（如监控目录全缺失时的 exit(1)）也要放锁，避免残留锁挡住下次启动
+process.on('exit', () => { releaseSentinelLock(); });
 
 // ── 进程存活信号 ──
 

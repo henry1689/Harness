@@ -181,6 +181,8 @@ export class StageRunner {
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024, // 10MB
         stdio: ['pipe', 'pipe', 'pipe'],
+        // 防控制台闪窗：MCP 由 pm2 fork 拉起时无控制台，spawn 控制台子系统程序会新建窗口
+        windowsHide: true,
       });
 
       this.addAudit('tool_call', stageId, { tool: 'run_command', command, exitCode: 0 });

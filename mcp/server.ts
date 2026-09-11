@@ -225,6 +225,8 @@ async function forkedReview(stage: any, state: any): Promise<any> {
     ], {
       cwd: 'D:/AI文件/harness/scripts',
       stdio: ['pipe', 'pipe', 'pipe'],
+      // 防控制台闪窗：MCP 由 pm2 fork 拉起时无控制台，spawn node 会新建窗口
+      windowsHide: true,
     });
 
     const payload = JSON.stringify({ stage, state });

@@ -69,7 +69,8 @@ function createRollback(projectRoot, options = {}) {
   function isTrackedByGit(filePath) {
     try {
       const out = execSync(`git ls-files --error-unmatch -- "${filePath}"`, {
-        cwd: projectRoot, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
+        // 防控制台闪窗：哨兵由 pm2 拉起时无控制台，spawn git 会新建窗口
+        cwd: projectRoot, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
       }).trim();
       return out.length > 0;
     } catch (_) {
@@ -176,7 +177,7 @@ function createRollback(projectRoot, options = {}) {
   function getStatus(filePath) {
     try {
       const out = execSync(`git status --porcelain -- "${filePath}"`, {
-        cwd: projectRoot, encoding: 'utf-8', timeout: 5000,
+        cwd: projectRoot, encoding: 'utf-8', timeout: 5000, windowsHide: true,
       }).trim();
       return out ? out.slice(0, 2) : '';
     } catch (_) {

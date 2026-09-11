@@ -117,6 +117,67 @@ function isPortInUse(p) {
   } catch (_) { return false; }
 }
 
+// ── 🔴 A: 单实例锁（v3.1）──
+// 背景（2026-09-11 闪屏事故）：同一 MCP 被 pm2 与 harness-auto-start.cjs 各拉起一份看守进程，
+// 两份都走到下面 startChild() 的「端口清理」分支 → 互相 taskkill /F 对方的 server.ts →
+// 各自发现子进程死亡又重启 → 互杀永动机，控制台窗口每 ~7 秒闪一轮。
+// 锁在 runTscCompileCheck() 之前获取：既避免重复跑 60 秒 tsc，也让败者在互杀逻辑之前退出。
+//
+// 判定用「mtime 心跳 + TTL」为主、PID 存活为辅：
+//   - 持锁者活着 → 心跳每 15s 刷新 mtime，TTL 60s 内均视为有效 → 后来者退出
+//   - 持锁者被 taskkill /F（无退出钩子）→ PID 已死 → 立即接管，不必等满 TTL
+//   - 仅凭 PID 判定会被 Windows PID 复用误导，故 PID 只作辅助信号
+const LOCK_DIR = path.resolve(__dirname, '..', 'data', 'mcp-watchdog');
+const LOCK_FILE = path.join(LOCK_DIR, `start-${port}.lock`);
+const LOCK_HEARTBEAT_MS = 15_000;
+const LOCK_STALE_MS = 60_000;
+
+let lockHeld = false;
+let lockTimer = null;
+
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e && e.code === 'EPERM'; } // EPERM = 存在但不属于本进程
+}
+
+/** true = 本进程取得锁可以继续；false = 已有实例，本进程应立即退出 */
+function acquireSingleInstanceLock() {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      let ageMs = Infinity;
+      let holderPid = null;
+      try {
+        ageMs = Date.now() - fs.statSync(LOCK_FILE).mtimeMs;
+        holderPid = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf-8')).pid;
+      } catch (_) { /* 损坏的锁文件按陈旧处理 */ }
+      if (ageMs < LOCK_STALE_MS && isPidAlive(holderPid)) return false;
+      console.error(`[harness-start] ♻️ 接管陈旧锁（持锁 PID ${holderPid ?? '未知'} 已不在/锁龄 ${Math.round(ageMs / 1000)}s）`);
+    }
+    if (!fs.existsSync(LOCK_DIR)) fs.mkdirSync(LOCK_DIR, { recursive: true });
+    fs.writeFileSync(LOCK_FILE, JSON.stringify({
+      pid: process.pid, port, root: projectRoot, started_at: new Date().toISOString(),
+    }, null, 2), 'utf-8');
+    lockHeld = true;
+    lockTimer = setInterval(() => {
+      try { const t = new Date(); fs.utimesSync(LOCK_FILE, t, t); } catch (_) {}
+    }, LOCK_HEARTBEAT_MS);
+    lockTimer.unref();
+    return true;
+  } catch (e) {
+    // fail-open：锁机制自身故障时宁可承担闪窗风险，也不能让 MCP 起不来
+    console.error(`[harness-start] ⚠️ 单实例锁不可用，继续启动: ${e.message}`);
+    return true;
+  }
+}
+
+function releaseSingleInstanceLock() {
+  if (!lockHeld) return;
+  lockHeld = false;
+  if (lockTimer) { clearInterval(lockTimer); lockTimer = null; }
+  try { fs.unlinkSync(LOCK_FILE); } catch (_) {}
+}
+
 /** 端口清理已完成标记（v2.9.1-fix: 只在首次启动清理一次，避免重启循环中反复杀进程闪屏） */
 let portCleanupDone = false;
 
@@ -160,6 +221,8 @@ function startChild() {
   const child = fork(tsxPath, ['server.ts'], {
     cwd: path.resolve(__dirname),
     stdio: 'pipe',
+    // 防控制台闪窗：pm2 fork 出来的父进程无控制台，spawn 控制台子系统程序会新建窗口
+    windowsHide: true,
     env,
   });
 
@@ -273,7 +336,9 @@ function runTscCompileCheck() {
   const result = spawnSync('npx', ['tsc', '--noEmit'], {
     cwd: harnessRoot,
     stdio: 'pipe',
-    shell: true,
+    shell: true, // npx 在 Windows 是 .cmd，必须经 shell 解析
+    // 防控制台闪窗：shell:true 会先起 cmd.exe，无 windowsHide 时整棵进程树都会弹窗
+    windowsHide: true,
     timeout: 60_000,
     encoding: 'utf-8',
   });
@@ -308,11 +373,20 @@ function runTscCompileCheck() {
 // ── 启动 ──
 
 console.error(`[harness-start] ╔══════════════════════════════════════════╗`);
-console.error(`[harness-start] ║  Harness MCP Server 启动器 v3.0 (P4-AB) ║`);
+console.error(`[harness-start] ║  Harness MCP Server 启动器 v3.1 (A+B) ║`);
+console.error(`[harness-start] ║  单实例锁: ✅ (锁文件+心跳, 防互杀)    ║`);
 console.error(`[harness-start] ║  编译验证: ✅ (tsc --noEmit)            ║`);
 console.error(`[harness-start] ║  自动重启: ✅ (退避: 1s→32s)           ║`);
 console.error(`[harness-start] ║  健康检查: ✅ (每30s, 超时300s)        ║`);
 console.error(`[harness-start] ╚══════════════════════════════════════════╝`);
+
+// 🔴 A(v3.1): 单实例闸门——先抢锁，败者立即退出，避免与另一份看守互杀
+if (!acquireSingleInstanceLock()) {
+  console.error(`[harness-start] 🛑 已有 MCP 看守进程在运行（锁 ${LOCK_FILE}），本进程退出。`);
+  console.error('[harness-start]    如确认前一份已死，删除该锁文件后重试。');
+  process.exit(0);
+}
+console.error(`[harness-start] 🔐 单实例锁已取得: ${LOCK_FILE}`);
 
 // 🔴 P4-AB: 先跑编译验证，通过后再启动 MCP
 runTscCompileCheck();
@@ -325,6 +399,7 @@ const healthTimer = startHealthCheck(child);
 process.on('SIGINT', () => {
   console.error('[harness-start] 收到 SIGINT，退出...');
   clearInterval(healthTimer);
+  releaseSingleInstanceLock();
   try { child.kill('SIGTERM'); } catch (_) {}
   process.exit(0);
 });
@@ -332,6 +407,10 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   console.error('[harness-start] 收到 SIGTERM，退出...');
   clearInterval(healthTimer);
+  releaseSingleInstanceLock();
   try { child.kill('SIGTERM'); } catch (_) {}
   process.exit(0);
 });
+
+// 兜底：正常退出路径（含 tsc 校验失败 exit）也要放锁，否则残留锁会挡住下一次启动
+process.on('exit', () => { releaseSingleInstanceLock(); });

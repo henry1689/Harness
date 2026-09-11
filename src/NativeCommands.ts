@@ -128,6 +128,9 @@ function run(command: string, options: CommandOptions, label: string): NativeCom
     encoding: 'utf-8',
     maxBuffer: 20 * 1024 * 1024, // 20MB
     stdio: ['pipe', 'pipe', 'pipe'],
+    // 🔴 防控制台闪窗：父进程若由 pm2 fork 拉起则无控制台，此时 spawn 控制台子系统程序
+    // 会新建一个窗口（一闪而过）。windowsHide 令 Node 传 CREATE_NO_WINDOW。
+    windowsHide: true,
     env: { ...process.env, ...options?.env },
   };
 
