@@ -25,6 +25,7 @@ import type {
 import { StageExecutionError } from './types.js';
 import { ToolWhitelistGuard } from './ToolWhitelistGuard.js';
 import { validateStageOutput } from './DualChannelSignal.js';
+import { writeAutoArchive } from './s7/s7AutoArchive.js';
 
 /** StageRunner 构造选项 */
 export interface StageRunnerOptions {
@@ -262,6 +263,26 @@ export class StageRunner {
         console.log(`[StageRunner] ⚡ ${stage.stage_id} 本地条件门控: 前置检查通过 → 默认放行`);
       } else {
         console.log(`[StageRunner] 🚫 ${stage.stage_id} 本地条件门控: 前置检查未通过 → ${preCheckReason} → 回流 S4.5 兜底`);
+      }
+    }
+
+    // 🔴 P0-B(2026-09-11): S7-A 自动归档。
+    // S7-A 是 `gate_type: auto` + `runner_mode: local`——上面的 condition 分支根本不会进入，
+    // 整个 stage 完全空转（不写文件、不调 LLM）。而 MCP 驱动的 run 没有 agent 循环去写
+    // data/archives/<run_id>.json → S7-B 必然因「归档产物不存在」拒绝 → F3 硬止两轮后
+    // run_status=archive_invalid。**在 MCP 路径下该归档永远不可能存在**，是死结。
+    // 这里进程内确定性生成，使 S7-B 有物可校验；不伪造任何治理凭据（见模块头注释）。
+    if (stage.stage_id === 'S7-A_Change_Archive') {
+      const arch = writeAutoArchive(state);
+      this.addAudit('s7_auto_archive', stage.stage_id, {
+        written: arch.written,
+        path: arch.path,
+        skipped_reason: arch.skipped_reason ?? null,
+      });
+      if (arch.written) {
+        console.log(`[StageRunner] 📦 S7-A 自动归档已写入: ${arch.path}`);
+      } else {
+        console.log(`[StageRunner] ⏭️ S7-A 自动归档跳过: ${arch.skipped_reason}`);
       }
     }
 

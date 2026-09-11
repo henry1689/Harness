@@ -467,8 +467,11 @@ stages:
       3. 保存回滚方案、验证用例清单，写入项目变更台账；
       4. 输出完整修复总结：根因、改动内容、核验证据、长期注意事项；
       5. 提示：大型重构(≥3文件/数据库变更)需执行三轮对比审计后提交。
-      6. 🔴【H-01 强制：结构化归档产物】除上述文本总结外，必须产出 s7_archive_payload
-         并写入 data/archives/<run_id>.json（S7-B 机器校验的唯一输入，缺则驳回返本 stage）。
+      6. 🔴【H-01：结构化归档产物】S7-B 机器校验的唯一输入是
+         data/archives/<run_id>.json（缺则驳回返本 stage）。
+         ⚙️ P0-B(2026-09-11)：本 stage 已由 StageRunner 进程内**自动生成并落盘**该文件
+         （src/s7/s7AutoArchive.ts，零 LLM、确定性）。**已存在的归档不会被覆盖** ——
+         如需补充更完整的内容，直接编辑该文件即可（自动版仅在其不存在时生成）。
          字段结构（严格按 src/schemas/s7-archive-payload.ts，勿自造字段名）：
            {
              "change_summary": "<改动摘要>",
@@ -490,6 +493,12 @@ stages:
            R3 rollback_plan.modified_files 与本次 diff 一致（漏记/多记均驳回）；
            R4 S4.5 打分 <98（即经 HUMAN_BYPASS 放行）必须携带存在的 exemption_id；
            R5 ≥3 文件的大重构必须填写 three_round_review_plan。
+         ⚙️ P0-B 自动版只做「机械可推导」的部分，**治理凭据一律不伪造**：
+           - exemption_id 仅**引用** data/exemptions.json 中已存在且未过期的记录；
+             查不到则留空 → 由 R4 报「缺豁免」。故 S4.5<98 时**先签豁免再重跑**。
+           - debt_item_id 仅从台账反查本 run 已登记的债务（P1-1 的 ensurePatchDebt）；
+             查不到则留空 → 由 R2 报「未登记债务」。
+           - three_round_review_plan 填的是**计划**（引用真实收敛轮次与文件数），非完成背书。
     tool_whitelist:
       read_file: true
       write_file: true

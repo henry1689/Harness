@@ -105,9 +105,9 @@ export function isRelaxedForComplexity(record: { relaxed_checks?: string[] } | n
 }
 
 export interface ConvergenceGateConfig {
-  /** 通过阈值（默认 100%） */
+  /** 通过阈值——**加权总分**下限。⚠️ 不是唯一条件，见 DEFAULT_CONFIG 注释。 */
   passThreshold: number;
-  /** 人工放行阈值（默认 100%） */
+  /** 人工放行阈值——**加权总分**下限 */
   bypassThreshold: number;
   /** 最大收敛轮次（默认 5） */
   maxRounds: number;
@@ -116,7 +116,14 @@ export interface ConvergenceGateConfig {
 }
 
 const DEFAULT_CONFIG: ConvergenceGateConfig = {
-  passThreshold: 60,  // Temp lowered for 24D→40D migration (S4.5 score 66.7%)
+  // 🔴 2026-09-11 澄清（此值与注释长期互相矛盾，已误导过分析）：
+  //   60 是 24D→40D 迁移期临时下调的**加权总分**下限，迁移早已结束但从未恢复；
+  //   然而它**并非实际卡点** —— 场景A 还要求 `passedStandards === totalStandards`，
+  //   而 passedStandards 由 ComplianceScorer.PASS_THRESHOLD = 98 判定，
+  //   即「**每条设计标准都 ≥98**」才是真正门槛，逐条不达 98 时总分配罚也必然掉下来。
+  //   所以把 60 改回 98 对多数 run **不产生行为差异**；真正的门槛调整应改
+  //   ComplianceScorer.PASS_THRESHOLD 或场景A 的逐条条件。
+  passThreshold: 60,  // 24D→40D 迁移期临时值，见上（非实际卡点）
   bypassThreshold: 60,
   maxRounds: 5,
   autoHandoffRound: 3,
@@ -581,7 +588,8 @@ function makeDecision(
 ): { decision: 'PASS' | 'REJECT' | 'HUMAN_BYPASS' | 'HARD_LOCKOUT'; signal: ReturnType<typeof rejectSignal> | ReturnType<typeof passSignal>; humanReport: string } {
   const metrics = { compliance_score: report.overallScore, convergence_round: round };
 
-  // 场景A: 加权总分 ≥ passThreshold(98%) 且 所有标准 ≥98 → PASS
+  // 场景A: 加权总分 ≥ passThreshold（当前 60，非实际卡点）且 所有标准 ≥98 → PASS
+  //        ——「所有标准 ≥98」才是真正门槛，见 DEFAULT_CONFIG 注释。
   // v2.6: 显式「passedStandards === totalStandards」——per-standard penalty 在 98 分制下
   // 不自动等价于「每条 ≥98」（weight 7 的标准 97 分仅惩罚 0.055%，总分仍 ≥98），必须逐条检查。
   if (report.overallScore >= config.passThreshold && report.passedStandards === report.totalStandards) {
