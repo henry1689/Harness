@@ -17,8 +17,12 @@ data/sentinel/
 # Generated reports
 data/reports/
 
-# MCP watchdog snapshots
-data/mcp-watchdog/watchdog_*.json
+# MCP watchdog snapshots + 单实例锁（运行时状态，2026-09-11 起含 start-*.lock / sentinel-*.lock）
+data/mcp-watchdog/
+
+# S7-A 归档产物（每次 run 生成）与 S6-B 人工验收任务单（运行时状态）
+data/archives/
+data/manual_tickets/
 
 # Atomic write residues
 *.tmp
