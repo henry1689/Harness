@@ -78,7 +78,15 @@ function normalizeS2Evidence(raw: unknown): {
   ok: boolean;
   evidence?: { approval_ref: string; approved_plan: string; change_classification: string; global_architecture_decision: string; confirmations: string[] };
   /** H-03/P1-1: s2-evidence-v2 可选字段透传——原实现把它们整个丢弃，导致 S2 补丁方案无从登记债务 */
-  v2?: { problem_nature?: string; final_approved_plan?: string; patch_plan?: Record<string, unknown> | null };
+  v2?: {
+    problem_nature?: string;
+    final_approved_plan?: string;
+    patch_plan?: Record<string, unknown> | null;
+    /** H-02：纯自动化任务跳过 S6-B 人工环节（2026-09-11 补——此前未透传，该开关从未生效） */
+    skip_manual_verification?: boolean;
+    /** H-05：S2 授权的整文件覆写白名单（2026-09-11 补——此前未透传，白名单恒为空） */
+    allow_full_rewrite?: string[];
+  };
   diagnostic?: string;
 } {
   if (!raw || typeof raw !== 'object') {
@@ -107,10 +115,21 @@ function normalizeS2Evidence(raw: unknown): {
   }
 
   // H-03/P1-1: 透传 s2-evidence-v2 的可选字段（不参与必填校验，仅供应急/建账使用）
-  const v2: { problem_nature?: string; final_approved_plan?: string; patch_plan?: Record<string, unknown> | null } = {};
+  const v2: {
+    problem_nature?: string;
+    final_approved_plan?: string;
+    patch_plan?: Record<string, unknown> | null;
+    skip_manual_verification?: boolean;
+    allow_full_rewrite?: string[];
+  } = {};
   if (typeof obj.problem_nature === 'string') v2.problem_nature = obj.problem_nature;
   if (typeof obj.final_approved_plan === 'string') v2.final_approved_plan = obj.final_approved_plan;
   if (obj.patch_plan && typeof obj.patch_plan === 'object') v2.patch_plan = obj.patch_plan as Record<string, unknown>;
+  // 🔴 2026-09-11: H-02 / H-05 开关此前未列入白名单 → 被静默丢弃 → 两个功能从未生效
+  if (typeof obj.skip_manual_verification === 'boolean') v2.skip_manual_verification = obj.skip_manual_verification;
+  if (Array.isArray(obj.allow_full_rewrite)) {
+    v2.allow_full_rewrite = obj.allow_full_rewrite.filter((s): s is string => typeof s === 'string');
+  }
 
   return {
     ok: true,
@@ -673,7 +692,15 @@ mcpServer.registerTool(
         projectRoot: PROJECT_ROOT,
         skip_s3_compile: skip_s3_compile === true,
         // H1: S2 审批证据（规范化后）——供 S2 human_report 注入 + S4 confirmations 精确匹配
-        s2_evidence: validEvidence,
+        // 🔴 2026-09-11 修复（P0-A 第二层）：原实现只传 v1 的 validEvidence，s2-evidence-v2 的
+        // 可选字段（problem_nature / final_approved_plan / patch_plan / skip_manual_verification
+        // / allow_full_rewrite）**全部丢弃** → state.s2_evidence 上永远没有这些字段。
+        // 后果（实测）：
+        //   - S6-B 的 `state.s2_evidence.skip_manual_verification` 恒 undefined → H-02 开关从未生效
+        //   - FlowEngine 从 `s2_evidence.allow_full_rewrite` 注入 H-05 白名单 → 恒为空
+        // 这是与 zod inputSchema 同源的「白名单丢字段」缺陷的第二层（第一层见上方 zod 声明处）。
+        // v1 字段在后、v2 在前的顺序不可颠倒：v2 才是增强真值来源。
+        s2_evidence: validEvidence ? { ...validEvidence, ...(ev.v2 || {}) } : undefined,
       });
 
       // A claimed owner closure must first reach the real completed terminal
