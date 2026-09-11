@@ -456,6 +456,23 @@ describe('F3 S7 归档回退硬止', () => {
     expect(result.run_status).toBe('archive_invalid'); // 非笼统 aborted
     const signals = (engine.getState()?.run_signals ?? []).filter(s => s.signal === 's7_archive_invalid');
     expect(signals.length).toBe(2); // 第 1 次回退 + 第 2 次即终局（原实现会跑到 20）
+
+    // F6(2026-09-11): 终局文案必须透传 S7-B 的真实 reject_reason。
+    // 回归保护：曾写死「S7-A 为本地空跑 stage，无法自动产出归档，请人工产出」——该前提在
+    // S7-A 进程内自动归档（src/s7/s7AutoArchive.ts）落地后已失效，实测把 R4（缺豁免）
+    // 误导成「归档没生成」。新文案取 machine_signal.reject_reason，不得再回退到写死原因。
+    const auditDir = path.resolve('data', 'audit');
+    let abortReason = '';
+    for (const d of readdirSync(auditDir).filter((x: string) => /^\d{4}-\d{2}-\d{2}$/.test(x))) {
+      const f = path.join(auditDir, d, result.run_id + '.json');
+      if (!existsSync(f)) continue;
+      const audit = JSON.parse(readFileSync(f, 'utf-8'));
+      const aborts = (audit.entries ?? []).filter((e: { event: string }) => e.event === 'flow_abort');
+      abortReason = String(aborts[aborts.length - 1]?.detail?.reason ?? '');
+      break;
+    }
+    expect(abortReason).toContain('R1: 缺归档产物'); // 真实原因已透传
+    expect(abortReason).not.toContain('本地空跑'); // 过期假设已删除
   });
 
   it('S7-B 通过时正常走到 END（回归：硬止未误伤正常路径）', async () => {

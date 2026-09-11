@@ -475,8 +475,10 @@ export class FlowEngine {
     }
     // S7-B 归档校验失败 → 标记 archive_invalid + 运行期信号（随 run 归档）。
     //
-    // 🔴 F3(2026-09-11) 回退上界：S7-A 是 `local/auto` 空跑 stage——回退给它**不会产出任何归档
-    // 产物**（无 delegate、无 conditionGateCheck），所以「回 S7-A 补全归档」这个环自动收敛不了。
+    // 🔴 F3(2026-09-11) 回退上界 + （F6）语义更新：S7-A 自 2026-09-11 起由
+    // `src/s7/s7AutoArchive.ts` 在进程内自动归档（不再是空跑 stage），故回退 S7-A 对
+    // 「R1 归档产物缺失」类失败**可能**有救（重跑即重建）；但对「R4 缺有效豁免」类失败无效
+    // ——归档内容由 state 确定性推导，重跑不会变出新豁免。上界仍为 1 次：避免 R4 类空转。
     // 原实现任由通用回流计数跑到 max_stage_retries(20) 才以 retry_limit 收场（实测烧满 20 轮）。
     // 对齐 E-02 范式：只给一次回退机会，第二次仍失败即终局，run_status 由 _archiveInvalid 暴露为
     // archive_invalid（而非笼统 aborted）。
@@ -492,10 +494,18 @@ export class FlowEngine {
       });
 
       if (priorInvalid >= 1) {
+        // F6(2026-09-11): 文案必须透传 S7-B 的真实 reject_reason。归档产物由 S7-A 进程内自动生成，
+        // 失败原因可能是 R1 缺产物 / R2/R3/R5 内容不合规 / R4 缺有效豁免。写死
+        // 「S7-A 空跑、需人工产出归档」会把排查引向错误方向（实测：R4 被误读为归档未生成）。
+        const _archiveReasons = (result.machine_signal?.reject_reason ?? [])
+          .map(r => String(r).replace(/^S7-B\s*归档校验失败\s*\d*\s*项[:：]\s*/, '').trim())
+          .filter(r => r && r !== '详见 human_report')
+          .slice(0, 3);
         this.recordAbort('retry_limit',
-          `S7 归档校验已回退 ${priorInvalid} 次仍未产出合规归档产物 → 终局（run_status=archive_invalid）。` +
-          'S7-A 为本地空跑 stage，无法自动产出归档；请人工在 S7-A 产出 data/archives/<run_id>.json' +
-          '（change_summary / rollback_plan{modified_files,rollback_steps} / verification_checklist / debt_marker / audit_ref）后重跑。');
+          `S7 归档校验已回退 ${priorInvalid} 次仍未通过 → 终局（run_status=archive_invalid）。` +
+          `真实原因：${_archiveReasons.length ? _archiveReasons.join(' | ') : '见审计卷宗 S7-B machine_signal'}。` +
+          '归档产物路径 data/archives/<run_id>.json（由 S7-A 进程内自动生成），' +
+          '字段结构见 src/schemas/s7-archive-payload.ts，规则 R1-R5 见 src/s7/S7ArchiveValidator.ts。');
         ToolWhitelistGuard.deactivate();
         console.error(`[FlowEngine] ⏹ S7 归档校验硬止 (archive_invalid): 已回退 ${priorInvalid} 次仍未达标 → 终局`);
         return;

@@ -138,6 +138,27 @@ function normalizeS2Evidence(raw: unknown): {
   };
 }
 
+/**
+ * F6(2026-09-11): 提取 S7-B 的真实归档校验失败原因。
+ * 背景：run_status=archive_invalid 的旧文案写死「S7-A 为本地空跑 stage，无法自动产出归档，
+ * 请人工产出归档」——该前提在 S7-A 进程内自动归档（src/s7/s7AutoArchive.ts）落地后已失效。
+ * 真实原因常为 R4（S4.5<98 缺 exemption_id）或 R1/R2/R3/R5，写死原因会把排查引向错误方向
+ * （实测：R4 被误读成「归档没生成」，白耗一轮定位）。S7-B 的 machine_signal.reject_reason
+ * 已携带真实规则编号，此处直接透传，不做任何猜测。
+ */
+function archiveFailureReasons(
+  stageResults: Array<{ stage_id?: string; machine_signal?: { reject_reason?: unknown } }> | undefined,
+): string[] {
+  const all = stageResults ?? [];
+  const s7 = all.find(r => /^S7-B/.test(String(r?.stage_id ?? '')))
+    ?? all.find(r => /^S7/.test(String(r?.stage_id ?? '')));
+  const raw = s7?.machine_signal?.reject_reason;
+  const list = Array.isArray(raw) ? raw : [];
+  return list
+    .map(r => String(r).replace(/^S7-B\s*归档校验失败\s*\d*\s*项[:：]\s*/, '').trim())
+    .filter(r => r && r !== '详见 human_report');
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Harness 基础设施保护区（与 harness-pre-check.cjs 保持同步）
 // ════════════════════════════════════════════════════════════════════
@@ -776,14 +797,20 @@ mcpServer.registerTool(
     } else if (result.run_status === 'archive_invalid') {
       // F5(2026-09-11): 原文案写 `diff_files`，与实际 schema（rollback_plan.modified_files）不符，
       // 会直接把 Agent 引向错误结构 → S7-B 必然再拒。此处按 src/schemas/s7-archive-payload.ts 如实列出。
+      // F6(2026-09-11): 删去「S7-A 为本地空跑 stage，无法自动产出归档」这一**已失效的前提**——
+      // S7-A 现由 src/s7/s7AutoArchive.ts 在进程内自动归档，归档缺失不再是主因；必须透传
+      // S7-B 的真实 reject_reason（R1 缺产物 / R2-R5 内容或豁免不合法），否则误导排查方向。
+      const reasons = archiveFailureReasons(result.stage_results);
+      const r4Hint = reasons.some(r => /^R4/.test(r))
+        ? ' 处置建议（R4：S4.5 综合分 <98 必须携带有效 exemption_id）：先为该文件签发豁免再重跑，' +
+          '即 core.addExemption(file, { relaxed_checks: ["S4.5_complexity"] })（scripts/exemptions-core.cjs）。'
+        : '';
       humanGateNote =
         '📦 S7-B 归档校验失败 → 本次未签发写入令牌。' +
-        'S7-A 为本地空跑 stage（无 delegate），无法自动产出归档产物；请人工在 S7-A 产出 ' +
-        'data/archives/<run_id>.json 后重跑。字段结构（严格按 src/schemas/s7-archive-payload.ts，勿自造字段名）：' +
-        'change_summary；rollback_plan{modified_files[], rollback_steps}；verification_checklist[]；' +
-        'debt_marker{is_patch, debt_item_id, three_round_review_plan}；audit_ref；' +
-        'exemption_id（S4.5 综合分 <98 时必填）。' +
-        '校验规则 R1-R5 见 src/s7/S7ArchiveValidator.ts。';
+        `真实原因：${reasons.length ? reasons.join(' | ') : '见审计卷宗 S7-B machine_signal（未提供结构化原因）'}。` +
+        '归档产物路径 data/archives/<run_id>.json（由 S7-A 进程内自动生成，src/s7/s7AutoArchive.ts）；' +
+        '字段结构见 src/schemas/s7-archive-payload.ts，校验规则 R1-R5 见 src/s7/S7ArchiveValidator.ts。' +
+        r4Hint;
     }
 
     return {
