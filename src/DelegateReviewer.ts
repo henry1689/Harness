@@ -288,8 +288,21 @@ function checkRiskCatchAll(state: FlowRunState): ReviewDimensionResult {
   )) {
     confirmations.push({ key: 'RISK_IMPORT_DEP_ASSESS', label: '[兜底] 高风险文件改动需完成全量 import 依赖评估（确认所有上层调用方无遗漏适配）' });
   }
-  confirmations.push({ key: 'RISK_NO_HARDCODED', label: '[兜底] 需确认未新增硬编码人名、时间常量（应使用统一配置或 M1 DNA 提取）' });
-  confirmations.push({ key: 'RISK_FG11_FINAL_CHECK', label: '[兜底·FG] 需逐条对照 FG11 条红线检查清单完成最终核验（参考 wenstar-fg-roleplay.md）' });
+  // 🔴 2026-09-11 去形式化：原实现**无条件**推送下面两条确认 —— 哪怕本次改动与
+  // FG / 角色 / 硬编码人名常量毫无关系（如 Harness 基础设施改动、纯文档改动），
+  // 也要求逐条签字核验。无关项不是核验，是仪式；实测它把每次 Harness 自身改动都
+  // 逼成「声明一堆自己没做过的检查」。
+  // 现按**改动域**条件化：
+  //   - 落在产品域（可能新增人名/时间常量）→ 要 RISK_NO_HARDCODED
+  //   - 触碰 FG / 角色 / 人设相关文件 → 要 RISK_FG11_FINAL_CHECK
+  // 产品改动的要求一条不少；非产品改动不再被无关项拦。
+  const _normFiles = files.map(f => String(f).replace(/\\/g, '/'));
+  if (_normFiles.some(f => PRODUCT_DOMAIN_RE.test(f))) {
+    confirmations.push({ key: 'RISK_NO_HARDCODED', label: '[兜底] 需确认未新增硬编码人名、时间常量（应使用统一配置或 M1 DNA 提取）' });
+  }
+  if (_normFiles.some(f => /FamilyGraph|family_graph|roleplay|persona|dossier|\bFG\b/i.test(f))) {
+    confirmations.push({ key: 'RISK_FG11_FINAL_CHECK', label: '[兜底·FG] 需逐条对照 FG11 条红线检查清单完成最终核验（参考 wenstar-fg-roleplay.md）' });
+  }
 
   return { dimension_id: 'RISK_CATCHALL', checked: true, blocking_violations: [], required_confirmations: confirmations, advisories: [] };
 }
@@ -299,23 +312,21 @@ function checkRiskCatchAll(state: FlowRunState): ReviewDimensionResult {
 // ════════════════════════════════════════════════════════════════════
 
 /**
- * 🔴 架构级改动判定关键词（任一命中即判定为架构级）。
- * 架构级改动若无配套文档更新，直接判定该维不通过。
+ * ⌫ 2026-09-11 删除 `ARCH_LEVEL_PATTERNS`（12 条正则，原「架构级改动判定关键词」）。
+ * 它唯一的消费方是 isArchLevelChange 的「条件C」，而条件C 恒为 false（见下方注释），
+ * 也就是说这 12 条正则从未生效过 —— 典型的「看起来在把关、实际从未触发」的死配置。
+ * 高风险文件清单在下面的 touchesHighRisk 中独立硬编码维护，不依赖本常量。
+ * 若将来要恢复「按关键词判定架构级」，请注意必须传入**真实文本**（如 S2 方案全文），
+ * 而不是原来的空串/字面量。
  */
-const ARCH_LEVEL_PATTERNS: readonly RegExp[] = [
-  /接口.*变更|接口.*改|interface.*change|API.*变更|契约.*变更/,
-  /数据模型.*迁移|schema.*变更|表结构.*改|迁移|migration/i,
-  /管线.*重构|管线.*流程|pipeline.*重构|注入链路.*调整/,
-  /新增.*模块|删除.*模块|移除.*模块|add.*module|remove.*module/i,
-  /认知模块|cognitive.*module/i,
-  /FamilyGraph.*schema|FG.*schema|dossier.*结构/,
-  /SQLite.*表|table.*change|列.*新增|列.*删除|column.*add|column.*drop/i,
-  /chat\.ts.*注入|injection.*chain|finalKnowledgeText|22段/,
-  /PFC.*上下文|PrefrontalCortex.*接口|PFC.*interface/,
-  /跨模块.*变更|cross-module|跨层.*调用/i,
-  /存储.*重构|storage.*refactor|持久化.*改/,
-  /角色扮演.*管线|roleplay.*pipeline/i,
-];
+
+/**
+ * 产品域路径特征（相对被治理项目根）。
+ * 用于「按改动域条件化」确认项：只有落在产品域的改动才要求产品相关核验。
+ * ⚠️ 另一处有同名镜像常量（src/s6/manualVerify.ts）——两处必须同步修改
+ * （未抽公共模块是为了避免新增受管文件带来的豁免开销）。
+ */
+const PRODUCT_DOMAIN_RE = /^(src\/(webui|app|engine|kernel|m1|m2|m3|m4|m5)\/|start\.cjs$)/;
 
 /** 判断是否为架构级改动（多指标综合判定） */
 function isArchLevelChange(state: FlowRunState): boolean {
@@ -337,8 +348,12 @@ function isArchLevelChange(state: FlowRunState): boolean {
     );
   });
 
-  // 条件C：消息内容匹配架构级关键词
-  const msgMatches = ARCH_LEVEL_PATTERNS.some(p => p.test(state.risk_level === 'high' ? '架构级' : ''));
+  // 🔴 2026-09-11 去形式化：删除原「条件C：消息内容匹配架构级关键词」（连同其常量
+  // ARCH_LEVEL_PATTERNS，见上方说明）。原实现是
+  //   ARCH_LEVEL_PATTERNS.some(p => p.test(state.risk_level === 'high' ? '架构级' : ''))
+  // —— 非 high 时对**空串**做正则，high 时对字面量 '架构级' 做正则，而常量里没有任何
+  // 一条能匹配这两串 → **该条件恒为 false，从未生效**。
+  // 删除行为保持（它本来贡献 0 分）。高风险文件清单由上面的 touchesHighRisk 独立维护。
 
   // 条件D：中风险文件数量 ≥ 5
   const midCount = files.filter(f => {
@@ -350,7 +365,7 @@ function isArchLevelChange(state: FlowRunState): boolean {
     );
   }).length;
 
-  const archScore = (multiFile ? 2 : 0) + (touchesHighRisk ? 3 : 0) + (msgMatches ? 1 : 0) + (midCount >= 5 ? 2 : 0);
+  const archScore = (multiFile ? 2 : 0) + (touchesHighRisk ? 3 : 0) + (midCount >= 5 ? 2 : 0);
 
   return archScore >= 3;
 }
