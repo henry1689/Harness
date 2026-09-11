@@ -20,7 +20,7 @@
  */
 import type { StageConfig, FlowRunState, StageOutput } from '../types.js';
 import { passSignal, rejectSignal, makeStageOutput } from '../DualChannelSignal.js';
-import { buildManualTicket, decideManualGate } from './manualVerify.js';
+import { buildManualTicket, decideManualGate, deriveManualItems } from './manualVerify.js';
 import {
   computeChangeKey,
   loadTicket,
@@ -58,7 +58,13 @@ export async function s6ManualVerifyDelegate(_stage: StageConfig, state: FlowRun
   // ③ 读/建任务单（按稳定 change_key 寻址——重跑同一批文件命中同一张单）
   let ticket = loadTicket(changeKey);
   if (!ticket) {
-    const fresh = buildManualTicket(state.run_id) as ManualTicketFile;
+    // 🔴 2026-09-11 去形式化：按改动域推导验收项，不再无条件套用 wenstar-cc 产品项
+    // （Harness 自身改动拿「WebUI 对话/角色扮演/DB 标注率」的验收单 = 没法有意义地勾，
+    //  只会逼出批量代签）。产品域 → 产品行为项；其余 → 与该改动真正相关的通用项。
+    const fresh = buildManualTicket(
+      state.run_id,
+      deriveManualItems(files, { projectRoot: state.project_root }).map(i => ({ ...i, confirmed: false })),
+    ) as ManualTicketFile;
     ticket = { ...fresh, change_key: changeKey, last_run_id: state.run_id, run_status: 'await_manual_verification' };
     saveTicket(ticket);
   } else if (ticket.last_run_id !== state.run_id) {
