@@ -291,6 +291,21 @@ async function attemptTokenIssue(
   return value;
 }
 
+/**
+ * P2(2026-09-11): 把任意路径形态归一到「项目相对路径（正斜杠）」。
+ * 令牌以 hashCode(路径字符串) 为文件名，相对/绝对会落到不同的哈希 → 两套文件互不命中。
+ * 调用方传什么就存什么，是历史遗留；此处统一归一到相对形态，作为唯一真值。
+ * - 已是相对路径 → 去 ./ 前缀后原样
+ * - 绝对且位于 PROJECT_ROOT 内 → 剥掉根前缀
+ * - 其他绝对路径（不在项目内）→ 原样保留，不猜测
+ */
+function toProjectRelative(p: string): string {
+  const norm = String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+  const root = PROJECT_ROOT.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (norm.toLowerCase().startsWith(root.toLowerCase() + '/')) return norm.slice(root.length + 1);
+  return norm;
+}
+
 /** 实际签发回调——仅在 policy eligible 时被调用（拒绝态绝不进入） */
 async function issueTokens(
   result: { run_id: string },
@@ -304,7 +319,11 @@ async function issueTokens(
 
     let issuedCount = 0;
     let lastExpiresAt: string | undefined;
-    for (const f of files) {
+    for (const rawF of files) {
+      // 🔴 P2: 先归一到项目相对路径——令牌文件名 = hashCode(路径)，相对/绝对落到不同哈希，
+      // 混用会导致 hook 按相对路径查不到按绝对路径签发的令牌。
+      const f = toProjectRelative(rawF);
+
       // v2.10: 签发时记录目标文件内容 hash——同文件内容变了则 token 失效（防「拿一次 token 反复改」）
       let contentHash: string | undefined;
       try {
@@ -327,19 +346,20 @@ async function issueTokens(
       issuedCount++;
       lastExpiresAt = t.expires_at;
 
-      // 🔴 P9-fix: 补绝对路径 hash 别名（治本）
-      // 原因: token-store 只写相对路径别名（如 src/m2/SQLiteAdapter.ts → mrwnex），
-      // 但 hook/Sentinel 收到绝对路径时用绝对路径 hash（jvkcn6）查找 → 找不到 token。
-      // 这里用 PROJECT_ROOT 拼绝对路径，额外写一份绝对路径 hash 别名，无论哪种路径都能命中。
+      // 绝对路径 hash 别名：主令牌现已是相对路径，但 hook/Sentinel 仍可能按绝对路径查找，
+      // 故额外写一份别名使两种查找都命中。
+      // 🔴 P2 修复：原实现用 `PROJECT_ROOT + '/' + f` 拼绝对路径——当调用方传入的 f 本身
+      // 已是绝对路径时，会拼出 `D:/AI文件/harness/D:/tools/wenstar-cc/src/x.ts` 这种幽灵
+      // 双前缀（与 [[harness-sentinel-path-fix]] 同类），别名哈希无人查得到。现基于归一化
+      // 后的 f 拼接，天然正确。
       try {
-        const absPath = (PROJECT_ROOT.replace(/\\/g, '/') + '/' + String(f).replace(/\\/g, '/')).replace(/\/+/g, '/');
+        const absPath = (PROJECT_ROOT.replace(/\\/g, '/').replace(/\/+$/, '') + '/' + f).replace(/\/+/g, '/');
         const absHash = hashCode(absPath);
         const tokenDirPath = resolve(import.meta.dirname!, '..', 'data', 'tokens');
         const aliasFile = resolve(tokenDirPath, absHash + '.json');
         if (!existsSync(aliasFile)) {
           // 读回刚签发的 token 内容写入别名（确保签名一致）
-          const relHash = hashCode(String(f).replace(/\\/g, '/'));
-          const relFile = resolve(tokenDirPath, relHash + '.json');
+          const relFile = resolve(tokenDirPath, hashCode(f) + '.json');
           if (existsSync(relFile)) {
             writeFileSync(aliasFile, readFileSync(relFile, 'utf-8'));
             console.error(`[harness-mcp] ✅ 绝对路径别名: ${absPath} → ${absHash}.json`);
@@ -426,6 +446,22 @@ mcpServer.registerTool(
           not_available_reason: z.string().nullable().optional(),
           associated_debt_id: z.string().nullable().optional(),
           payback_milestone: z.string().nullable().optional(),
+        }).optional(),
+        // 🔴 2026-09-11 补齐：以下三个 v2 字段（见 src/schemas/s2-evidence-v2.ts）此前**未在
+        // zod 声明**，被 zod 的「丢弃未知键」行为静默剥掉，导致功能整体失效：
+        //   skip_manual_verification → S6-B 永远要求人工验收（H-02 开关从未生效）
+        //   allow_full_rewrite       → H-05「S2 授权大文件覆写」白名单恒为空
+        //   arch_structural_plan     → 架构方案结构化字段全丢
+        // 教训：改 s2_evidence 必须对照 s2-evidence-v2.ts 全字段核对（此前 patch_plan 已踩过一次）。
+        allow_full_rewrite: z.array(z.string()).optional(),
+        skip_manual_verification: z.boolean().optional(),
+        arch_structural_plan: z.object({
+          is_available: z.boolean(),
+          change_scope: z.array(z.string()).optional(),
+          benefit: z.string().optional(),
+          dependencies: z.array(z.string()).optional(),
+          estimated_workload: z.string().optional(),
+          not_available_reason: z.string().nullable().optional(),
         }).optional(),
       }).optional().describe('H1: S2 审批证据（非秘密；缺失/无效时 S2 fail-closed，返回 S2_APPROVAL_EVIDENCE_MISSING）。补丁方案（final_approved_plan=patch 或 patch_plan.is_available=true）且未绑定 associated_debt_id → 批准瞬间自动登记技术债，结果见 s2_patch_debt_id。'),
       owner_closure_id: z.string().regex(/^oc_[a-f0-9]{16}$/).optional()
