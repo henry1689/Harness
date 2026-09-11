@@ -1,5 +1,5 @@
 {
-  "_comment": "P6-SECURITY: 统一风险策略 — 所有防线组件的单一权威来源。修改此文件后所有防线自动生效，无需手动同步。",
+  "_comment": "P6-SECURITY: 统一风险策略。⚠️ 2026-09-11 订正：此前声称「所有防线组件的单一权威来源，修改此文件后所有防线自动生效」——实测失实。sentinel/sentinel-mcp-client.cjs 与 mcp/server.ts 各自硬编码了独立的分类清单，**均不读取本文件**；本文件目前仅被 scripts/risk-policy-loader.cjs 的消费方（如 Sentinel 的 WATCH_ROOTS 生成）读取。改动本文件**不会**自动同步那两份硬编码清单。另：本文件自身已列入保护区（absolute 不可写）。",
 
   "protected_paths": [
     ".claude/settings.json",

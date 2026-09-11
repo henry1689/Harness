@@ -69,6 +69,11 @@ const LOW_RISK_EXTENSIONS = ['.md', '.sql', '.html', '.css', '.scss', '.less', '
 
 const HARNESS_PROTECTED = [
   '.claude/settings.json', '.claude/harness/', '.claude/workflows', '.claude/hooks',
+  // 🔴 2026-09-11 安全修复：风险策略文件本身绝对不可写（与 mcp/server.ts 的
+  // HARNESS_PROTECTED 保持同步）。它定义所有防线的保护区/高风险清单。
+  // 背景：服务端此前把 `.json` 判为 low → 该文件可被无授权改写 → 防线控制面敞开。
+  // 服务端已去掉 `.json` 的 low 判定；此处再做一层「绝对不可写」，双保险。
+  'data/risk-policy.json',
 ];
 
 // ── 工具函数 ──

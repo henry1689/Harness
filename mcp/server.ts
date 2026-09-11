@@ -166,6 +166,11 @@ function archiveFailureReasons(
 const HARNESS_PROTECTED = [
   'src/harness/', 'data/harness/', '.claude/settings.json',
   '.claude/harness/', '.claude/workflows',
+  // 🔴 2026-09-11 安全修复：风险策略文件本身必须绝对不可写。
+  // 它定义所有防线的保护区/高风险清单 —— 实测它此前被本函数判为 'low'
+  // （下方 `.json` → low 那条），即**任何 Agent 无需任何授权即可改写整个防线**。
+  // 这正是「绝对不允许绕过」最大的一个缺口。
+  'data/risk-policy.json',
 ];
 
 function isProtected(fp: string): { hit: boolean; rule: string } {
@@ -306,9 +311,29 @@ async function attemptTokenIssue(
   result: { success: boolean; run_id: string; end_reason?: string; flow_status?: string; mode?: string },
   files: string[],
   intentSpec: { id: string; scope?: { allowed_paths?: string[]; forbidden_paths?: string[] } },
+  opts: { flowName?: string } = {},
 ): Promise<{ issued: boolean; issuedCount: number; detail: string; expiresIn?: string; verdictCode?: string }> {
   // 动态加载独立 policy（避免 MCP 启动时 ESM 依赖解析失败）
   const { attemptTokenIssue: policyAttempt } = await import('../src/security/flow-terminal-policy.js');
+
+  // 🔴 2026-09-11: 「方案预审」通路的 write token 必须先过 owner 划定的白名单边界。
+  // 该流程的输入（方案文字/分类/理由）全由申请方提供、链上无人类锚点，故把锚点设为
+  // 「owner 在源码里定义的允许范围」：边界内自动放行，越界一律拒绝。
+  // 完整流程（wenstaros_core_repair_flow）签发的令牌不受此限（它有 S3-S7 全量收口）。
+  if (opts.flowName && /^plan_review_flow/.test(opts.flowName)) {
+    const { checkAutoGrantScope } = await import('../src/security/flow-terminal-policy.js');
+    const violations = checkAutoGrantScope(files);
+    if (violations.length > 0) {
+      const detail = violations.map(v => `${v.file}: ${v.reason}`).join(' ｜ ');
+      console.error(`[harness-mcp] 🚫 方案预审越界，拒绝签发写令牌: ${detail}`);
+      return {
+        issued: false,
+        issuedCount: 0,
+        detail: `auto-grant scope denied: ${violations.map(v => v.file).join(', ')} — ${detail}`,
+        verdictCode: 'auto_grant_out_of_scope',
+      };
+    }
+  }
 
   const policyResult = policyAttempt(
     { success: result.success, flow_status: result.flow_status, end_reason: result.end_reason, mode: result.mode },
@@ -739,7 +764,7 @@ mcpServer.registerTool(
       }
 
       // H0: 尝试签发 Token v2（HMAC 签名）——返回真实签发结果，不因 result.success 误报
-      tokenResult = await attemptTokenIssue(result, files, intentSpec);
+      tokenResult = await attemptTokenIssue(result, files, intentSpec, { flowName });
 
       if (ownerClosureClaim) {
         const allTokensIssued = tokenResult.issued && tokenResult.issuedCount === files.length;
@@ -1195,7 +1220,15 @@ function sentinelClassifyRisk(fp: string): 'protected' | 'high' | 'mid' | 'low' 
       n.startsWith('src/common/') || n.startsWith('src/adapter/') || n.startsWith('src/modules/')) return 'low';
   if (n.includes('.test.ts') || n.includes('.spec.ts') || n.includes('.d.ts')) return 'low';
   // 🔴 .cjs 文件在 scripts/hooks/mcp/sentinel 目录下是可执行脚本，不得归类为低风险
-  if (n.endsWith('.md') || n.endsWith('.sql') || n.endsWith('.json')) return 'low';
+  // 🔴 2026-09-11 安全修复：**去掉 `.json` 的低风险判定**。
+  // 原实现 `n.endsWith('.json') → 'low'` 使一切 JSON 免检即写 —— 而本仓所有策略、
+  // 配置、豁免台账都是 .json（data/risk-policy.json / data/prompts / 各类清单），
+  // 等于把整个防线的控制面敞开。且它与本地分类器（sentinel-mcp-client.cjs，其
+  // LOW_RISK_EXTENSIONS **不含** .json）**判定分歧**：同一文件走服务端判 low、
+  // 走本地降级判 mid，安全语义不一致。
+  // 现改为：.json 一律落到函数末尾的 'mid'（需令牌），与本地分类器对齐。
+  // 若确有需要免检的 JSON（如纯文档/锁文件），请显式加入上方白名单，不要用扩展名一刀切。
+  if (n.endsWith('.md') || n.endsWith('.sql')) return 'low';
   if (n.endsWith('.cjs')) {
     const isExecDir = n.startsWith('scripts/') || n.startsWith('hooks/') || n.startsWith('mcp/') || n.startsWith('sentinel/');
     return isExecDir ? 'mid' : 'low';
