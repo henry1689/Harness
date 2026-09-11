@@ -90,10 +90,25 @@ function backoffDelay(failCount) {
   return delays[Math.min(failCount, delays.length - 1)];
 }
 
-/** 写审计日志 */
+/** watchdog 审计日志目录（与 harness-watchdog.cjs 的 LOCK_DIR 共用） */
+function watchdogLogDir() {
+  return path.resolve(__dirname, '..', 'data', 'mcp-watchdog');
+}
+
+/**
+ * 写审计日志 —— 按日单文件 JSONL 追加（v3.2, 2026-09-11）。
+ *
+ * 背景：原实现 `watchdog_${Date.now()}.json` 每写一条事件就新建一个文件，且**从不清理**。
+ * 2026-09-11 上午「看守进程互杀」事故期（已由单实例锁根治）每 6~13 秒产生一次 child_exit，
+ * 累计炸出 13,726 个碎片文件，并拖慢 harness-watchdog.cjs 的 hasFreshLock()（每次全目录遍历）。
+ * 改为按日单文件追加：文件数从「每事件 1 个」降为「每天 1 个」，即使再爆也不会撑爆目录。
+ * 格式：JSONL（每行一个 JSON），可 tail/grep。
+ * （只记 4 类异常：child_exit / child_error / health_check_fail / tsc_check_failed
+ *   —— 稳定运行时本不产生日志，故“目录长期为空”属正常）
+ */
 function auditLog(event, detail) {
   try {
-    const logDir = path.resolve(__dirname, '..', 'data', 'mcp-watchdog');
+    const logDir = watchdogLogDir();
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const entry = {
       timestamp: new Date().toISOString(),
@@ -103,9 +118,50 @@ function auditLog(event, detail) {
       consecutive_fails: consecutiveFails,
       detail,
     };
-    const fname = `watchdog_${Date.now()}.json`;
-    fs.writeFileSync(path.join(logDir, fname), JSON.stringify(entry, null, 2), 'utf-8');
+    const day = new Date().toISOString().slice(0, 10);
+    fs.appendFileSync(path.join(logDir, `watchdog-${day}.jsonl`), JSON.stringify(entry) + '\n', 'utf-8');
   } catch (_) {}
+}
+
+/** 审计日志保留期（天）；可用 HARNESS_WATCHDOG_LOG_RETENTION_DAYS 覆盖 */
+const WATCHDOG_LOG_RETENTION_DAYS = (() => {
+  const n = parseInt(process.env.HARNESS_WATCHDOG_LOG_RETENTION_DAYS || '7', 10);
+  return Number.isFinite(n) && n > 0 ? n : 7;
+})();
+
+/**
+ * 启动期清理超龄 watchdog 日志（v3.2）。识别两种命名：
+ *   - 新格式 watchdog-YYYY-MM-DD.jsonl（按文件名日期）
+ *   - 旧格式 watchdog_<epochMs>.json（历史碎片，按文件名时间戳）
+ * 只删超过保留期的；锁文件（*.lock）及其他非本模块产物一律不碰。
+ */
+function pruneWatchdogLogs(retentionDays = WATCHDOG_LOG_RETENTION_DAYS) {
+  try {
+    const logDir = watchdogLogDir();
+    if (!fs.existsSync(logDir)) return { removed: 0, kept: 0 };
+    const cutoff = Date.now() - retentionDays * 86400_000;
+    let removed = 0;
+    let kept = 0;
+    for (const f of fs.readdirSync(logDir)) {
+      let ts = null;
+      const mNew = /^watchdog-(\d{4})-(\d{2})-(\d{2})\.jsonl$/.exec(f);
+      if (mNew) {
+        ts = Date.parse(`${mNew[1]}-${mNew[2]}-${mNew[3]}T23:59:59Z`);
+      } else {
+        const mOld = /^watchdog_(\d{13})\.json$/.exec(f);
+        if (mOld) ts = Number(mOld[1]);
+      }
+      if (ts === null || !Number.isFinite(ts)) continue; // 非本模块产物（锁文件等）→ 不动
+      if (ts < cutoff) {
+        try { fs.unlinkSync(path.join(logDir, f)); removed++; } catch (_) { /* 单个失败不影响整体 */ }
+      } else {
+        kept++;
+      }
+    }
+    return { removed, kept };
+  } catch (_) {
+    return { removed: 0, kept: 0 };
+  }
 }
 
 /** 检查端口是否被占用（P9-fix: 防 EADDRINUSE 崩溃弹窗） */
@@ -387,6 +443,12 @@ if (!acquireSingleInstanceLock()) {
   process.exit(0);
 }
 console.error(`[harness-start] 🔐 单实例锁已取得: ${LOCK_FILE}`);
+
+// 🔴 v3.2: 启动期清理超龄 watchdog 审计日志（默认保留 7 天；含旧碎片格式）
+const _pruned = pruneWatchdogLogs();
+if (_pruned.removed > 0) {
+  console.error(`[harness-start] 🧹 watchdog 日志清理: 删除 ${_pruned.removed} 个超龄文件（保留 ${_pruned.kept}）`);
+}
 
 // 🔴 P4-AB: 先跑编译验证，通过后再启动 MCP
 runTscCompileCheck();
