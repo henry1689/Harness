@@ -25,80 +25,77 @@ const MCP_PORT = parseInt(process.env.HARNESS_MCP_PORT || '8765');
 /** 令牌存储目录 */
 const TOKEN_DIR = path.resolve(__dirname, '..', 'data', 'tokens');
 
-/** 高风险文件列表（与 harness-pre-check.cjs 保持同步） */
-// 🔴 LOW_RISK_FILES: 调试豁免列表 — 这些文件即使路径匹配 HIGH_RISK 也降级为 low
-const LOW_RISK_FILES = [
-  'src/engine/reflex/SafetyInterceptor.ts',
-  'src/m4/household/EntityContextBuilder.ts',
-];
+// ── 🔴 2026-09-12（④ 清单合一）：分类清单改读单一真值源 ──
+// 本文件此前硬编码 HIGH_RISK_FILES(42) + LOW_RISK_PREFIXES/SUFFIXES/EXTENSIONS +
+// HARNESS_PROTECTED，与 mcp/server.ts、src/RiskClassifier.ts 各持一份分叉副本。
+// 实测三者判定不一致（例如同一文件服务端判 low、本地降级判 mid）。
+//
+// ⚠️ CJS 侧无法 import TypeScript，故直接 require 同一份 JSON；判定顺序必须与
+// src/RiskClassifier.ts::classifyPath 及 mcp/server.ts::sentinelClassifyRisk 一致。
+const RISK_LISTS_PATH = path.resolve(__dirname, '..', 'src', 'security', 'risk-lists.json');
 
-const HIGH_RISK_FILES = [
-  'src/webui/chat.ts', 'src/m4/household/FamilyGraph.ts', 'src/m2/SQLiteAdapter.ts',
-  'src/webui/server.ts', 'src/m4/household/UUIDGatekeeper.ts',
-  'src/m4/M4Orchestrator.ts', 'src/m4/MemoryInjector.ts', 'src/m4/MemoryRetriever.ts',
-  'src/m4/EntityTopologyManager.ts', 'src/m4/EntityValidator.ts',
-  'src/m4/QueryDecomposer.ts', 'src/m4/Reranker.ts',
-  'src/m4/household/EntityMeeting.ts', 'src/m4/household/EntityContextBuilder.ts',
-  'src/m4/household/ProfileAcquisitionEngine.ts',
-  'src/m5/M5Orchestrator.ts', 'src/m5/CandidateSelector.ts', 'src/m5/StrategySelector.ts',
-  'src/m5/CognitionAssembler.ts', 'src/m5/HumanisticCalibrator.ts', 'src/m5/SceneAnchor.ts',
-  'src/m5/ContextMemory.ts', 'src/m5/DeepSeekLLMProvider.ts', 'src/m5/MockLLMProvider.ts',
-  'src/engine/orchestrator.ts', 'src/engine/EngineContext.ts',
-  'src/engine/legacy-adapter.ts', 'src/engine/types.ts',
-  'src/engine/tianquan/prefrontal/',
-  'src/m2/FusionStorageAdapter.ts', 'src/m2/ConversationDB.ts',
-  'src/webui/chat/ChatEntry.ts', 'src/webui/chat/MeetingContextPipeline.ts',
-  'src/webui/chat/retrieval.ts',
-  'src/hooks/',
-  'src/app/knowledge/KnowledgeEngine.ts', 'src/app/knowledge/KnowledgeContextBuilder.ts',
-  'src/app/vault/VaultManager.ts',
-  'src/app/ingestion/ConversationIngestionService.ts',
-  'src/app/fusion/FusionEngine.ts',
-  'src/app/fg/', 'src/app/role/',
-];
-
-const LOW_RISK_PREFIXES = [
-  'src/config/', 'src/types/', 'src/cli/', 'src/common/',
-  'src/adapter/', 'src/modules/',
-  'src/app/tools/', 'src/app/utils/', 'src/app/shared/', 'src/app/__tests__/',
-];
-
-const LOW_RISK_SUFFIXES = ['.test.ts', '.spec.ts', '.d.ts'];
-const LOW_RISK_EXTENSIONS = ['.md', '.sql', '.html', '.css', '.scss', '.less', '.env', '.gitignore', '.lock', '.sh', '.ps1', '.bat'];
-// 🔴 .cjs/.mjs 已从低风险移除 — 可执行脚本在 scripts/hooks/mcp/sentinel 目录下可用于绕过管控
-
-const HARNESS_PROTECTED = [
+/** 真值源不可读时的兜底保护区（fail-closed：宁可多判保护区也不放过） */
+const FALLBACK_PROTECTED = [
   '.claude/settings.json', '.claude/harness/', '.claude/workflows', '.claude/hooks',
-  // 🔴 2026-09-11 安全修复：风险策略文件本身绝对不可写（与 mcp/server.ts 的
-  // HARNESS_PROTECTED 保持同步）。它定义所有防线的保护区/高风险清单。
-  // 背景：服务端此前把 `.json` 判为 low → 该文件可被无授权改写 → 防线控制面敞开。
-  // 服务端已去掉 `.json` 的 low 判定；此处再做一层「绝对不可写」，双保险。
-  'data/risk-policy.json',
+  'data/risk-policy.json', 'src/security/risk-lists.json',
 ];
+
+const RISK_LISTS = (() => {
+  try {
+    const j = JSON.parse(fs.readFileSync(RISK_LISTS_PATH, 'utf-8'));
+    if (!Array.isArray(j.protected) || !Array.isArray(j.high_risk_files)) throw new Error('结构不符');
+    return {
+      protected: j.protected,
+      high_risk_files: j.high_risk_files,
+      high_risk_prefixes: j.high_risk_prefixes || [],
+      low_risk_files: j.low_risk_files || [],
+      low_risk_prefixes: j.low_risk_prefixes || [],
+      low_risk_suffixes: j.low_risk_suffixes || [],
+      low_risk_extensions: j.low_risk_extensions || [],
+    };
+  } catch (e) {
+    // 🔴 fail-closed：读不到真值源时不能退化成「全部 mid」——那会丢掉保护区。
+    // 退回内置保护区 + 其余一律 mid（mid 需令牌，仍受管），并大声报错。
+    console.error(`[sentinel:client] 🔴 风险清单真值源不可读(${RISK_LISTS_PATH}): ${e.message || e}`);
+    console.error('[sentinel:client] 🔴 已降级为内置兜底保护区 + 其余全部 mid（fail-closed）。请检查该文件是否存在且为合法 JSON。');
+    return {
+      protected: FALLBACK_PROTECTED,
+      high_risk_files: [], high_risk_prefixes: [],
+      low_risk_files: [], low_risk_prefixes: [],
+      low_risk_suffixes: [], low_risk_extensions: [],
+    };
+  }
+})();
 
 // ── 工具函数 ──
 
 function normalize(fp) { return String(fp).replace(/\\/g, '/'); }
 function hashCode(s) { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return Math.abs(h).toString(36); }
 
+/**
+ * 风险分类 —— 必须与 src/RiskClassifier.ts::classifyPath 逐条一致（同一真值源 + 同一顺序）。
+ */
 function classifyRisk(filePath) {
   const n = normalize(filePath);
   // 保护区
-  for (const p of HARNESS_PROTECTED) {
-    if (n.startsWith(p) || n.includes('/' + p)) return 'protected';
+  for (const p of RISK_LISTS.protected) {
+    if (n === p || n.startsWith(p) || n.includes('/' + p)) return 'protected';
   }
-  // 🔴 LOW_RISK_FILES 优先于 HIGH_RISK_FILES（调试豁免）
-  for (const f of LOW_RISK_FILES) {
+  // 🔴 low_risk_files 优先于高风险（调试豁免）
+  for (const f of RISK_LISTS.low_risk_files) {
     if (n.includes(f)) return 'low';
   }
   // 高风险
-  for (const f of HIGH_RISK_FILES) {
+  for (const f of RISK_LISTS.high_risk_files) {
     if (n.includes(f)) return 'high';
   }
+  for (const p of RISK_LISTS.high_risk_prefixes) {
+    if (n.startsWith(p) || n.includes('/' + p)) return 'high';
+  }
   // 低风险
-  for (const pf of LOW_RISK_PREFIXES) { if (n.startsWith(pf)) return 'low'; }
-  for (const sf of LOW_RISK_SUFFIXES) { if (n.includes(sf)) return 'low'; }
-  for (const ex of LOW_RISK_EXTENSIONS) { if (n.endsWith(ex)) return 'low'; }
+  for (const pf of RISK_LISTS.low_risk_prefixes) { if (n.startsWith(pf)) return 'low'; }
+  for (const sf of RISK_LISTS.low_risk_suffixes) { if (n.endsWith(sf)) return 'low'; }
+  for (const ex of RISK_LISTS.low_risk_extensions) { if (n.endsWith(ex)) return 'low'; }
   return 'mid';
 }
 

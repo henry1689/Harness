@@ -37,8 +37,27 @@ import { z } from 'zod';
 import { EvolutionEngine } from '../src/EvolutionEngine.js';
 import { getUpgradeProgress } from '../src/HardnessLadder.js';
 
+// 🔴 2026-09-12（④ 清单合一）：保护区/高/低风险清单的单一真值源。
+// 此前本文件硬编码 SENTINEL_HIGH_RISK(42 条) + HARNESS_PROTECTED + 一整套内联低风险规则，
+// 与 src/RiskClassifier.ts、sentinel/sentinel-mcp-client.cjs 三份分叉。
+import riskLists from '../src/security/risk-lists.json';
+
+interface RiskListsFile {
+  protected: string[];
+  high_risk_files: string[];
+  high_risk_prefixes: string[];
+  low_risk_files: string[];
+  low_risk_prefixes: string[];
+  low_risk_suffixes: string[];
+  low_risk_extensions: string[];
+}
+const RISK_LISTS = riskLists as unknown as RiskListsFile;
+
 // P5: ProjectBrain 感知层 — IntentSpec 构建 + DiffScopeGuard
 import { buildIntentSpec } from '../src/project-brain/intent-builder.js';
+// 🔴 2026-09-12（①）：S4 独立评审的 fail-closed 判定需要高风险分类 + 可中断 run 的异常类型
+import { classifyPath } from '../src/RiskClassifier.js';
+import { StageExecutionError } from '../src/types.js';
 
 // 🔴 S2-安全收紧: 统一密码校验 + 解锁令牌签名（复用 scripts/pass-core.cjs）
 const _require = createRequire(import.meta.url);
@@ -163,15 +182,10 @@ function archiveFailureReasons(
 // Harness 基础设施保护区（与 harness-pre-check.cjs 保持同步）
 // ════════════════════════════════════════════════════════════════════
 
-const HARNESS_PROTECTED = [
-  'src/harness/', 'data/harness/', '.claude/settings.json',
-  '.claude/harness/', '.claude/workflows',
-  // 🔴 2026-09-11 安全修复：风险策略文件本身必须绝对不可写。
-  // 它定义所有防线的保护区/高风险清单 —— 实测它此前被本函数判为 'low'
-  // （下方 `.json` → low 那条），即**任何 Agent 无需任何授权即可改写整个防线**。
-  // 这正是「绝对不允许绕过」最大的一个缺口。
-  'data/risk-policy.json',
-];
+// 保护区条目来自 risk-lists.json::protected（已含 2026-09-11 安全修复加入的
+// data/risk-policy.json，以及本次加入的 src/security/risk-lists.json 自身
+// —— 清单文件不可写，否则可改成任意值自我放行）。
+const HARNESS_PROTECTED = RISK_LISTS.protected;
 
 function isProtected(fp: string): { hit: boolean; rule: string } {
   const n = fp.replace(/\\/g, '/');
@@ -654,7 +668,35 @@ mcpServer.registerTool(
       try {
         return await forkedReview(stage, state);
       } catch (err) {
-        console.error('[harness-mcp] S4 fork 评审失败，降级为 in-process review:', (err as Error).message);
+        const msg = (err as Error).message;
+
+        // 🔴 2026-09-12（①）：高风险改动**禁止静默降级**为进程内评审。
+        //
+        // 「运动员不自审」在本仓的落点就是：S4 必须由一个独立子进程执行 review()
+        // （scripts/review-runner.cjs → src/DelegateReviewer.ts）。原实现在 fork 失败时
+        // 直接 `return review(...)` —— 独立评审这道防线会因为一次 spawn 失败而整体消失，
+        // 且只留一行 stderr，流水线照常通过。
+        // 低风险改动降级尚可接受；高风险改动爆炸半径大，此处 fail-closed。
+        //
+        // ⚠️ 必须【抛异常】而不是返回 rejectSignal：S4 的 gate_type 是 auto，而
+        // GateController.resolveAuto() 是无条件 auto_passed —— 返回失败信号根本拦不住。
+        // 抛 StageExecutionError 才会让 FlowEngine 以 stage_error 终局（不签发令牌）。
+        const highRisk = (state?.modified_files ?? [])
+          .map((f: string) => String(f).replace(/\\/g, '/'))
+          .filter((f: string) => classifyPath(f) === 'high');
+        if (highRisk.length > 0) {
+          const shown = highRisk.slice(0, 3).join(', ');
+          const reason =
+            `S4 独立评审进程不可用（fork 失败: ${msg}），而本次改动触及高风险文件 ` +
+            `[${shown}${highRisk.length > 3 ? ` 等 ${highRisk.length} 个` : ''}] —— ` +
+            `高风险改动不允许降级为进程内评审（运动员不自审），故 fail-closed 终止本次 run。` +
+            `请排查 scripts/review-runner.cjs / tsx loader 路径后重跑；` +
+            `若确需在无独立评审的条件下推进，请走人工通道。`;
+          console.error(`[harness-mcp] 🔴 ${reason}`);
+          throw new StageExecutionError('S4_Arch_Review', reason);
+        }
+
+        console.error('[harness-mcp] S4 fork 评审失败，降级为 in-process review:', msg);
         return review(stage, state);
       }
     });
@@ -1173,66 +1215,46 @@ process.on('SIGTERM', () => { console.error('[harness-mcp] 收到 SIGTERM，退�
 // 哨兵 REST 端点: /sentinel/check
 // ════════════════════════════════════════════════════════════════════
 
-// 🔴 调试豁免列表 — 这些文件即使匹配 HIGH_RISK 也降级为 low，便于测试时直接修改
-const SENTINEL_DEBUG_EXEMPT = [
-  'src/engine/reflex/SafetyInterceptor.ts',
-];
-
-/** 高风险文件列表（与 harness-pre-check.cjs + sentinel-mcp-client.js 同步） */
-const SENTINEL_HIGH_RISK = [
-  'src/webui/chat.ts', 'src/m4/household/FamilyGraph.ts', 'src/m2/SQLiteAdapter.ts',
-  'src/webui/server.ts', 'src/m4/household/UUIDGatekeeper.ts',
-  'src/m4/M4Orchestrator.ts', 'src/m4/MemoryInjector.ts', 'src/m4/MemoryRetriever.ts',
-  'src/m4/EntityTopologyManager.ts', 'src/m4/EntityValidator.ts',
-  'src/m4/QueryDecomposer.ts', 'src/m4/Reranker.ts',
-  'src/m4/household/EntityMeeting.ts', 'src/m4/household/EntityContextBuilder.ts',
-  'src/m4/household/ProfileAcquisitionEngine.ts',
-  'src/m5/M5Orchestrator.ts', 'src/m5/CandidateSelector.ts', 'src/m5/StrategySelector.ts',
-  'src/m5/CognitionAssembler.ts', 'src/m5/HumanisticCalibrator.ts', 'src/m5/SceneAnchor.ts',
-  'src/m5/ContextMemory.ts', 'src/m5/DeepSeekLLMProvider.ts', 'src/m5/MockLLMProvider.ts',
-  'src/engine/orchestrator.ts', 'src/engine/EngineContext.ts',
-  'src/engine/legacy-adapter.ts', 'src/engine/types.ts',
-  'src/engine/tianquan/prefrontal/',
-  'src/m2/FusionStorageAdapter.ts', 'src/m2/ConversationDB.ts',
-  'src/webui/chat/ChatEntry.ts', 'src/webui/chat/MeetingContextPipeline.ts',
-  'src/webui/chat/retrieval.ts',
-  'src/hooks/',
-  'src/app/knowledge/KnowledgeEngine.ts', 'src/app/knowledge/KnowledgeContextBuilder.ts',
-  'src/app/vault/VaultManager.ts',
-  'src/app/ingestion/ConversationIngestionService.ts',
-  'src/app/fusion/FusionEngine.ts',
-  'src/app/fg/', 'src/app/role/',
-];
+// ════════════════════════════════════════════════════════════════════
+// 🔴 2026-09-12（④ 清单合一）：本处原硬编码 SENTINEL_HIGH_RISK（42 条）+ 一整套内联
+// 低风险规则，与 src/RiskClassifier.ts、sentinel/sentinel-mcp-client.cjs 各持一份分叉副本。
+// 现统一读 src/security/risk-lists.json，并按该文件的 _match_order 判定。
+//
+// 匹配顺序：protected → low_risk_files(调试豁免) → high_risk_* → low_prefixes
+//           → low_suffixes → low_extensions → 默认 mid
+//
+// ⚠️ sentinelClassifyRisk 的判定必须与 src/RiskClassifier.ts::classifyPath 逐条一致
+// （后者多一层 MID_RISK_PATTERNS 中风险细化，只影响 test/spec 文件的 mid↔low）。
+// ════════════════════════════════════════════════════════════════════
 
 function sentinelClassifyRisk(fp: string): 'protected' | 'high' | 'mid' | 'low' {
   const n = fp.replace(/\\/g, '/');
-  for (const p of HARNESS_PROTECTED) {
-    if (n.startsWith(p) || n.includes('/' + p)) return 'protected';
+  // 保护区 = risk-lists.json 的 protected（已含原 HARNESS_PROTECTED 全部条目）
+  for (const p of RISK_LISTS.protected) {
+    if (n === p || n.startsWith(p) || n.includes('/' + p)) return 'protected';
   }
   // 🔴 调试豁免优先于高风险检查
-  for (const f of SENTINEL_DEBUG_EXEMPT) {
+  for (const f of RISK_LISTS.low_risk_files) {
     if (n.includes(f)) return 'low';
   }
-  for (const f of SENTINEL_HIGH_RISK) {
+  for (const f of RISK_LISTS.high_risk_files) {
     if (n.includes(f)) return 'high';
   }
-  if (n.startsWith('src/config/') || n.startsWith('src/types/') || n.startsWith('src/cli/') ||
-      n.startsWith('src/common/') || n.startsWith('src/adapter/') || n.startsWith('src/modules/')) return 'low';
-  if (n.includes('.test.ts') || n.includes('.spec.ts') || n.includes('.d.ts')) return 'low';
-  // 🔴 .cjs 文件在 scripts/hooks/mcp/sentinel 目录下是可执行脚本，不得归类为低风险
-  // 🔴 2026-09-11 安全修复：**去掉 `.json` 的低风险判定**。
-  // 原实现 `n.endsWith('.json') → 'low'` 使一切 JSON 免检即写 —— 而本仓所有策略、
-  // 配置、豁免台账都是 .json（data/risk-policy.json / data/prompts / 各类清单），
-  // 等于把整个防线的控制面敞开。且它与本地分类器（sentinel-mcp-client.cjs，其
-  // LOW_RISK_EXTENSIONS **不含** .json）**判定分歧**：同一文件走服务端判 low、
-  // 走本地降级判 mid，安全语义不一致。
-  // 现改为：.json 一律落到函数末尾的 'mid'（需令牌），与本地分类器对齐。
-  // 若确有需要免检的 JSON（如纯文档/锁文件），请显式加入上方白名单，不要用扩展名一刀切。
-  if (n.endsWith('.md') || n.endsWith('.sql')) return 'low';
-  if (n.endsWith('.cjs')) {
-    const isExecDir = n.startsWith('scripts/') || n.startsWith('hooks/') || n.startsWith('mcp/') || n.startsWith('sentinel/');
-    return isExecDir ? 'mid' : 'low';
+  for (const p of RISK_LISTS.high_risk_prefixes) {
+    if (n.startsWith(p) || n.includes('/' + p)) return 'high';
   }
+  for (const p of RISK_LISTS.low_risk_prefixes) {
+    if (n.startsWith(p)) return 'low';
+  }
+  for (const s of RISK_LISTS.low_risk_suffixes) {
+    if (n.endsWith(s)) return 'low';
+  }
+  for (const e of RISK_LISTS.low_risk_extensions) {
+    if (n.endsWith(e)) return 'low';
+  }
+  // 🔴 2026-09-12：原来这里有一条「.cjs 非执行目录 → low」的兜底，与本地降级分类器
+  // （sentinel-mcp-client.cjs 无此规则，判 mid）分歧。现统一为：.cjs 不是低风险扩展名，
+  // 由通用规则决定 —— 在 scripts/hooks/mcp/sentinel 下 → 上面已判 high；其余 → mid（需令牌）。
   return 'mid';
 }
 

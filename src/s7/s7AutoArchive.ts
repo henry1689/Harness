@@ -19,6 +19,9 @@
  *     （P0-B 选项 b）；查不到就留空（选项 a），交由 S7-B 的 R4 以「缺豁免」这个
  *     **可行动**的原因拒绝。**绝不自动签发豁免** —— 那等于让流水线自我授权，
  *     「S4.5<98 必须有人兜底」的设计意图会被彻底架空。
+ *     🔴 2026-09-12（②）进一步收紧「引用」的口径：必须未过期 + relaxed_checks 含
+ *     S4.5_complexity + 覆盖本次改动中风险最高的文件（详见 findExemptionIdForFiles）。
+ *     且高风险改动一律不接受 exemption 兜底（S7ArchiveValidator R4）。
  *   - `debt_item_id`：只从台账**反查**本 run 已登记的债务，绝不自造 id。
  *   - `is_patch`：**如实**取自 s2_evidence；补丁却查不到债务 → R2 拒绝（H-03 语义，不绕过）。
  *
@@ -33,6 +36,8 @@ import { fileURLToPath } from 'node:url';
 import type { FlowRunState } from '../types.js';
 import type { S7ArchivePayload } from '../schemas/s7-archive-payload.js';
 import { hasSqlite, openLedger } from '../debt/techDebtLedger.js';
+// 🔴 2026-09-12（②）：高风险判定走单一真值源（见 src/security/risk-lists.json）
+import { classifyPath } from '../RiskClassifier.js';
 
 /** harness 自身的 data/ 目录（与 S7ArchiveDelegate.harnessDataDir 保持一致） */
 function harnessDataDir(): string {
@@ -52,12 +57,21 @@ function pathsMatch(a: string, b: string): boolean {
   return na === nb || na.endsWith('/' + nb) || nb.endsWith('/' + na);
 }
 
-interface ExemptionRecord { id?: string; expires_at?: number }
+interface ExemptionRecord { id?: string; expires_at?: number; relaxed_checks?: string[] }
 
 /**
- * P0-B 选项 b：在豁免台账里找一条**覆盖本次改动文件且未过期**的豁免，返回其 id。
+ * P0-B 选项 b：在豁免台账里找一条**覆盖本次改动、且确实放宽了 S4.5 收敛**的未过期豁免。
  * 找不到返回 null（选项 a）—— 调用方会把 exemption_id 留空，由 R4 报「缺豁免」。
  * 注意：这里**只读不写**，不会新增任何豁免。
+ *
+ * 🔴 2026-09-12（②）收紧 —— 原实现是 `modifiedFiles.some(f => pathsMatch(f, key))`：
+ * 只要**一个**文件沾边就返回，且不看豁免是为什么签的。叠加 R4「id 在台账存在即放行」
+ * 后成为通用免死金牌：一次 PR 只要顺带改了某个历史上被豁免过的文件，S4.5 打多少分
+ * 都能归档通过。现收紧为三条同时成立：
+ *   ① 未过期；
+ *   ② relaxed_checks 真的包含 R4 所主张的放宽项 'S4.5_complexity'（豁免「用途」必须对得上）；
+ *   ③ 覆盖本次改动中**风险最高**的那个文件（而不是随便命中一个低风险文件）。
+ * 高风险改动另有硬闸：见 S7ArchiveValidator R4 —— 高风险文件一律不接受 exemption 兜底。
  */
 export function findExemptionIdForFiles(modifiedFiles: string[]): string | null {
   try {
@@ -66,10 +80,22 @@ export function findExemptionIdForFiles(modifiedFiles: string[]): string | null 
     const raw = JSON.parse(readFileSync(fp, 'utf-8')) as { exemptions?: Record<string, ExemptionRecord> };
     const entries = Object.entries(raw.exemptions ?? {});
     const now = Date.now();
+
+    // 本次改动里风险最高的那个文件（同级别取列表中最先出现的，保证确定性）
+    const rank: Record<string, number> = { protected: 3, high: 2, mid: 1, low: 0 };
+    let anchor: string | null = null;
+    let anchorRank = -1;
+    for (const f of modifiedFiles) {
+      const r = rank[classifyPath(f)] ?? 0;
+      if (r > anchorRank) { anchorRank = r; anchor = f; }
+    }
+    if (anchor === null) return null;
+
     for (const [key, rec] of entries) {
       if (!rec || typeof rec.id !== 'string') continue;
-      if (typeof rec.expires_at === 'number' && rec.expires_at <= now) continue; // 过期的不算
-      if (modifiedFiles.some(f => pathsMatch(f, key))) return rec.id;
+      if (typeof rec.expires_at === 'number' && rec.expires_at <= now) continue;   // ① 未过期
+      if (!Array.isArray(rec.relaxed_checks) || !rec.relaxed_checks.includes('S4.5_complexity')) continue; // ② 用途对得上
+      if (pathsMatch(anchor, key)) return rec.id;                                   // ③ 覆盖最高风险文件
     }
     return null;
   } catch { return null; }

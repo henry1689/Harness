@@ -4,6 +4,7 @@
  * 独立校验 success/flow_status/end_reason/mode 四项机械一致（双向一致性）。
  * attemptTokenIssue 是生产可注入 helper——签发回调由调用方注入，拒绝态绝不调用。
  */
+import riskLists from './risk-lists.json';
 
 export interface TokenEligibilitySignal {
   success: boolean;
@@ -75,34 +76,22 @@ export const AUTO_GRANT_ALLOWED_PREFIXES: readonly string[] = [
 /**
  * 永不允许经方案预审自动授权的路径（**优先于**白名单）。
  *
- * 分两类：
- *  ① **授权机制自身** —— 若可自动授权，Agent 就能「申请一个改白名单的令牌」把白名单
- *     改成任意值，再改一切。这是自引用绕过，必须硬编码堵死。
- *  ② **防线控制面** —— 风险策略、流水线定义、钩子、哨兵、MCP 实现、防线脚本：
- *     改动它们等于改规则本身，必须走更高门槛（完整流水线 / 人工通道）。
+ * 🔴 2026-09-12（④ 清单合一）：**不再在本文件硬编码**，改为从 src/security/risk-lists.json
+ * 的 high_risk_files / high_risk_prefixes 派生。理由：这两份清单语义相同 —— 「改它们等于
+ * 改规则本身」正是它们被判为高风险的原因。此前各写一份，等于又制造一处分叉；派生后
+ * 新增一个高风险文件会自动获得「永不自动授权」，不会漏。
+ *
+ * 分三类（由真值源内容体现）：
+ *  ① **授权机制自身** —— src/security/。若可自动授权，Agent 就能「申请一个改白名单的
+ *     令牌」把白名单改成任意值，再改一切。这是自引用绕过，必须堵死。
+ *  ② **防线控制面** —— 风险策略、流水线定义、钩子、哨兵、MCP 实现、防线脚本。
+ *  ③ **治理引擎核心** —— 门控与判定逻辑（FlowEngine / GateController / ComplianceScorer…）。
  */
+const RISK_LISTS = riskLists as unknown as { high_risk_files: string[]; high_risk_prefixes: string[] };
+
 export const AUTO_GRANT_NEVER: readonly string[] = [
-  // ① 授权机制自身
-  'src/security/',
-  // ② 防线控制面
-  'data/risk-policy.json',
-  'data/exemptions.json',
-  'data/flows/',
-  'sentinel/',
-  'mcp/',
-  'scripts/',
-  'hooks/',
-  '.claude/',
-  // ③ 治理引擎核心：门控与判定逻辑，改它们等于改门槛
-  'src/FlowEngine.ts',
-  'src/StageRunner.ts',
-  'src/GateController.ts',
-  'src/ToolWhitelistGuard.ts',
-  'src/ConvergenceGate.ts',
-  'src/ComplianceScorer.ts',
-  'src/DelegateReviewer.ts',
-  'src/HardnessLadder.ts',
-  'src/EvolutionEngine.ts',
+  ...RISK_LISTS.high_risk_files,
+  ...RISK_LISTS.high_risk_prefixes,
 ];
 
 export interface AutoGrantVerdict {

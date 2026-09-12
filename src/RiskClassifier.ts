@@ -9,18 +9,81 @@
  */
 
 import type { RiskLevel } from './types.js';
+import riskLists from './security/risk-lists.json';
 
-/** 🔴 高风险文件——修改任何一项都强制走 S1-S7 全流程 */
-const HIGH_RISK_FILES: ReadonlySet<string> = new Set([
-  'src/webui/chat.ts',
-  'src/m4/household/FamilyGraph.ts',
-  'src/m2/SQLiteAdapter.ts',
-  'src/webui/server.ts',
-  'src/m5/DeepSeekLLMProvider.ts',
-  'src/engine/tianquan/prefrontal/PrefrontalCortex.ts',
-  // v2.9.2: 内容豁免总开关（personal-world-law.ts）升 high——改动强制全流程，永不 free 模式
-  'src/governance/personal-world-law.ts',
-]);
+// ════════════════════════════════════════════════════════════════════
+// 🔴 2026-09-12（④ 清单合一）：分类清单已收敛到 src/security/risk-lists.json 单一真值源。
+//
+// 此前同一件事有四份互相分叉的硬编码清单：本文件 / mcp/server.ts::SENTINEL_HIGH_RISK /
+// sentinel/sentinel-mcp-client.cjs::HIGH_RISK_FILES / data/risk-policy.json(无人读取)。
+// 实测后果：同一文件走服务端判 low、走本地降级判 mid；而 harness 自己的文件更是一条
+// high 都没有。现在三个消费者共用同一份数据 + 同一套匹配顺序。
+//
+// ⚠️ CJS 侧（sentinel-mcp-client.cjs）无法 import TypeScript，只能镜像同一份 JSON 与
+// 同一套顺序 —— 改本文件的判定逻辑时，必须同步改那一处。
+// ════════════════════════════════════════════════════════════════════
+
+interface RiskLists {
+  protected: string[];
+  high_risk_files: string[];
+  high_risk_prefixes: string[];
+  low_risk_files: string[];
+  low_risk_prefixes: string[];
+  low_risk_suffixes: string[];
+  low_risk_extensions: string[];
+}
+const LISTS = riskLists as unknown as RiskLists;
+
+/** 完整风险分类（含 protected）。RiskLevel 联合类型不含 protected，对外仍映射为 high。 */
+export type RiskClass = 'protected' | 'high' | 'mid' | 'low';
+
+/**
+ * 全仓唯一的风险分类实现。匹配顺序（与 risk-lists.json::_match_order 一致）：
+ *   protected → low_risk_files(调试豁免) → high_risk_* → low_* → 默认 mid
+ * sentinel/sentinel-mcp-client.cjs::classifyRisk 必须与此逐条一致。
+ *
+ * 注：本文件另有一层 MID_RISK_PATTERNS（见下），哨兵侧没有对应物 —— 它只覆盖
+ * 「高危目录下的测试文件」，影响面是 test/spec 文件 mid↔low，属历史遗留的局部细化。
+ */
+export function classifyPath(filePath: string): RiskClass {
+  const n = String(filePath).replace(/\\/g, '/').replace(/^\.\//, '');
+
+  for (const p of LISTS.protected) {
+    if (n === p || n.startsWith(p) || n.includes('/' + p)) return 'protected';
+  }
+  for (const f of LISTS.low_risk_files) {
+    if (n.includes(f)) return 'low';
+  }
+  for (const f of LISTS.high_risk_files) {
+    if (n.includes(f)) return 'high';
+  }
+  for (const p of LISTS.high_risk_prefixes) {
+    if (n.startsWith(p) || n.includes('/' + p)) return 'high';
+  }
+
+  // 中风险模式（本文件专有，见上方说明）——必须排在低风险判定之前，
+  // 否则 src/m4/xxx.test.ts 会被下面的 .test.ts 后缀抢判为 low。
+  for (const pattern of MID_RISK_PATTERNS) {
+    if (pattern.test(n)) return 'mid';
+  }
+
+  for (const p of LISTS.low_risk_prefixes) {
+    if (n.startsWith(p)) return 'low';
+  }
+  for (const s of LISTS.low_risk_suffixes) {
+    if (n.endsWith(s)) return 'low';
+  }
+  for (const e of LISTS.low_risk_extensions) {
+    if (n.endsWith(e)) return 'low';
+  }
+
+  return 'mid';
+}
+
+/** 是否为「绝对不可写」保护区文件（任何令牌都不可越过） */
+export function isProtectedPath(filePath: string): boolean {
+  return classifyPath(filePath) === 'protected';
+}
 
 /** 🟡 中风险模式——匹配以下路径模式 */
 const MID_RISK_PATTERNS: readonly RegExp[] = [
@@ -45,25 +108,12 @@ const MID_RISK_PATTERNS: readonly RegExp[] = [
   /^src\/hooks\//,
 ];
 
-/** 🟢 低风险前缀——微小修改可直接跳过流水线 */
-const LOW_RISK_PREFIXES: readonly string[] = [
-  'src/config/',
-  'src/types/',
-  'src/cli/',
-  'src/__tests__/',
-  'src/common/',
-  'src/modules/',
-  'src/adapter/',
-];
-
-/** 🟢 低风险后缀 */
-const LOW_RISK_SUFFIXES: readonly string[] = [
-  '.test.ts',
-  '.spec.ts',
-  '.json',
-  '.md',
-  '.sql',
-];
+// 🟢 低风险前缀/后缀已移入 risk-lists.json（LISTS.low_risk_*）。
+// 🔴 2026-09-12：原 LOW_RISK_SUFFIXES 含 `.json` —— 已移除。它使一切 JSON 判为低风险，
+// 而本仓策略/配置/豁免台账都是 .json（data/risk-policy.json 等）。配合 isTrivialChange，
+// 一个 85 行的 data/risk-policy.json + 「修正注释」这类文案即可开 free_mode 跳过整条流水线
+// （free_mode 不签发令牌，故最终被哨兵以 protected 拦下，但判定本身是错的）。
+// 同时它与哨兵的 .json→mid 判定分歧。现统一为：.json 不是低风险。
 
 /** 微小修改的检测模式——仅这些类型的改动视为 trivial */
 const TRIVIAL_CHANGE_PATTERNS: readonly RegExp[] = [
@@ -86,31 +136,13 @@ const TRIVIAL_CHANGE_PATTERNS: readonly RegExp[] = [
 // 公开 API
 // ════════════════════════════════════════════════════════════════════
 
-/** 对单个文件路径进行风险分级 */
+/**
+ * 对单个文件路径进行风险分级。
+ * 委托给 classifyPath（单一真值源）；RiskLevel 不含 protected，故映射为 high（fail-closed）。
+ */
 export function classifyFile(filePath: string): RiskLevel {
-  // 规范化路径
-  const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
-
-  // 1. 精确匹配高风险文件
-  if (HIGH_RISK_FILES.has(normalized)) return 'high';
-
-  // 2. 模式匹配中风险
-  for (const pattern of MID_RISK_PATTERNS) {
-    if (pattern.test(normalized)) return 'mid';
-  }
-
-  // 3. 低风险前缀
-  for (const prefix of LOW_RISK_PREFIXES) {
-    if (normalized.startsWith(prefix)) return 'low';
-  }
-
-  // 4. 低风险后缀
-  for (const suffix of LOW_RISK_SUFFIXES) {
-    if (normalized.endsWith(suffix)) return 'low';
-  }
-
-  // 默认中风险（保守策略）
-  return 'mid';
+  const c = classifyPath(filePath);
+  return c === 'protected' ? 'high' : c;
 }
 
 /** 对文件列表进行风险分级——取最高等级 */
@@ -168,12 +200,22 @@ export function isTrivialChange(message: string, filePaths: string[], projectRoo
   return true;
 }
 
-/** 获取高风险文件列表（用于审计/展示） */
+/** 获取高风险文件列表（用于审计/展示）——来自单一真值源 */
 export function getHighRiskFiles(): readonly string[] {
-  return [...HIGH_RISK_FILES];
+  return [...LISTS.high_risk_files];
 }
 
-/** 判断文件是否在高风险列表中 */
+/** 获取高风险目录前缀列表 */
+export function getHighRiskPrefixes(): readonly string[] {
+  return [...LISTS.high_risk_prefixes];
+}
+
+/**
+ * 判断文件是否为高风险。
+ * 语义：匹配 risk-lists.json 的 high_risk_files/prefixes，且未被调试豁免(low_risk_files)
+ * 或保护区(protected)覆盖 —— 与 classifyPath 同序，避免出现「classifyFile 说 low 但
+ * isHighRisk 说 true」这类自相矛盾。
+ */
 export function isHighRisk(filePath: string): boolean {
-  return HIGH_RISK_FILES.has(filePath.replace(/\\/g, '/').replace(/^\.\//, ''));
+  return classifyPath(filePath) === 'high';
 }

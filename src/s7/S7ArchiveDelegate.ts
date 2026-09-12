@@ -63,12 +63,20 @@ export async function s7ArchiveValidateDelegate(_stage: StageConfig, state: Flow
 
   // S4.5 末轮分（若有收敛历史）
   const last = state.convergence_history?.[state.convergence_history.length - 1];
+
+  // 🔴 2026-09-12（②）：R4 需要 S2 的问题性质，才能区分「高风险 + S4.5<98」的两种处理 ——
+  // 缺省拒绝，但 problem_nature=arch_structural_defect 时可走架构通道（须另带三轮复审计划）。
+  // 高风险文件名单无需在此传入：S7ArchiveValidator 会按单一真值源自行判定 diffFiles，
+  // 此处只补上校验器拿不到的那个字段（s2_evidence 只在 state 上）。
+  const problemNature = (state.s2_evidence as { problem_nature?: string } | undefined)?.problem_nature;
+
   const ctx: S7ArchiveContext = {
     diffFiles: state.modified_files,
     s45score: last?.overallScore ?? null,
     isLargeRefactor: (state.modified_files?.length ?? 0) >= 3,
     ledgerGetDebt: ledgerGetDebtOrNull,
     exemptionExists: exemptionExistsById,
+    problemNature,
   };
   const verdict = validateArchive(payload, ctx);
 
