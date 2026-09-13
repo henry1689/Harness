@@ -223,11 +223,16 @@ describe('inferIntentRisk — risk inference', () => {
     expect(risk.level).toBe('low');
   });
 
-  it('22. src/project-brain => medium risk', () => {
+  // 🔴 2026-09-13（④ 清单合一）：src/project-brain 由 medium 升为 high。
+  // 理由：该目录含 DiffScopeGuard 的执行层（diff-scope-runtime.cjs 被 harness-gate.cjs
+  // 与 .claude/harness-pre-check.cjs 同时 require）。原判定让它可经方案预审自动授权改写
+  // = 能关掉 scope 校验，与 src/security/ 同类的自引用绕过。判定改走单一真值源
+  // src/security/risk-lists.json（其 high_risk_prefixes 已收 src/project-brain/）。
+  it('22. src/project-brain => high risk（2026-09-13 由 medium 升级）', () => {
     const risk = inferIntentRisk({ ...empty, allowed_paths: ['src/project-brain/types.ts'] });
-    expect(risk.level).toBe('medium');
-    expect(risk.requires_token).toBe(false);
-    expect(risk.requires_architect_review).toBe(false);
+    expect(risk.level).toBe('high');
+    expect(risk.requires_token).toBe(true);
+    expect(risk.requires_architect_review).toBe(true);
   });
 
   it('23. tests/ path => medium risk', () => {
@@ -332,12 +337,14 @@ describe('inferIntentRisk — risk inference', () => {
     expect(risk.level).toBe('high');
   });
 
-  it('41. low + medium together => picks medium', () => {
+  // 🔴 2026-09-13：src/project-brain 升 high 后，本用例的最高档也随之变为 high。
+  // 原用例名「low + medium => picks medium」的语义（取最高档）不变，只是最高档变了。
+  it('41. low + high together => picks high（src/project-brain 已升 high）', () => {
     const risk = inferIntentRisk({
       ...empty,
       allowed_paths: ['docs/v4/', 'src/project-brain/types.ts'],
     });
-    expect(risk.level).toBe('medium');
+    expect(risk.level).toBe('high');
   });
 
   it('42. all four levels => picks critical', () => {

@@ -155,6 +155,10 @@ describe('④ AUTO_GRANT_NEVER 派生自真值源', () => {
     for (const f of [
       'src/s7/S7ArchiveValidator.ts', 'src/s7/s7AutoArchive.ts', 'src/s7/S7ArchiveDelegate.ts',
       'src/s6/manualVerify.ts', 'src/s6/S6ManualVerifyDelegate.ts',
+      // DiffScopeGuard 执行层：被 harness-gate.cjs 与 .claude/harness-pre-check.cjs 同时 require，
+      // 可自动授权 = 能经预审关掉 scope 校验
+      'src/project-brain/diff-scope-runtime.cjs', 'src/project-brain/diff-scope-guard.ts',
+      'src/project-brain/intent-builder.ts',
     ]) {
       expect(classifyPath(f), `${f} 应为 high`).toBe('high');
       expect(isAutoGrantAllowed(f).allowed, `${f} 不应允许自动授权`).toBe(false);
