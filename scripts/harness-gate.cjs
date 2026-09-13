@@ -43,32 +43,49 @@ const HARNESS_ROOT = path.resolve(__dirname, '..');
 const TOKEN_DIR = path.join(HARNESS_ROOT, 'data', 'tokens');
 
 /**
- * 高风险路径模式列表。
- * 路径已统一转为正斜杠 `/`。
- * 这里的匹配是"高风险"，意味着必须要有 token 才能提交。
+ * 高风险路径判定 —— 🔴 2026-09-12（④ 清单合一）：改为读单一真值源
+ * src/security/risk-lists.json，不再自持一份硬编码清单。
+ *
+ * 背景：本文件此前的 HIGH_RISK_PATTERNS 与 mcp/server.ts、src/RiskClassifier.ts、
+ * sentinel/sentinel-mcp-client.cjs 各写一份，实测互不一致。最要命的是它
+ * **完全不覆盖 src/security/、src/RiskClassifier.ts、src/s7/** ——
+ * 也就是「授权机制自身的源码、风险分类器本身、归档校验闸门」都可以无令牌提交，
+ * 而本文件正是提交时的最后一道门。
+ *
+ * 判定 = 【真值源】∪【门控专有的更严模式】。是严格超集，只紧不松：
+ * 原来被本文件拦住的（src/m2|m4|m5|engine|core 整目录、src/*.cjs、src/webui/chat/）
+ * 一律仍然拦住，另补上真值源新增的全部高风险项。
  */
-const HIGH_RISK_PATTERNS = [
-  /^src\/webui\/chat\.ts$/,
+const RISK_LISTS_PATH = path.resolve(__dirname, '..', 'src', 'security', 'risk-lists.json');
+
+let RISK_LISTS = { high_risk_files: [], high_risk_prefixes: [] };
+try {
+  const j = JSON.parse(fs.readFileSync(RISK_LISTS_PATH, 'utf-8'));
+  if (!Array.isArray(j.high_risk_files) || !Array.isArray(j.high_risk_prefixes)) throw new Error('结构不符');
+  RISK_LISTS = j;
+} catch (e) {
+  // 🔴 fail-closed：读不到真值源时【不能】退化成"无高风险"（那等于全放行）。
+  // 退回下面 GATE_EXTRA_PATTERNS 这一层（仍能拦住引擎/安全目录），并大声报错。
+  console.error(`[Harness Gate] 🔴 风险清单真值源不可读(${RISK_LISTS_PATH}): ${e.message || e}`);
+  console.error('[Harness Gate] 🔴 已降级为门控专有模式（fail-closed，覆盖面变窄，请尽快修复该文件）。');
+}
+
+/**
+ * 门控专有的更严模式 —— 真值源里没有、但提交时必须收 token 的路径。
+ * 这些模式【比真值源更粗】，合并进真值源会连测试文件、src/config/ 一起变高风险，
+ * 代价过大，故只留在门控这一层。
+ */
+const GATE_EXTRA_PATTERNS = [
+  // 整目录管控（真值源按文件粒度列，这里按目录收）
   /^src\/m2\//,
   /^src\/m4\//,
   /^src\/m5\//,
   /^src\/engine\//,
   /^src\/core\//,
-  /^src\/main_harness_checker\.ts$/,
-  /^src\/FlowEngine\.ts$/,
-  /^src\/StageRunner\.ts$/,
-  /^src\/GateController\.ts$/,
-  /^mcp\//,
-  /^sentinel\//,
-  /^scripts\/harness-gate\.cjs$/,
-  /^data\/flows\//,
-  // v2.9: 补丁脚本/boot 管控 — 所有 scripts/* 与 src 下可执行脚本 commit 需 token
-  // （修正 A: 原 HIGH_RISK 只精确匹配 scripts/harness-gate.cjs 一个，fix-kb-gates 等无令牌 commit）
-  /^scripts\//,
+  // v2.9: 补丁脚本/boot 管控 — src 下可执行脚本一律需 token
   /^src\/.*\.(cjs|mjs)$/,
-  // v2.9.2: 关键问题点 — chat 阶段管线 + governance 内容豁免总开关 commit 需 token
+  // v2.9.2: chat 阶段管线（真值源只逐个列了已知文件，这里按目录收）
   /^src\/webui\/chat\//,
-  /^src\/governance\//,
 ];
 
 // ============================================================================
@@ -124,7 +141,17 @@ function hashCode(s) {
  */
 function isHighRisk(relPath) {
   const normalized = relPath.replace(/\\/g, '/');
-  for (const pattern of HIGH_RISK_PATTERNS) {
+
+  // 1) 单一真值源（与哨兵 / 流水线 risk_level 共用同一份数据与同一套匹配）
+  for (const f of RISK_LISTS.high_risk_files) {
+    if (normalized.includes(f)) return true;
+  }
+  for (const p of RISK_LISTS.high_risk_prefixes) {
+    if (normalized.startsWith(p) || normalized.includes('/' + p)) return true;
+  }
+
+  // 2) 门控专有的更严模式（真值源不含、但提交仍需 token）
+  for (const pattern of GATE_EXTRA_PATTERNS) {
     if (pattern.test(normalized)) return true;
   }
   return false;

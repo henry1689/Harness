@@ -1445,6 +1445,16 @@ function getChangedFiles(projectRoot: string, files: string[] = []): string[] {
   } catch (_) { return []; }
 }
 
+/** 🔴 2026-09-12: 未跟踪文件（新写的测试用例在提交前是 untracked，git diff 看不到） */
+function getUntrackedFiles(projectRoot: string): string[] {
+  try {
+    const out = execSync('git ls-files --others --exclude-standard -- src/', {
+      cwd: projectRoot, encoding: 'utf-8', timeout: 15000,
+    }).trim();
+    return out.split('\n').filter(Boolean);
+  } catch (_) { return []; }
+}
+
 // ════════════════════════════════════════════════════════════════════
 // CK-10: 修改目的达成度验证
 // ════════════════════════════════════════════════════════════════════
@@ -1454,8 +1464,8 @@ function checkIntentFulfillment(projectRoot: string, files: string[], s2Memo?: s
   const violations: Violation[] = [];
   const n = files.map(f => f.replace(/\\/g, '/'));
 
-  // 1. 解析 S2 方案中的修改目的
-  const intent = parseIntent(s2Memo || '');
+  // 1. 解析 S2 方案中的修改目的（🔴 只取 S2 段，避免被 S3 回流/驳回文本污染 → 恒判 bug_fix）
+  const intent = parseIntent(extractS2PlanSection(s2Memo || ''));
 
   // 2. 根据修改类型做针对性验证
   switch (intent.type) {
@@ -1471,8 +1481,15 @@ function checkIntentFulfillment(projectRoot: string, files: string[], s2Memo?: s
         }
       }
       // 验证修复是否附带测试
-      const changedTestFiles = getChangedFiles(projectRoot).filter(f => f.includes('.test.ts'));
-      if (changedTestFiles.length === 0) {
+      // 🔴 2026-09-12: flow 阶段（S2 通过后才签发 token 落地）通常 git diff 为空，
+      //   此时不再苛求"测试文件已在 diff 中"——否则与"先方案后落地"流程天然冲突，
+      //   实测导致 DS-21 恒 60（M2-2 / M-LEAK）。测试存在性由 S5(tsc+vitest) 与 S6(功能验证) 实测复核。
+      // 🔴 2026-09-12: 测试文件检测纳入 untracked —— 新写的测试在提交前是 untracked，
+      //   仅用 git diff 检测会误判"未附带测试"（实测 M2-2/M-LEAK/M2-2a 三连误判）。
+      const _allChanged = getChangedFiles(projectRoot);
+      const _untracked = getUntrackedFiles(projectRoot);
+      const changedTestFiles = [..._allChanged, ..._untracked].filter(f => f.includes('.test.ts'));
+      if (_allChanged.length > 0 && changedTestFiles.length === 0) {
         violations.push({
           file: n[0] || '',
           message: 'bug 修复未附带测试: 任何 bug 修复必须新增或修改至少 1 个测试用例',
@@ -1533,6 +1550,21 @@ interface ParsedIntent {
   description: string;
   bugPattern?: string;
   expectedFunction?: string;
+}
+
+/**
+ * 🔴 2026-09-12: 从 memo 中截取「S2 审定方案」段，供意图解析使用。
+ * 背景: CK-10 收到的 s2Memo = state.global_memo，里面除 S2 方案外还被写入
+ *   S3 补丁回流要点 / S4 驳回文本（含"修复/异常/错误"等词）——整份喂给 parseIntent
+ *   会**恒判 bug_fix**（实测 M2-2/M-LEAK：内容已达标却恒卡 DS-21 60）。
+ * 修正: 只取 S2 方案段判定意图；无标准段标题时退化为裁掉回流/驳回区块的正文。
+ */
+function extractS2PlanSection(memo: string): string {
+  if (!memo) return '';
+  const m = memo.match(/##\s*S2\s*审定方案([\s\S]*?)(?=\n##\s|$)/);
+  if (m) return m[1];
+  const cut = memo.search(/\n##\s*🔴\s*S3\s*补丁循环/);
+  return cut > 0 ? memo.slice(0, cut) : memo;
 }
 
 function parseIntent(s2Memo: string): ParsedIntent {

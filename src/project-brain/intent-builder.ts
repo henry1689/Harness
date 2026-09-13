@@ -10,6 +10,13 @@
  * - 保守风险推断
  * - 无副作用、不访问文件系统、不调用 MCP
  */
+// 🔴 2026-09-12（④ 清单合一）：高风险清单改读单一真值源（原为硬编码副本，且比真值源更松）
+import riskLists from '../security/risk-lists.json';
+
+const RISK_LISTS = riskLists as unknown as {
+  high_risk_files: string[];
+  high_risk_prefixes: string[];
+};
 import type {
   EvidenceId,
   DecisionId,
@@ -190,25 +197,22 @@ function isCriticalPath(normalized: string): boolean {
   return false;
 }
 
+/**
+ * 高风险路径判定 —— 🔴 2026-09-12（④ 清单合一）：改为读单一真值源
+ * src/security/risk-lists.json，不再自持清单。
+ *
+ * 此前这里硬编码了一份 harness 自身的高风险清单，实测比真值源【更松】：
+ * 漏了 src/security/（授权机制自身）、整个 scripts/ 目录（只列了 3 个文件）、
+ * .claude/。对本函数的用途（为 Allowed scope 定风险等级）而言，"漏判"意味着
+ * 一个触及防线控制面的 scope 会被低估为中级，故这里以真值源为准 —— 只会更严。
+ */
 function isHighRiskPath(normalized: string): boolean {
-  const exacts = [
-    'src/FlowEngine.ts',
-    'src/StageRunner.ts',
-    'src/GateController.ts',
-    'src/ComplianceScorer.ts',
-    'src/EvolutionEngine.ts',
-    'src/main_harness_checker.ts',
-    'scripts/harness-gate.cjs',
-    'scripts/defense-health-check.cjs',
-    'scripts/baseline-report.cjs',
-  ];
-  if (exacts.includes(normalized)) return true;
-
-  // 目录前缀匹配
-  if (normalized.startsWith('mcp/') || normalized === 'mcp') return true;
-  if (normalized.startsWith('sentinel/') || normalized === 'sentinel') return true;
-  if (normalized.startsWith('hooks/') || normalized === 'hooks') return true;
-  if (normalized.startsWith('data/flows/') || normalized === 'data/flows') return true;
+  for (const f of RISK_LISTS.high_risk_files) {
+    if (normalized === f || normalized.endsWith('/' + f)) return true;
+  }
+  for (const p of RISK_LISTS.high_risk_prefixes) {
+    if (normalized.startsWith(p) || normalized === p.replace(/\/$/, '')) return true;
+  }
 
   return false;
 }

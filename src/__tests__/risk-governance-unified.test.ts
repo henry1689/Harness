@@ -149,9 +149,21 @@ describe('④ AUTO_GRANT_NEVER 派生自真值源', () => {
     }
   });
 
+  it('🔴 治理门实现自身也不得自动授权 —— 否则可经预审拆掉刚加的 R4 闸门', () => {
+    // 回归：src/s6/ 与 src/s7/ 一度既不是 high、也不在 AUTO_GRANT_NEVER，
+    // 等于允许 Agent 自动授权去改 S7ArchiveValidator.ts —— 与 src/security/ 同类自引用绕过。
+    for (const f of [
+      'src/s7/S7ArchiveValidator.ts', 'src/s7/s7AutoArchive.ts', 'src/s7/S7ArchiveDelegate.ts',
+      'src/s6/manualVerify.ts', 'src/s6/S6ManualVerifyDelegate.ts',
+    ]) {
+      expect(classifyPath(f), `${f} 应为 high`).toBe('high');
+      expect(isAutoGrantAllowed(f).allowed, `${f} 不应允许自动授权`).toBe(false);
+    }
+  });
+
   it('普通业务代码仍在白名单内（边界内自动化）', () => {
-    expect(isAutoGrantAllowed('src/s7/s7AutoArchive.ts').allowed).toBe(true);
     expect(isAutoGrantAllowed('src/utils/helper.ts').allowed).toBe(true);
+    expect(isAutoGrantAllowed('src/engine/tianquan/foo.ts').allowed).toBe(true);
   });
 
   it('白名单外（非 src/）一律拒绝', () => {
@@ -164,11 +176,13 @@ describe('④ AUTO_GRANT_NEVER 派生自真值源', () => {
     expect(AUTO_GRANT_NEVER.length).toBeGreaterThan(20);
     expect(AUTO_GRANT_NEVER).toContain('src/FlowEngine.ts');
     expect(AUTO_GRANT_NEVER).toContain('src/security/');
-    // 混合校验：一批文件里只有越界的被挑出来
+    // 混合校验：一批文件里只有越界的被挑出来（边界内的不受影响）
     const violations = checkAutoGrantScope([
-      'src/s7/s7AutoArchive.ts', 'src/FlowEngine.ts', 'src/security/x.ts',
+      'src/utils/helper.ts', 'src/FlowEngine.ts', 'src/security/x.ts', 'src/s7/S7ArchiveValidator.ts',
     ]);
-    expect(violations.map(v => v.file).sort()).toEqual(['src/FlowEngine.ts', 'src/security/x.ts']);
+    expect(violations.map(v => v.file).sort()).toEqual(
+      ['src/FlowEngine.ts', 'src/s7/S7ArchiveValidator.ts', 'src/security/x.ts'],
+    );
   });
 });
 

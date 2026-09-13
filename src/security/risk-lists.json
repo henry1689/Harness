@@ -23,7 +23,8 @@
     "src/security/risk-lists.json"
   ],
 
-  "_high_risk_comment": "三份原清单的并集：server 42 ∪ client 42 ∪ RiskClassifier 7 = 44。RiskClassifier 独有的 2 条是原两份漏掉的 —— src/engine/tianquan/prefrontal/PrefrontalCortex.ts、src/governance/personal-world-law.ts(内容豁免总开关，原被漏判)。📌 本清单同时是 AUTO_GRANT_NEVER 的真值源：改它们 = 改规则本身，永不自动授权。",
+  "_high_risk_comment": "三份原清单的并集：server 42 ∪ client 42 ∪ RiskClassifier 7 = 44。RiskClassifier 独有的 2 条是原两份漏掉的 —— src/engine/tianquan/prefrontal/PrefrontalCortex.ts、src/governance/personal-world-law.ts(内容豁免总开关，原被漏判)。📌 本清单同时是 AUTO_GRANT_NEVER 的真值源：改它们 = 改规则本身，永不自动授权。 ⚠️ 2026-09-12 补漏：src/s6/ 与 src/s7/ 一度【既不是 high 也不在 AUTO_GRANT_NEVER】—— 即 Agent 可经方案预审自动授权去改 S7ArchiveValidator.ts 把 R4 闸门拆掉，与 src/security/ 是同一类自引用绕过，故一并列入。",
+  "_deliberately_not_merged": "🔴 刻意【不】合并的独立概念：src/security/token-types.ts 与 src/security/token-verify.cjs 的 HIGH_RISK_PATH_PREFIXES。它回答的是另一个问题 —— 「弱令牌禁止写入哪些路径」，取值是整个 src/ 前缀，比本清单【更粗】(更严/fail-closed)。若并进 high_risk_prefixes，会让 src/ 下一切变 high，连 src/config/ 与测试文件都算高风险，代价远大于收益。故两者保持独立，此处只作交叉引用登记。",
   "high_risk_files": [
     "src/webui/chat.ts",
     "src/webui/server.ts",
@@ -87,6 +88,8 @@
     "src/engine/tianquan/prefrontal/",
     "src/security/",
     "src/governance/",
+    "src/s6/",
+    "src/s7/",
     "data/flows/",
     "sentinel/",
     "mcp/",
