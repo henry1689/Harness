@@ -31,6 +31,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+// 🔴 2026-09-12（④ 清单合一）：CK-07 高风险判定并入单一真值源
+import { classifyPath } from './RiskClassifier.js';
 
 // ════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -900,10 +902,16 @@ function checkHighRiskDependencyScan(projectRoot: string, files: string[]): Chec
 
   // 检查修改的高风险文件的所有 import 依赖
   // v2.9.2: isHighRiskPath 同时匹配 basename 后缀 + 高风险目录前缀（chat 阶段管线 / governance）
+  // 🔴 2026-09-12（④ 清单合一）：并入单一真值源 src/security/risk-lists.json。
+  // 原先只认本文件自持的 6 个 basename + 2 个目录，比真值源【窄得多】——
+  // 真值源里 harness 自身的治理引擎核心 / 防线控制面 / src/security/ 等一概漏扫。
+  // 保留原有 basename/目录匹配是刻意的：它比全路径匹配【更粗】（任意目录下的
+  // chat.ts 都命中），丢弃会缩小扫描面。故取并集 —— 只扩不缩。
   const isHighRiskPath = (f: string) => {
     const n = f.replace(/\\/g, '/');
     return HIGH_RISK_FILES.some(hr => n.endsWith(hr)) ||
-           HIGH_RISK_DIRS.some(d => n.startsWith(d));
+           HIGH_RISK_DIRS.some(d => n.startsWith(d)) ||
+           classifyPath(n) === 'high';
   };
   const highRiskModified = files.filter(isHighRiskPath);
   if (!highRiskModified.length) {
