@@ -42,6 +42,53 @@ try {
 const HARNESS_ROOT = path.resolve(__dirname, '..');
 const TOKEN_DIR = path.join(HARNESS_ROOT, 'data', 'tokens');
 
+// ── P1-4（2026-09-20）: secret 统一加载 ──
+// 根因: src/security/token-verify.cjs 只读 process.env.HARNESS_TOKEN_SECRET，
+//   而本 gate 由 git pre-commit 子进程调用 —— 该子进程不携带此 env。
+//   于是 isTokenSecretAvailable() 在**正常环境**也返回 false，
+//   gate 误判「secret 不可用」并静默降级（跳过全部 HMAC 验签）。
+// 修法: 判定前从 data/.harness-secret 回填 env，
+//   与 scripts/harness-cli.cjs 的 loadTokenSecret() 保持同一套加载语义。
+const SECRET_FILE = path.join(HARNESS_ROOT, 'data', '.harness-secret');
+
+function loadTokenSecret() {
+  // 注意: 必须按【长度】判定而非真假判定 —— 否则 env 被设成短值（如 "short"）时
+  // 会提前 return 而不回落到 secret 文件，把一个可用的 secret 白白浪费掉。
+  // 长度门槛与 token-verify.cjs hasTokenSecret() 对齐（字节数而非字符数）。
+  const env = process.env.HARNESS_TOKEN_SECRET;
+  if (env && Buffer.byteLength(env, 'utf8') >= 32) return true;
+  try {
+    const s = fs.readFileSync(SECRET_FILE, 'utf-8').trim();
+    if (s && s.length >= 32) {
+      process.env.HARNESS_TOKEN_SECRET = s;
+      return true;
+    }
+  } catch (_) { /* 文件缺失/不可读 → 交由下面的 fail-closed 分支处理 */ }
+  return false;
+}
+
+/**
+ * P1-4: 降级放行审计台账（data/audit/<day>/gate-degraded.jsonl）。
+ * 显式降级（HARNESS_ALLOW_DEGRADED=1）意味着**跳过签名校验**放行，
+ * 必须留痕，否则事后无法追溯哪些提交未经验签。
+ */
+function auditDegraded(file, reason) {
+  try {
+    const day = new Date().toISOString().slice(0, 10);
+    const dir = path.join(HARNESS_ROOT, 'data', 'audit', day);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, 'gate-degraded.jsonl'),
+      JSON.stringify({ ts: new Date().toISOString(), file, reason, via: 'HARNESS_ALLOW_DEGRADED' }) + '\n',
+      'utf-8',
+    );
+  } catch (e) {
+    // 审计写失败不得反过来阻断放行判定，但**必须可见** ——
+    // 否则就成了「无验签 + 无留痕」的静默降级，正是本次要消灭的模式。
+    console.error(`[Harness Gate] ⚠️ 降级审计台账写入失败（放行判定不受影响）: ${e && e.message ? e.message : e}`);
+  }
+}
+
 /**
  * 高风险路径判定 —— 🔴 2026-09-12（④ 清单合一）：改为读单一真值源
  * src/security/risk-lists.json，不再自持一份硬编码清单。
@@ -237,6 +284,10 @@ function tokenCoversFile(token, stagedFile) {
 // ============================================================================
 
 function main() {
+  // 🔴 P1-4: 先把 secret 从 data/.harness-secret 回填进 env，再做任何验签判定。
+  // 必须在 isTokenSecretAvailable() 之前——否则 git 子进程场景会误走降级分支。
+  loadTokenSecret();
+
   const repoRoot = (() => {
     try {
       return execSync('git rev-parse --show-toplevel', {
@@ -327,11 +378,20 @@ function main() {
 
   for (const stagedFile of highRiskFiles) {
     let covered = false;
+    // P1-4: 本文件是否走了显式降级路径（在确认 covered 后才写台账，避免
+    // 把「被 DiffScopeGuard 拒绝」的 token 也记成「已放行」）
+    let degradedUsed = false;
 
     // 🔴 P9-fix: 若 token 已被 post-check 消费（文件删除），检查 .consumed 记录
     // 根因: Edit 完成后 post-check 消费 token 并删除文件 → git commit 时 gate 找不到 token → 阻塞
     // 新逻辑: 30 分钟内被消费的记录 = 本次 Edit 已获 MCP 授权，提交应放行
-    if (!covered && fs.existsSync(TOKEN_DIR)) {
+    //
+    // 🔴 P1-4(2026-09-20): 增加 secret 可用性前提 —— .consumed 记录**没有任何签名字段**
+    //   （仅 {file, run_id, token_id, consumed_at, write_success}，由 post-check 写入），
+    //   且此分支位于 token 循环**之前**、不做任何验签。若无条件采信它，
+    //   则「无 secret + 伪造一个 .consumed」即可放行，本次的 fail-closed 会名不副实。
+    //   secret 不可用时降级到下面的 token 循环，由那里统一 fail-closed。
+    if (!covered && fs.existsSync(TOKEN_DIR) && tokenVerify && tokenVerify.isTokenSecretAvailable()) {
       const consumedHash = hashCode(normalize(stagedFile));
       const consumedPath = path.join(TOKEN_DIR, consumedHash + '.consumed');
       if (fs.existsSync(consumedPath)) {
@@ -368,12 +428,15 @@ function main() {
         continue;
       }
 
-      // 🔴 P9-fix: HMAC 验证降级策略 — 解决 git 子进程无 secret 时的提交阻塞
-      // 原逻辑: secret 缺失 → fail-close 拒绝所有提交（阻塞正常流程）
-      // 新逻辑:
-      //   - secret 可用 → 完整 HMAC 验证（不降级，保持最强安全）
-      //   - secret 缺失 → 信任 token 文件本身（token 由 MCP 用 secret 原子写入，
-      //     文件存在 + 未过期 + 覆盖文件 + 版本v2 已通过前面的检查 = MCP 已背书）
+      // 🔴 P9-fix → P1-4(2026-09-20) 重写: 取消静默降级
+      // 原实现: secret 缺失 → 打印一行 warning 后**跳过全部 HMAC 验签**直接放行。
+      //   其自述论证「文件存在即证明 MCP 已授权」不成立 —— 该结论恰恰依赖验签才能得出。
+      //   跳过 verifyTokenV2 后，剩余检查（version===2 / 覆盖文件 / 未过期 / consumed≠true）
+      //   **全是 token 文件里可自填的字段**，任何能写 data/tokens/ 的进程都能伪造。
+      //   叠加 secret 加载缺陷（见文件头 loadTokenSecret），该分支在正常环境也会被触发。
+      // 现逻辑:
+      //   - secret 可用（正常环境，经 loadTokenSecret 回填）→ 完整 HMAC 验证，不降级
+      //   - secret 确实缺失 → fail-closed 拒绝；要降级必须显式 HARNESS_ALLOW_DEGRADED=1，且留痕
       if (tokenVerify && tokenVerify.isTokenSecretAvailable()) {
         // v2.11: 不传 projectRoot → content_hash 校验跳过。gate 是「提交前」时序，
         // content_hash(签发时内容) 此时必然不匹配 → 合法 commit 被拦（v2.10 时序缺陷）。
@@ -383,11 +446,16 @@ function main() {
           console.error(`[Harness Gate] Token v2 验证失败: ${v2Result.reason} (file: ${stagedFile})`);
           continue;
         }
+      } else if (process.env.HARNESS_ALLOW_DEGRADED === '1') {
+        // 显式降级：调用方明知无 secret 仍要求放行。留痕在 covered 确认后统一写。
+        console.error(`[Harness Gate] ⚠️ 已显式降级放行（HARNESS_ALLOW_DEGRADED=1）— 本次**未做 HMAC 验签** (file: ${stagedFile})`);
+        degradedUsed = true;
       } else {
-        // secret 缺失 → 降级为信任 MCP 已签发的 token 文件
-        // 安全性论证: token 文件是 MCP 进程持有 secret 时原子写入的（temp file → rename），
-        // 攻击者无法伪造（无 secret 无法生成合法签名）。文件存在即证明 MCP 已授权。
-        console.error(`[Harness Gate] ⚠️ HARNESS_TOKEN_SECRET 不可用 — 降级为信任 MCP 已签发 token 文件 (file: ${stagedFile})`);
+        // fail-closed：无 secret ⇒ 无法验签 ⇒ 「文件存在」不构成授权证明。
+        console.error(`[Harness Gate] 🚫 HARNESS_TOKEN_SECRET 不可用且未显式降级 — 无法验签，拒绝放行 (file: ${stagedFile})`);
+        console.error(`[Harness Gate]    已尝试的 secret 来源: env HARNESS_TOKEN_SECRET → ${SECRET_FILE}`);
+        console.error('[Harness Gate]    如确需放行: 设置 HARNESS_ALLOW_DEGRADED=1（会写审计台账）');
+        continue;
       }
 
       // 通过所有检查 → 此文件有有效 token
@@ -410,6 +478,10 @@ function main() {
 
     if (!covered) {
       blockedFiles.push(stagedFile);
+    } else if (degradedUsed) {
+      // P1-4: 台账在【确认放行之后】写一次。此前写在 token 分支内，
+      // 会把随后被 DiffScopeGuard 拒绝的 token 也记成「已降级放行」，台账不可信。
+      auditDegraded(stagedFile, 'HARNESS_TOKEN_SECRET 不可用，经 HARNESS_ALLOW_DEGRADED=1 显式降级');
     }
   }
 
