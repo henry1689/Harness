@@ -29,13 +29,66 @@ function normalizeKey(filePath) {
   return String(filePath || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
 }
 
-/** 读取 v1/v2 豁免，返回 Map<key, record>。record = { expires_at, operations?, relaxed_checks?, reason?, issued_by?, issued_at?, id? } */
+/**
+ * 同步睡眠（不烧 CPU）。用于重试间隙——本模块是同步语义，不能 await。
+ * Atomics.wait 在 Node 主线程可用；不可用时退回有界自旋（时间很短，可接受）。
+ */
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch (_) {
+    const until = Date.now() + ms;
+    while (Date.now() < until) { /* 有界自旋兜底 */ }
+  }
+}
+
+/** 读失败重试次数与退避基数（瞬时占用——并发写 / 杀软扫描 / 索引器——通常几十毫秒内释放） */
+const LOAD_RETRIES = 3;
+const LOAD_RETRY_BASE_MS = 40;
+
+/**
+ * 读取 v1/v2 豁免，返回 Map<key, record>。record = { expires_at, operations?, relaxed_checks?, reason?, issued_by?, issued_at?, id? }
+ *
+ * 🔴 2026-09-21 事故（本函数是根因）：
+ *   原实现 `catch (_) { return map; }` 把「读/解析失败」与「一条豁免都没有」混为一谈。
+ *   Sentinel 的 isExempt() 拿到空 map → 判定「无豁免」→ 走分支3【回滚】→ **作者的改动被静默销毁**。
+ *   实证日志（豁免全程有效、未到期）：
+ *     02:08:44     签发豁免 ex-ff38a81d（有效期至 04:38）
+ *     02:09:16.166 reverted      src/FlowEngine.ts 「无有效令牌」   ← 回滚
+ *     02:09:16.978 exempt_allowed src/FlowEngine.ts ex-ff38a81d    ← 0.8s 后同一豁免又认到了
+ *   中间隔了 32 秒、豁免有效，仍被回滚 —— 典型瞬时读失败被当成「无豁免」。
+ *
+ * 修法：先重试；重试仍失败则**大声报错**（原先完全静默），语义保持 fail-closed。
+ *   🔴 刻意**不**改成 fail-open（读不到就当有豁免）—— 那会让未豁免的写入溜过 Sentinel，是另一个洞，
+ *   而且能被「把 exemptions.json 弄成不可读」当作绕过手法。这里要消灭的是「静默」，不是「拒绝」。
+ */
 function loadExemptions(file) {
   const map = new Map();
   const fp = file || EXEMPTIONS_FILE;
   if (!fs.existsSync(fp)) return map;
-  let parsed;
-  try { parsed = JSON.parse(fs.readFileSync(fp, 'utf-8')); } catch (_) { return map; }
+
+  let parsed = null;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= LOAD_RETRIES; attempt++) {
+    try {
+      parsed = JSON.parse(fs.readFileSync(fp, 'utf-8'));
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < LOAD_RETRIES) sleepSync(LOAD_RETRY_BASE_MS * attempt);
+    }
+  }
+
+  if (lastErr) {
+    // 读不到 ≠ 没有。必须可见：否则又回到「豁免期内改动被静默回滚」。
+    console.error(
+      `[exemptions-core] 🔴 豁免文件读取失败（已重试 ${LOAD_RETRIES} 次）: ${fp} — ${lastErr.message}；` +
+      '本次按「无豁免」处理（fail-closed）。若此刻正处于豁免期内，作者的改动可能被 Sentinel 回滚 —— ' +
+      '请检查该文件是否被其它进程独占。'
+    );
+    return map;
+  }
   if (!parsed || typeof parsed !== 'object') return map;
 
   // v2: {version:2, exemptions:{key: record}}

@@ -220,7 +220,15 @@ function createEscalation(projectRoot) {
       try {
         record = exemptionsCore.isExemptRecord(key);
         if (record) unlockExemptions.set(key, record);
-      } catch (_) {}
+      } catch (e) {
+        // 🔴 2026-09-21：此处原为 `catch (_) {}`。静默吞异常 + loadExemptions 内部
+        //   「读失败即返回空 map」，两层叠加的净效果是：**豁免有效期内也判定为「无豁免」→ 回滚**。
+        //   实测（豁免 02:08:44 签发、有效期至 04:38）：02:09:16.166 FlowEngine.ts 被回滚，
+        //   0.8 秒后同一豁免又被正常识别。这一层的静默是最后一层遮盖 —— 必须可见。
+        console.error(
+          `[sentinel/escalation] 🔴 豁免查询异常（按「无豁免」继续）: key=${key} — ${(e && e.message) || e}`
+        );
+      }
     }
     if (!record) return null;
     if (exemptionsCore.getExpiry(record) <= Date.now()) {
