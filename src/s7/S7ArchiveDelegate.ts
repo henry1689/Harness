@@ -85,8 +85,18 @@ export async function s7ArchiveValidateDelegate(_stage: StageConfig, state: Flow
     return makeStageOutput(passSignal({ files_checked: state.modified_files.length }), report);
   }
   const report = `## ❌ S7-B 归档校验失败（run ${runId}）\n请返回 S7-A 补全归档产物：\n${verdict.errors.map(e => `- ${e}`).join('\n')}`;
+  // 🔴 2026-09-21：reject_reason 此前只带 errors[0]，全量报告只落在 human_report ——
+  //   而 human_report 在终局文案里往往只被指向、不被展开，作者实际只能看到**第一条** R 规则，
+  //   修完重跑 2~4 分钟才发现下一条，于是把「1 次失败」放大成 N 次全流程（审计实证 12+ 轮）。
+  //   验证器本就在一次 pass 内收集了全部 errors（见 S7ArchiveValidator 末尾 return），
+  //   这里只是把已有信息原样送达机器可见通道 —— **不放松任何一条规则**。
   return makeStageOutput(
-    rejectSignal([`S7-B 归档校验失败 ${verdict.errors.length} 项: ${verdict.errors[0]}`, '详见 human_report'], 'mid'),
+    rejectSignal(
+      // 不加 `- ` 前缀：本数组是机器通道，消费方（FlowEngine / mcp/server.ts）只做
+      // 去头部与过滤，加前缀会让「真实原因：- R4: … | - R2: …」多出噪音。
+      [`S7-B 归档校验失败 ${verdict.errors.length} 项:`].concat(verdict.errors),
+      'mid',
+    ),
     report,
   );
 }

@@ -585,10 +585,15 @@ export class FlowEngine {
         // F6(2026-09-11): 文案必须透传 S7-B 的真实 reject_reason。归档产物由 S7-A 进程内自动生成，
         // 失败原因可能是 R1 缺产物 / R2/R3/R5 内容不合规 / R4 缺有效豁免。写死
         // 「S7-A 空跑、需人工产出归档」会把排查引向错误方向（实测：R4 被误读为归档未生成）。
+        // 🔴 2026-09-21：此处原为 `.filter(r => r !== '详见 human_report').slice(0, 3)` ——
+        //   既丢掉了指向全量报告的指针，又把错误截到 3 条。配合 S7ArchiveDelegate 只上送
+        //   errors[0] 的旧行为，作者实际只能看到**第一条** R 规则，修完重跑才发现下一条，
+        //   把「1 次失败」放大成 N 次全流程（审计实证 12+ 轮、6 次工具超时）。
+        //   现 S7ArchiveDelegate 已全量上送，这里只需不丢内容、放宽上限。
         const _archiveReasons = (result.machine_signal?.reject_reason ?? [])
-          .map(r => String(r).replace(/^S7-B\s*归档校验失败\s*\d*\s*项[:：]\s*/, '').trim())
-          .filter(r => r && r !== '详见 human_report')
-          .slice(0, 3);
+          .map(r => String(r).replace(/^S7-B\s*归档校验失败\s*\d*\s*项[:：]?\s*/, '').trim())
+          .filter(Boolean)
+          .slice(0, 10);
         this.recordAbort('retry_limit',
           `S7 归档校验已回退 ${priorInvalid} 次仍未通过 → 终局（run_status=archive_invalid）。` +
           `真实原因：${_archiveReasons.length ? _archiveReasons.join(' | ') : '见审计卷宗 S7-B machine_signal'}。` +
