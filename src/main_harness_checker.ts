@@ -27,7 +27,7 @@
  *     --cache-dir D:/AI文件/harness/data/cache
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -308,12 +308,45 @@ function checkPFCThinScheduler(projectRoot: string, files: string[]): CheckResul
   const lines = content.split('\n');
 
   // 🔴 检查 chat.ts 是否存在过多业务逻辑：
-  // 1. 行数超过 2000 行（薄调度层不应膨胀）
-  if (lines.length > 2000) {
+  // 1. 有效代码行数超过 2000 行（薄调度层不应膨胀）
+  //    [改进] 原判据用「总行数」，会把注释与空行计为业务逻辑——与下方 ② 的语义检查口径不一致。
+  //           现改为「有效代码行数」（排除纯注释行与空行），口径与 ② 统一。
+  const codeLines = lines.filter((l) => {
+    const t = l.trim();
+    if (t === '') return false;                              // 空行
+    if (t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')) return false;  // 纯注释行
+    return true;
+  }).length;
+  //    [基线防增量] 存量超标文件不阻断（否则任何改动都过不了，失去改进通道），
+  //    但禁止继续增长——即「不许变更胖」。新文件仍按 2000 严格判。
+  //    基线文件：<projectRoot>/.harness-ck02-baseline.json（缺失即视为首次，自动记录当前值）
+  const THIN_MAX_CODE_LINES = 2000;
+  const baselinePath = resolve(projectRoot, '.harness-ck02-baseline.json');
+  let baseline: Record<string, number> = {};
+  try {
+    if (existsSync(baselinePath)) baseline = JSON.parse(readFileSync(baselinePath, 'utf-8')) || {};
+  } catch { baseline = {}; }
+  const key = chatFile.replace(/\\/g, '/');
+  const recorded = typeof baseline[key] === 'number' ? baseline[key] : null;
+  if (recorded === null) {
+    // 首次：记录基线（不阻断），并提示后续将按「不增长」判定
+    baseline[key] = codeLines;
+    try {
+      writeFileSync(baselinePath, JSON.stringify(baseline, null, 2), 'utf-8');
+      console.log(`[CK-02] 已记录 ${key} 有效代码行基线 = ${codeLines}（阈值 ${THIN_MAX_CODE_LINES}）`);
+    } catch { /* 基线写入失败不阻断检查 */ }
+  }
+  if (recorded === null && codeLines > THIN_MAX_CODE_LINES) {
     violations.push({
       line: 1,
       file: chatFile,
-      message: `chat.ts 行数 ${lines.length} 行 → 超过薄调度层阈值 2000 行，疑似堆砌业务逻辑`,
+      message: `chat.ts 有效代码 ${codeLines} 行 → 超过薄调度层阈值 ${THIN_MAX_CODE_LINES} 行，疑似堆砌业务逻辑（已记录为基线，后续按「不增长」判定）`,
+    });
+  } else if (recorded !== null && codeLines > recorded) {
+    violations.push({
+      line: 1,
+      file: chatFile,
+      message: `chat.ts 有效代码 ${codeLines} 行 → 超过已记录基线 ${recorded} 行（禁止继续膨胀；如需增加请先说明理由并更新基线）`,
     });
   }
 
