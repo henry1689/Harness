@@ -311,10 +311,34 @@ function checkPFCThinScheduler(projectRoot: string, files: string[]): CheckResul
   // 1. 有效代码行数超过 2000 行（薄调度层不应膨胀）
   //    [改进] 原判据用「总行数」，会把注释与空行计为业务逻辑——与下方 ② 的语义检查口径不一致。
   //           现改为「有效代码行数」（排除纯注释行与空行），口径与 ② 统一。
-  const codeLines = lines.filter((l) => {
+  //    精确排除：① 空行 ② // 行注释 ③ 位于块注释内的行。
+  //    不用 startsWith('*') 粗判——模板字符串内的 Markdown 粗体（**标题**: ...）会被误排除。
+  const inBlockComment: boolean[] = (() => {
+    const flags: boolean[] = new Array(lines.length).fill(false);
+    let inBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      flags[i] = inBlock;
+      for (let j = 0; j < l.length; j++) {
+        const c = l[j];
+        const n = l[j + 1];
+        if (!inBlock && c === '/' && n === '*') { inBlock = true; j++; continue; }
+        if (inBlock && c === '*' && n === '/') { inBlock = false; j++; continue; }
+        if (!inBlock && c === '/' && n === '/') break;
+        if (!inBlock && (c === '"' || c === "'" || c === String.fromCharCode(96))) {
+          const q = c; j++;
+          while (j < l.length && l[j] !== q) { if (l[j] === String.fromCharCode(92)) j++; j++; }
+        }
+      }
+    }
+    return flags;
+  })();
+  const codeLines = lines.filter((l, i) => {
     const t = l.trim();
-    if (t === '') return false;                              // 空行
-    if (t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')) return false;  // 纯注释行
+    if (t === '') return false;                 // 空行
+    if (inBlockComment[i]) return false;        // 位于块注释内
+    if (t.startsWith('//')) return false;       // 行注释
+    if (t.startsWith('/*')) return false;       // 块注释开始行（如 /** 单行说明 */）
     return true;
   }).length;
   //    [基线防增量] 存量超标文件不阻断（否则任何改动都过不了，失去改进通道），
