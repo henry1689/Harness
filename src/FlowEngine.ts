@@ -42,6 +42,94 @@ import { AuditLogger } from './AuditLogger.js';
 import { RulesLazyLoader, type SlimStageContext } from './RulesLazyLoader.js';
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { computeChangeKey, saveTicket, type ManualTicketFile } from './s6/manualVerifyIO.js';
+
+// ════════════════════════════════════════════════════════════════════
+// P0-1(2026-09-20): S4.5 跨 run 收敛轮次账本
+// ════════════════════════════════════════════════════════════════════
+//
+// 死结背景（审计实证）：S4.5 的 convergence_round 每次 run 都从 0 起算
+// （见 state 初始化处），而确认项 s2_evidence 在一次 run 内固定不可变 ⇒
+// 「连续 3 轮未过 ⇒ 第 3 轮转人工」这条出路**永远触发不到**：每开一次 run 都回到第 1 轮。
+// 结果是被 S4.5 卡住的改动只能靠人肉 `git commit --no-verify` 绕过，治理形同虚设。
+//
+// 解法：轮次按 change_key（文件集指纹，跨 run 稳定）落盘累计。连续 ≥3 轮 <98
+// ⇒ 直接为该 change_key 生成人工任务单（复用 S6-B 现成机制），人工 confirm-all 后
+// 同文件集重跑 ⇒ ConvergenceGate 放行（分数照记）。
+
+const _P0_1_DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'data');
+const P0_1_LEDGER_DIR = join(_P0_1_DATA_DIR, 'convergence');
+/** 连续未过多少轮后转人工（与 ConvergenceGate 的 autoHandoffRound 同量级） */
+const P0_1_TICKET_THRESHOLD = 3;
+const P0_1_HISTORY_CAP = 50;
+
+export interface ConvergenceLedgerRecord {
+  change_key: string;
+  /** 连续未过（S4.5 判定非 PASS）的轮次计数；任一轮通过即清零 */
+  consecutive_below: number;
+  /** 是否已为该 change_key 生成过人工任务单 */
+  ticket_issued: boolean;
+  updated_at: string;
+  history: Array<{ run_id: string; round: number; score: number; at: string }>;
+}
+
+function convergenceLedgerPath(ck: string): string {
+  return join(P0_1_LEDGER_DIR, `${ck}.json`);
+}
+
+function loadConvergenceLedger(ck: string): ConvergenceLedgerRecord {
+  const p = convergenceLedgerPath(ck);
+  if (existsSync(p)) {
+    try {
+      const j = JSON.parse(readFileSync(p, 'utf-8')) as ConvergenceLedgerRecord;
+      if (typeof j.consecutive_below === 'number' && Array.isArray(j.history)) return j;
+    } catch { /* 损坏则重建，不阻断流水线 */ }
+  }
+  return { change_key: ck, consecutive_below: 0, ticket_issued: false, updated_at: new Date().toISOString(), history: [] };
+}
+
+function saveConvergenceLedger(rec: ConvergenceLedgerRecord): void {
+  try {
+    if (!existsSync(P0_1_LEDGER_DIR)) mkdirSync(P0_1_LEDGER_DIR, { recursive: true });
+    rec.updated_at = new Date().toISOString();
+    if (rec.history.length > P0_1_HISTORY_CAP) rec.history = rec.history.slice(-P0_1_HISTORY_CAP);
+    writeFileSync(convergenceLedgerPath(rec.change_key), JSON.stringify(rec, null, 2), 'utf-8');
+  } catch (e) {
+    // 账本写失败不得改变流水线判定，但必须可见（否则又变成静默降级）
+    console.error(`[FlowEngine] ⚠️ 收敛轮次账本写入失败: ${(e as Error)?.message}`);
+  }
+}
+
+/** 为该 change_key 生成人工裁决任务单（复用 S6-B 的落盘与寻址机制） */
+function issueConvergenceTicket(ck: string, runId: string, rounds: number, score: number): ManualTicketFile {
+  const t: ManualTicketFile = {
+    run_id: runId,
+    generated_at: new Date().toISOString(),
+    items: [
+      {
+        verify_item: 'S4.5 连续未过人工裁决',
+        precondition: `同变更指纹已连续 ${rounds} 轮内容合规分 <98（本轮 ${score}%）`,
+        expected_result: '确认改动实质正确、接受当前分数放行；或退回 S2 重新设计',
+        verifier: '', confirmed: false,
+      },
+      { verify_item: '改动范围核对', precondition: '已拿到本次 diff',
+        expected_result: '实际改动文件与归档回滚清单逐项一致（无漏记/多记）', verifier: '', confirmed: false },
+      { verify_item: '静态质量门槛', precondition: '可执行命令',
+        expected_result: 'tsc --noEmit 零类型错误；无死代码/废弃导入', verifier: '', confirmed: false },
+    ],
+    change_key: ck,
+    last_run_id: runId,
+    run_status: 'await_manual_verification',
+  };
+  saveTicket(t);
+  return t;
+}
+
+// 注：人工放行的判定在 ConvergenceGate（那里能直接返回 passSignal，无需改动流程跳转），
+// 本文件只负责「累计轮次 + 连续未过时建单」，故不需要在此读取任务单完成态。
 
 // ════════════════════════════════════════════════════════════════════
 // 类型
@@ -520,8 +608,50 @@ export class FlowEngine {
     // 注意：必须在回流计数自增【之前】判定，否则会先被 s3_retry_count 阈值改道 S1（E-02），
     // 白烧一轮架构重审后才终局。
     const _sig = (result.machine_signal || {}) as {
-      metrics?: { unresolved_confirmations?: number; compliance_score?: number };
+      metrics?: { unresolved_confirmations?: number; compliance_score?: number; convergence_round?: number };
     };
+
+    // ── P0-1: S4.5 跨 run 轮次累计 + 连续未过转人工 ──
+    // 必须放在下面的 confirmations_pending 终局【之前】：否则永远走不到这条出路。
+    //
+    // 🔴 单元测试下跳过：账本是**跨 run 的共享持久状态**（data/convergence/），而单测同样会
+    //   走到 S4.5 并产生 condition_rejected。若不加这道闸，测试会把自己的失败轮次累加进真实账本，
+    //   3 次后触发人工任务单分支、抢掉测试原本期望的终局（实测：FlowEngine.test.ts 的
+    //   E-02 用例被劫持为 manual_verification_required）。测试不得写生产协调状态。
+    if (stageId.startsWith('S4.5') && !process.env.VITEST) {
+      const _ck = computeChangeKey(this.state.modified_files ?? []);
+      const _score = _sig.metrics?.compliance_score ?? 0;
+      const _rec = loadConvergenceLedger(_ck);
+      _rec.history.push({
+        run_id: this.state.run_id,
+        round: _sig.metrics?.convergence_round ?? 1,
+        score: _score,
+        at: new Date().toISOString(),
+      });
+      const _passed = resolution !== 'condition_rejected';
+      _rec.consecutive_below = _passed ? 0 : _rec.consecutive_below + 1;
+
+      if (!_passed && _rec.consecutive_below >= P0_1_TICKET_THRESHOLD && !_rec.ticket_issued) {
+        try {
+          const _t = issueConvergenceTicket(_ck, this.state.run_id, _rec.consecutive_below, _score);
+          _rec.ticket_issued = true;
+          saveConvergenceLedger(_rec);
+          this.recordAbort(
+            'manual_verification_required',
+            `S4.5 同变更指纹已连续 ${_rec.consecutive_below} 轮未过（本轮 ${_score}%）→ 转人工裁决。` +
+            `任务单 ${_t.change_key}。请运行 node scripts/harness-manual-confirm.cjs list ${_t.change_key} 查看，` +
+            `confirm-all 后以同一批文件重跑 harness_run_flow ⇒ S4.5 放行（分数照记）。`,
+          );
+          ToolWhitelistGuard.deactivate();
+          console.error(`[FlowEngine] ⏸ S4.5 连续 ${_rec.consecutive_below} 轮未过 → 转人工 (ticket ${_t.change_key})`);
+          return;
+        } catch (e) {
+          console.error(`[FlowEngine] ⚠️ 人工任务单生成失败（继续按原逻辑终局）: ${(e as Error)?.message}`);
+        }
+      }
+      saveConvergenceLedger(_rec);
+    }
+
     if (
       stageId.startsWith('S4.5') &&
       resolution === 'condition_rejected' &&

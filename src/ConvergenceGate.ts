@@ -20,15 +20,17 @@
  */
 
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 // ESM/CJS 桥：项目 package.json type:module，模块顶层裸 require 未定义，
 // ConvergenceGate 需动态加载 CJS 的 exemptions-core 脚本 → 用 createRequire(import.meta.url) 建立桥。
 const _harnessRequire = createRequire(import.meta.url);
-import type { StageConfig, StageOutput, FlowRunState, ConvergenceEntry } from './types.js';
+import type { StageConfig, StageOutput, FlowRunState, ConvergenceEntry, UnresolvedConfirmationKey } from './types.js';
 import { passSignal, rejectSignal, makeStageOutput } from './DualChannelSignal.js';
 import { computeComplianceScore } from './ComplianceScorer.js';
 import { assembleFullReviewEvidence } from './schemas/full-review-evidence.js';
+import { computeChangeKey, loadTicket } from './s6/manualVerifyIO.js';
 import { openLedger, hasSqlite } from './debt/techDebtLedger.js';
 import { REQUIRED_DIMENSION_IDS as REQUIRED_S4_DIMENSIONS } from './DelegateReviewer.js';
 import {
@@ -289,6 +291,34 @@ export async function evaluate(
     else { finalSignal = { ...finalSignal, metrics: { unresolved_confirmations: confirmations.length } }; }
   }
 
+  // ── P0-1(2026-09-20): 人工出路 —— 同 change_key 已完成人工验收 ⇒ 放行（分数照记）──
+  // 死结：确认项在一次 run 内固定，回流 S3 永远解不开；跨 run 连续 3 轮未过会转人工裁决
+  // （账本与建单见 FlowEngine 的 P0-1 段）。人工 confirm-all 完成后重跑，此处放行。
+  // 注意：任务单按「文件集指纹」寻址（沿用 S6-B 现成机制），故同一文件集的人工放行是**持久**的；
+  // 需要它失效时把任务单文件归档/删除即可。
+  if (finalDecision === 'REJECT') {
+    try {
+      const _ck = computeChangeKey(state.modified_files ?? []);
+      const _ticket = loadTicket(_ck);
+      if (_ticket && _ticket.run_status === 'completed') {
+        finalDecision = 'HUMAN_BYPASS';
+        finalSignal = passSignal({
+          ...(finalSignal.metrics || {}),
+          compliance_score: complianceReport.overallScore,
+          convergence_round: round,
+          manual_ticket_key: _ck,
+        });
+        finalReport = finalReport +
+          `\n\n## ✅ 人工裁决放行（P0-1）\n` +
+          `变更指纹 \`${_ck}\` 的人工任务单已 confirm-all 完成 ⇒ S4.5 放行至 S5。\n` +
+          `**分数照记**：${complianceReport.overallScore}%（未达 98 的差距见上方清单；本放行不改变已记录的事实）。`;
+      }
+    } catch (e) {
+      // 出路检查失败不得反过来改变判定，但必须可见
+      console.error(`[ConvergenceGate] ⚠️ 人工出路检查失败（不影响判定）: ${(e as Error)?.message}`);
+    }
+  }
+
   const entry: ConvergenceEntry = {
     round, overallScore: complianceReport.overallScore,
     passedStandards: complianceReport.passedStandards,
@@ -322,6 +352,21 @@ export async function evaluate(
     }),
   };
 
+  // ── P0-1(2026-09-20): 结构化「缺哪几项」──
+  // 两条分支（内容分达标 / 内容分不足）都可能留下未声明确认。此前只把**数量**写进 metrics，
+  // 作者拿到的是「9 项未声明」这种无从下手的数字，只能从 audit JSON 反推 key。
+  // 这里统一挂上结构化清单：key + 归属 DS（含当前分/目标分）+ 该 key 的声明形态示例。
+  if (confirmations.length > 0) {
+    finalSignal = {
+      ...finalSignal,
+      metrics: {
+        ...(finalSignal.metrics || {}),
+        unresolved_confirmations: confirmations.length,
+        unresolved_keys: buildUnresolvedKeys(confirmations, complianceReport.standardScores),
+      },
+    };
+  }
+
   // H-03(enhance-v1): DS 扣分(<98) → 结构性债务候选池（人工确认后转正 ledger；ledger 不可用静默跳过不阻断）
   const belowStd = complianceReport.standardScores.filter(s => s.score < 98);
   if (belowStd.length > 0) {
@@ -340,6 +385,18 @@ export async function evaluate(
     } catch (err) {
       console.warn(`[ConvergenceGate] H-03 候选池写入跳过: ${(err as Error).message}`);
     }
+  }
+
+  // ── P0-1(2026-09-20): 报告真正落盘 ──
+  // 终局文案一直写「完整待声明清单见本次 run 的 S4.5 human_report」，但该文件此前**从不生成**
+  // （全仓无一行代码写 data/reports/）。这里补上，并把路径回写进 metrics 供返回体透出。
+  const reportPath = writeS45Report(state.run_id, finalReport);
+  if (reportPath) {
+    finalReport = finalReport + `\n\n> 📄 本报告已落盘：${reportPath}`;
+    finalSignal = {
+      ...finalSignal,
+      metrics: { ...(finalSignal.metrics || {}), s45_report_path: reportPath },
+    };
   }
 
   return makeStageOutput(finalSignal, finalReport);
@@ -461,6 +518,97 @@ export function isProcessObligation(v: string): boolean {
 }
 
 /** 分流 content / confirmations / unconditional */
+// ════════════════════════════════════════════════════════════════════
+// P0-1(2026-09-20): S4.5 出路的可观测性
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * 各确认 key 期望在 s2_evidence 中出现的「内容形态示例」。
+ *
+ * 为什么需要：声明 key 只是形式，S4 真正要的是该 key 断言的事实。此前只给计数与 DS 名，
+ * 作者必须反推「这个 key 到底要我保证什么」——实测导致同一晚 9 次运行盲试、分数固定不动。
+ * 此处给出可直接照抄的形态。
+ */
+const KEY_DECLARATION_EXAMPLES: Record<string, string> = {
+  STATIC_TSC_PASS: '已执行 npx tsc --noEmit 并通过、零类型错误（声明即断言此事实）',
+  STATIC_M_LAYER: '对应 src/mN/*.ts：类型定义完整、无循环引用、导入路径正确',
+  STATIC_TESTS: '测试用例本身编译通过、断言逻辑正确（不是「测试跑过了」）',
+  STATIC_CHAT_TS: 'chat.ts 无死代码残留、废弃导入已清理、as any 已消除',
+  HOOK_M_LAYER: 'M 层节点已埋点 module_entry / module_exit + 耗时（字段 operation_type / duration_ms / status）',
+  ARCH_M_LAYER_NO_REVERSE_DEP: '未引入反向依赖：M1→M9 正向流不变，无 M9→M1 反向引用',
+  PERSIST_APPEND_ONLY: '无直接删除记忆/卷宗/黑钻记录的逻辑（遵循「只增不删」）',
+  PERSIST_FLUSH_SAVE: 'scheduleFlush 防抖落盘逻辑完整、save() 调用未被删除',
+  DOC_M_LAYER: '已更新白皮书九层管线架构图 + 蓝皮书对应模块功能说明',
+  DOC_MIN_SUMMARY: '① 白皮书更新摘要（标题 + ≥3 条）；② 蓝皮书更新摘要（标题 + ≥2 条）；③ 回滚方案/配置变更清单',
+  DOC_CHAT_TS: '已更新 chat.ts 接口契约（22 段注入顺序）与 finalKnowledgeText 装配数据流图',
+  DOC_FG_SCHEMA: '已更新蓝皮书 FG 户籍章节、白皮书数据模型（nodes/edges schema）、关系图谱拓扑',
+  DOC_STORAGE: '已更新白皮书持久化章节（表结构、防抖 save 机制）、蓝皮书数据回滚方案',
+  RISK_NO_HARDCODED: '未新增硬编码人名/时间常量（改用统一配置或 M1 DNA 提取）',
+  PROPOSAL_AUDIT_TRAIL: '审计卷宗已含：① 原始方案全文 ② 全局优化方案全文 ③ 用户审批选择及理由 ④ 两方案差异对比矩阵',
+};
+
+/** 把 `[确认缺失:KEY] 说明文字` 解析为结构化条目（key + 归属 DS + 分数 + 声明形态） */
+export function buildUnresolvedKeys(
+  confirmations: string[],
+  standardScores: Array<{ standardId: string; score: number; gapToTarget: number; relatedViolations: string[] }>,
+  target = 98,
+): UnresolvedConfirmationKey[] {
+  return confirmations.map((msg) => {
+    const end = msg.indexOf(']');
+    const key = end > 0 ? msg.slice(1, end) : msg;
+    const requirement = end > 0 ? msg.slice(end + 1).trim() : msg;
+    // DS 归属由 relatedViolations 反查；查不到就诚实留空，不编造
+    const ds_standards = standardScores
+      .filter(s => (s.relatedViolations || []).some(v => v.includes(`[确认缺失:${key}]`)))
+      .map(s => ({ id: s.standardId, score: s.score, target, gap: s.gapToTarget }));
+    return {
+      key,
+      requirement,
+      ds_standards,
+      expected_in_s2_evidence:
+        KEY_DECLARATION_EXAMPLES[key]
+        || `在 s2_evidence.confirmations 数组加入字面量 "${key}"，并确保它断言的事实成立`,
+    };
+  });
+}
+
+/** P0-1: S4.5 报告保留期（天）。每轮一次 ⇒ 不清会堆积；与 watchdog 日志同款保留策略。 */
+const S45_REPORT_RETENTION_DAYS = 7;
+
+function pruneS45Reports(dir: string): void {
+  try {
+    const cutoff = Date.now() - S45_REPORT_RETENTION_DAYS * 86400_000;
+    for (const f of readdirSync(dir)) {
+      if (!/^S4\.5-.+\.md$/.test(f)) continue;   // 只碰本模块产物
+      const p = join(dir, f);
+      try { if (statSync(p).mtimeMs < cutoff) unlinkSync(p); } catch { /* 单个失败不影响其他 */ }
+    }
+  } catch { /* 清理失败不影响主流程 */ }
+}
+
+/**
+ * P0-1: 把 S4.5 完整报告真正落盘到 data/reports/S4.5-<run_id>.md。
+ * 此前终局文案指向该文件，但全仓没有一行代码写它 —— 报告只存在于内存，作者无从查看。
+ */
+export function writeS45Report(runId: string, body: string): string | null {
+  // 🔴 单元测试下跳过：报告落在生产数据目录 data/reports/，而单测会反复调用 evaluate()。
+  //   与跨 run 账本同理——测试不得写生产数据目录（实测会留下 data/reports/S4.5-cg_test.md）。
+  if (process.env.VITEST) return null;
+  try {
+    const selfDir = typeof __dirname !== 'undefined' ? __dirname : dirname(fileURLToPath(import.meta.url));
+    const dir = join(selfDir, '..', 'data', 'reports');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const p = join(dir, `S4.5-${runId}.md`);
+    writeFileSync(p, body, 'utf-8');
+    pruneS45Reports(dir);
+    return p;
+  } catch (e) {
+    // 落盘失败不得反过来改变判定，但必须可见
+    console.error(`[ConvergenceGate] ⚠️ S4.5 报告落盘失败: ${(e as Error)?.message}`);
+    return null;
+  }
+}
+
 export function partitionReviewViolations(violations: string[]): {
   content: string[];
   confirmations: string[];

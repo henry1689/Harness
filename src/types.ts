@@ -130,6 +130,25 @@ export interface MachineSignal {
   full_review_evidence?: import('./schemas/full-review-evidence.js').FullReviewEvidence;
 }
 
+/**
+ * P0-1: 单条未声明的评审确认。
+ *
+ * 背景（2026-09-20 实测）：S4.5 输出 condition_rejected + confirmations_pending 后直接终局，
+ * 报错文案写「完整待声明清单见本次 run 的 S4.5 human_report」，而该报告**从不落盘**——
+ * 作者只能从 audit JSON 反推，且看不到 DS 归属与声明形态，只能盲试
+ * （同一晚 9 次运行分数固定不动即为实证）。
+ */
+export interface UnresolvedConfirmationKey {
+  /** 确认 key —— 声明时直接用这个字面量 */
+  key: string;
+  /** 该 key 要求的实质内容（取自 S4 评审维度的 label） */
+  requirement: string;
+  /** 归属的设计标准；由 standardScores[].relatedViolations 反查，查不到则为空数组（不编造） */
+  ds_standards: Array<{ id: string; score: number; target: number; gap: number }>;
+  /** 该 key 期望在 s2_evidence 中出现的内容形态示例 */
+  expected_in_s2_evidence: string;
+}
+
 /** 量化指标（S4 架构评审 / S5 编译测试 / S6 功能验证 共用） */
 export interface MachineSignalMetrics {
   /** 检查的文件数 */
@@ -166,6 +185,16 @@ export interface MachineSignalMetrics {
   s4_advisory_count?: number;
   /** H1: S4 review_details typed invariant 机器码诊断（分号分隔，空=无降级） */
   s4_review_invariant?: string;
+
+  // ── P0-1(2026-09-20): S4.5 出路的可观测性与跨 run 累计 ──
+  /** 结构化「缺哪几项」——替代「只给计数 + DS 名、让作者盲试」 */
+  unresolved_keys?: UnresolvedConfirmationKey[];
+  /** S4.5 完整报告落盘路径（data/reports/S4.5-<run_id>.md）；落盘失败则为 undefined */
+  s45_report_path?: string;
+  /** 同 change_key 跨 run 累计的「连续未过」轮次（连续 ≥3 触发人工任务单） */
+  cross_run_consecutive_below?: number;
+  /** 同 change_key 是否已存在人工任务单（用于终局文案指明出路） */
+  cross_run_ticket_key?: string;
 }
 
 /** H1: 单个评审发现（结构化，rule=稳定规则标识） */
