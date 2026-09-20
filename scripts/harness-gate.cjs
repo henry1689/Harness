@@ -518,4 +518,16 @@ function block(files, reason) {
   process.exit(1);
 }
 
-main();
+// 🔴 2026-09-21：改为「被直接执行时才跑 main」+ 导出判定函数。
+//   动机：scripts/harness-precheck.cjs 必须复用【本文件真实的分级逻辑】，
+//   否则预检会变成一个平行真相源 —— 而分级口径漂移正是这套系统反复踩的坑
+//   （risk-lists 合一、CK-07 并入真值源都是同一个教训）。
+//   原先结尾是裸的 `main();`，require 它会把 gate 直接跑起来，无法复用。
+if (require.main === module) main();
+
+module.exports = {
+  isHighRisk, GATE_EXTRA_PATTERNS, RISK_LISTS, RISK_LISTS_PATH,
+  loadTokenSecret,
+  // 供 harness-precheck.cjs 复用（同样是「不产生第二真相源」的要求）
+  isTokenExpired, tokenCoversFile, TOKEN_DIR,
+};
