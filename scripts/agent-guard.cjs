@@ -41,8 +41,42 @@ const DRY_RUN = process.argv.includes('--dry-run');
 // ── 可调阈值 ──
 const SCAN_INTERVAL_MS = 10_000;      // 扫描间隔 10s
 const WINDOW_MS = 180_000;            // 判定窗口 180s
-const MIN_SAME_CMD = 4;               // 窗口内同一命令最少 4 次（跨扫描累计）
 const MAX_KILL_PER_HOUR = 3;          // 全局每小时最多 kill 3 次（防 kill→重启→再杀循环）
+
+/**
+ * 🔴 2026-09-23 D3：分级阈值（原为单一 MIN_SAME_CMD = 4）。
+ *
+ * 原实现对所有「命令型」子进程用同一个阈值 4 次/180s，而处置是
+ * `taskkill /F /T` —— **杀掉整个 claude.exe 进程树**，代价是用户整个会话连同未提交的工作。
+ *
+ * 问题在于 `tsc` / `vitest` / `tsx` / `npx` 这些是**正常开发反复调用**的命令
+ * （编译 → 测试 → 跑起来，180 秒内各来几次是常态），4 次阈值必然误伤。
+ * 实证 `data/agent-guard-audit.jsonl`：「npx:tsc x4」「npx:vitest x4」「npx:tsx x4」
+ * 的击杀记录已成模式 —— 被杀的都是正常干活，不是失控。
+ *
+ * 故按语义分两类：
+ *   - **窗口创建型**（start.cjs / webui-server）：反复拉起会真的弹控制台窗口 / 起常驻进程，
+ *     这正是当初引入本守护的原因，阈值维持 4（不放宽原始意图）。
+ *   - **构建型**（tsc / vitest / tsx / npx / npm）：只有真正的死循环才会到几十次，
+ *     阈值 25（≈180 秒内每 7 秒一次）。这是**精度修正，不是放宽防护** ——
+ *     真失控的 Agent 远超这个量级，而正常工作不会。
+ *   - 其余（script:* 等）：取中间值 8。
+ */
+const MIN_SPAWN_WINDOW = 4;           // 窗口创建型：4 次即判失控
+const MIN_SPAWN_BUILD = 25;           // 构建型：25 次才算死循环
+const MIN_SPAWN_DEFAULT = 8;          // 其他脚本类
+
+/** 窗口创建型签名（与 normalizeCmd 的返回值对齐） */
+const WINDOW_SPAWNER_SIGS = ['start.cjs', 'webui-server'];
+/** 构建型签名前缀 */
+const BUILD_SIG_PREFIXES = ['vitest:', 'tsc:', 'tsx:', 'npx:', 'npm:'];
+
+/** 该签名对应的失控阈值 */
+function limitFor(sig) {
+  if (WINDOW_SPAWNER_SIGS.includes(sig)) return MIN_SPAWN_WINDOW;
+  if (BUILD_SIG_PREFIXES.some(p => sig.startsWith(p))) return MIN_SPAWN_BUILD;
+  return MIN_SPAWN_DEFAULT;
+}
 
 // 白名单 pid（环境变量 HARNESS_GUARD_EXCLUDE_PIDS，逗号分隔）
 const EXCLUDE_PIDS = new Set(
@@ -208,12 +242,14 @@ function check() {
       if (procMap.size === 0) sigMap.delete(sig);
     }
 
-    // 判定: 窗口期内同一命令累计 spawn ≥ MIN_SAME_CMD
+    // 判定: 窗口期内同一命令累计 spawn ≥ 该【命令类别】的阈值（见 limitFor）
     let rogueSig = null;
     let rogueCount = 0;
+    let rogueLimit = 0;
     for (const [sig, procMap] of sigMap) {
-      if (procMap.size >= MIN_SAME_CMD) {
-        if (procMap.size > rogueCount) { rogueCount = procMap.size; rogueSig = sig; }
+      const limit = limitFor(sig);
+      if (procMap.size >= limit && procMap.size > rogueCount) {
+        rogueCount = procMap.size; rogueSig = sig; rogueLimit = limit;
       }
     }
 
@@ -224,7 +260,7 @@ function check() {
     // 判定失控
     const detail = {
       pid: claude.pid,
-      reason: `窗口 ${WINDOW_MS / 1000}s 内「${rogueSig}」累计 spawn ${rogueCount} 次`,
+      reason: `窗口 ${WINDOW_MS / 1000}s 内「${rogueSig}」累计 spawn ${rogueCount} 次（该类阈值 ${rogueLimit}）`,
       sigSnapshot: [...sigMap.entries()].map(([k, v]) => `${k}x${v.size}`).join(', '),
     };
 
@@ -283,7 +319,7 @@ function writeHeartbeat(agentStats, totalProcs) {
 
 // ── 启动 ──
 console.error(`[agent-guard] 🛡️ Harness 失控 Agent 管控守护进程已启动 (PID: ${process.pid})`);
-console.error(`[agent-guard]   扫描间隔: ${SCAN_INTERVAL_MS / 1000}s, 窗口: ${WINDOW_MS / 1000}s, 阈值: 同命令累计≥${MIN_SAME_CMD}`);
+console.error(`[agent-guard]   扫描间隔: ${SCAN_INTERVAL_MS / 1000}s, 窗口: ${WINDOW_MS / 1000}s, 阈值: 窗口创建型≥${MIN_SPAWN_WINDOW} / 构建型≥${MIN_SPAWN_BUILD} / 其他≥${MIN_SPAWN_DEFAULT}`);
 console.error(`[agent-guard]   全局 kill 上限: ${MAX_KILL_PER_HOUR} 次/小时`);
 console.error(`[agent-guard]   模式: ${DRY_RUN ? '🔍 DRY-RUN(只检测不杀)' : '🔴 LIVE(自动 kill)'}`);
 console.error(`[agent-guard]   白名单 pid: ${EXCLUDE_PIDS.size ? [...EXCLUDE_PIDS].join(',') : '(无)'}`);

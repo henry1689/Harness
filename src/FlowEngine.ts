@@ -535,6 +535,25 @@ export class FlowEngine {
     // 🔴 确定性跳转：纯代码逻辑决定下一 stage
     let nextStage = this.determineNextStage(stage, resolution); // E-02: let —— S3 补丁循环可强制改道 S1
 
+    // 🔴 2026-09-24：condition 驳回且驳回去向为 END ⇒ **失败终止**，不是「成功完成」。
+    //   根因（实测）：END 哨兵（本文件 `if (stageId === 'END') { this.recordComplete(); }`）
+    //   **无条件**标记 completed，不问我们是从 condition_passed 还是从 condition_rejected 走过来的；
+    //   而 self_guard_flow 的 S1 恰恰配了 `next_stage_reject: END`。
+    //   实测后果：S1 因 30s 编译超时被驳 → 流程仍返回 success:true / flow_status:completed
+    //   → flow-terminal-policy 判 eligible → **签发 8 个写令牌，全程无人工确认**。
+    //   （那次是 S1 连 S2 都没到，所谓「完整流程 S3-S7 全量收口」根本没有发生。）
+    //   与 human_denied / human_timeout 同一处置：recordAbort → success=false → 不签发令牌。
+    if (resolution === 'condition_rejected' && nextStage === 'END') {
+      this.recordAbort(
+        'condition_rejected_terminal',
+        `${stageId} 条件门控驳回，且该阶段配置的驳回去向为 END —— 按失败终止处理，不签发写入令牌。` +
+        `（若本阶段本就应「驳回即中止」，此为预期；若它本应有恢复路径，说明 next_stage_reject 配置有误。）`,
+      );
+      ToolWhitelistGuard.deactivate();
+      console.error(`[FlowEngine] ⛔ ${stageId} 驳回→END（失败终止），不签发令牌`);
+      return;
+    }
+
     // 🔴 human gate 超时/驳回 → 直接中止流水线，不进入下一阶段
     if (resolution === 'human_timeout' || resolution === 'human_denied') {
       this.recordAbort(

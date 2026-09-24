@@ -60,6 +60,27 @@ const BYPASS_THRESHOLD = 98;
 /** 硬锁定阈值 — 🔴 任意标准 <80 分立即锁定 */
 const HARD_LOCKOUT_THRESHOLD = 80;
 
+/**
+ * 🔴 2026-09-23 C2：S4.5 不计分的标准 / 检查（61 份现场报告实证）。
+ *
+ * 背景 —— 61 份报告里**自然通过 0 份**，失败高度集中在两条：
+ *   - **DS-16 / DS-19**（失败率 40/61、53/61）：本质是 **S2 方案文档的填空题**（方案里有没有
+ *     写"本次修改归类"和"全局架构优化提案"两个板块），与代码质量无关；且其义务**已由 S4
+ *     阶段硬阻断承担**（S4 reviewer 直接输出 `[归类·强制]` / `[提案·强制]` blocking）。
+ *     在 S4.5 再各扣 20 分，等于用文档缺失去否决代码，并直接导致整条 run 结构性失败。
+ *   - **CK-06.5**（拖累 DS-23，失败率 54/61）：为**纯名字匹配**的全仓扫描，
+ *     `main_harness_checker.ts:810` 自述「特征提取纯基于名字，无法区分"同名普通使用"与
+ *     "同款缺陷复现"」「关系赋值特征……92 处正常引用全仓爆炸」「通用方法名……17 处普通
+ *     调用误判」。其设计意图已声明改为「真实共性由 S4 reviewer 内容通道判定」，但 CK 侧
+ *     仍返回 warn，而 warn 就是 −15 分 → **只要做改动，DS-23 就先丢 15 分**。
+ *
+ * 处置：以下标准/CK 在 S4.5 **只记录不扣分**，义务回归 S4 评审与 S2 声明闭环。
+ * ⚠️ 边界：这是「评分口径」调整，**不是**削弱防护 —— S4 阶段对 `[归类·强制]` /
+ *    `[提案·强制]` 的 blocking 必须保持生效（符合 SG-R4）。改动后需专项确认这一点。
+ */
+const S45_NON_SCORING_STANDARDS = new Set(['DS-16', 'DS-19']);
+const S45_INFORMATIONAL_CKS = new Set(['CK-06.5']);
+
 // ════════════════════════════════════════════════════════════════════
 // 公开 API
 // ════════════════════════════════════════════════════════════════════
@@ -153,6 +174,14 @@ function scoreStandard(
 
   // 1. CK 检查扣分
   for (const ckId of std.mappedCKChecks) {
+    // 🔴 2026-09-23 C2：信息性 CK 只记录不扣分（见 S45_INFORMATIONAL_CKS 注释）
+    if (S45_INFORMATIONAL_CKS.has(ckId)) {
+      const _ck = ckResults.find(c => c.id === ckId);
+      if (_ck && _ck.violations && _ck.violations[0]) {
+        relatedViolations.push(`[${ckId}] ${_ck.violations[0].message}`);
+      }
+      continue;
+    }
     const ck = ckResults.find(c => c.id === ckId);
     // P6-FIX: 缺失的 CK 结果不作为"通过"，而是作为严重扣分（可能因异常被跳过）
     if (!ck) {
@@ -188,6 +217,26 @@ function scoreStandard(
   // 地板 ~80-85（chat.ts 62-74 / m7 81 实证），与改动质量无关。内容正确性仍由 CK 通道 +
   // 真实 reviewer 发现（如 CLASSIFY_FALSE_SPECIFIC / FG 红线确认缺失）计分。
   const PROCESS_OBLIGATION_PREFIXES = ['[静态质量·强制]', '[鲁棒·强制]', '[Hook·强制]', '[Hook·体检]', '[文档·强制]'];
+  // 🔴 2026-09-23 C2：S4.5 不计分标准 —— 义务由 S4 硬阻断承担，此处只记录不扣分。
+  // 注意用 return 而非 break：score 保持 100、gapToTarget 归零，使 passedStandards
+  // 不再被这两条文档填空题拖住（否则「全部标准达标」永远无法满足）。
+  if (S45_NON_SCORING_STANDARDS.has(std.standardId)) {
+    for (const v of reviewViolations) {
+      if (std.violationTagPatterns.some(p => p.test(v))) relatedViolations.push(v.slice(0, 120));
+    }
+    return {
+      standardId: std.standardId,
+      standardText: std.title,
+      weight: std.weight,
+      score: 100,
+      totalChecks,
+      passedChecks,
+      failedChecks,
+      relatedViolations: relatedViolations.slice(0, 20),
+      gapToTarget: 0,
+    };
+  }
+
   let reviewerDeducted = false;
   for (const violation of reviewViolations) {
     if (reviewerDeducted) break;

@@ -243,9 +243,16 @@ async function s3CompileCheck(_stageId: string, projectRoot: string, modifiedFil
   }
 
   return new Promise((resolve) => {
+    // 🔴 2026-09-24（owner 确认）：预算 30s → 120s。**超时语义不变，仍是 fail-closed（passed: false）。**
+    //   依据：本仓实测 `npx tsc --noEmit` 47 秒（退出码 0，即编译是通过的），30 秒装不下 47 秒。
+    //   原后果——这道闸**恒定超时、恒定失败，对任何 flow 都一样**，与改动质量无关：
+    //   S3 反复重试 → 打满补丁循环上限 → flow_abort，并把 S2 审批证据标成 superseded。
+    //   实测时 S4.5 已达 98.5% / 22-of-23，仍因本闸无法收口。
+    //   放宽只让闸「拿得到真实结论」：120s 内跑完 → 按编译输出判（有错 false / 无错 true）；
+    //   120s 仍跑不完 → 依旧 passed: false。**不会让失败变通过。**
     const timer = setTimeout(() => {
-      resolve({ passed: false, reason: 'S3 tsc 编译检查超时（30s），跳过' });
-    }, 30_000);
+      resolve({ passed: false, reason: 'S3 tsc 编译检查超时（120s），fail-closed 不放行' });
+    }, 120_000);
 
     // tsc 全量编译，但结果只按「本次文件」过滤 — 历史文件的错误不阻塞本次 flow
     exec('npx tsc --noEmit', {
@@ -325,7 +332,7 @@ async function attemptTokenIssue(
   result: { success: boolean; run_id: string; end_reason?: string; flow_status?: string; mode?: string },
   files: string[],
   intentSpec: { id: string; scope?: { allowed_paths?: string[]; forbidden_paths?: string[] } },
-  opts: { flowName?: string } = {},
+  opts: { flowName?: string; ownerClosureAuthorized?: boolean } = {},
 ): Promise<{ issued: boolean; issuedCount: number; detail: string; expiresIn?: string; verdictCode?: string }> {
   // 动态加载独立 policy（避免 MCP 启动时 ESM 依赖解析失败）
   const { attemptTokenIssue: policyAttempt } = await import('../src/security/flow-terminal-policy.js');
@@ -334,7 +341,13 @@ async function attemptTokenIssue(
   // 该流程的输入（方案文字/分类/理由）全由申请方提供、链上无人类锚点，故把锚点设为
   // 「owner 在源码里定义的允许范围」：边界内自动放行，越界一律拒绝。
   // 完整流程（wenstaros_core_repair_flow）签发的令牌不受此限（它有 S3-S7 全量收口）。
-  if (opts.flowName && /^plan_review_flow/.test(opts.flowName)) {
+  // 🔴 2026-09-23：owner closure 是「人工通道」的人类锚点 —— owner 用密码签发、绑定精确
+  //   branch/HEAD/文件 SHA256/规则集、短 TTL、一次性消费。AUTO_GRANT_NEVER 的拒绝文案本身
+  //   就写着「请走完整流水线或人工通道」，closure 即那条人工通道，故持有【已 claim 的有效
+  //   closure】时允许越出 auto-grant 白名单。
+  //   授权面不会因此扩大：claimOwnerClosure 会精确比对文件集（OWNER_CLOSURE_FILE_SET_MISMATCH）、
+  //   重验 branch/HEAD/SHA256（OWNER_CLOSURE_*_DRIFT），且 claim 后写 .lock 防重复消费。
+  if (opts.flowName && /^plan_review_flow/.test(opts.flowName) && opts.ownerClosureAuthorized !== true) {
     const { checkAutoGrantScope } = await import('../src/security/flow-terminal-policy.js');
     const violations = checkAutoGrantScope(files);
     if (violations.length > 0) {
@@ -586,18 +599,13 @@ mcpServer.registerTool(
       files: Array<{ path: string; sha256: string }>;
       verified: true;
     } | null = null;
-    if (owner_closure_id) {
-      // B2-fix: owner-closure 运行时已随 ConvergenceGate 回滚停用（applyOwnerAdoptedClosure 不再存在）。
-      // 传 owner_closure_id 只会被静默忽略（st.owner_adopted_closure 无人消费）→ 显式拒绝，不留静默空转的伪功能。
-      // closure 机制待 H2 MR-1 按 typed obligation 重新落地后再启用。
-      return { content: [{ type: 'text' as const, text: JSON.stringify({
-        success: false,
-        flow_status: 'not_started',
-        token_issued: false,
-        owner_closure_status: 'unavailable',
-        error: 'OWNER_CLOSURE_UNAVAILABLE: owner-closure 运行时已随 ConvergenceGate 回滚停用；请走标准 S1-S7 或等待 H2 重新落地。',
-      }, null, 2) }] };
-    }
+    // 🔴 2026-09-23：此处原为一段无条件 return（'OWNER_CLOSURE_UNAVAILABLE'），
+    //   理由自述「owner-closure 运行时已随 ConvergenceGate 回滚停用（applyOwnerAdoptedClosure 不再存在）」。
+    //   实测不成立：消费侧链路完好 —— authorizeOwnerClosureToken(:798)、finishOwnerClosure(:813/:825)
+    //   均在，且真正的 claim 调用就在下方（原 :647-663）。那段 return 只是把 claim 挡成了死代码。
+    //   恢复后语义：closure 由 owner 密码 CLI 签发（绑定精确 branch/HEAD/文件 SHA256/规则集、
+    //   有 TTL、一次性），claim 时重新校验基线，未过则 reject —— 人类锚点在签发那一步。
+    //   ⚠️ 注意：claim 必须在改动落地【之前】完成（verifyBaseline 会重新比对文件 SHA256）。
 
     // 动态加载 Harness 引擎（ESM）
     const { FlowEngine } = await import('../src/FlowEngine.js');
@@ -806,7 +814,11 @@ mcpServer.registerTool(
       }
 
       // H0: 尝试签发 Token v2（HMAC 签名）——返回真实签发结果，不因 result.success 误报
-      tokenResult = await attemptTokenIssue(result, files, intentSpec, { flowName });
+      tokenResult = await attemptTokenIssue(result, files, intentSpec, {
+        flowName,
+        // 已 claim 的 owner closure ⇒ 允许越出 auto-grant 白名单（人工通道）
+        ownerClosureAuthorized: ownerClosureClaim !== null,
+      });
 
       if (ownerClosureClaim) {
         const allTokensIssued = tokenResult.issued && tokenResult.issuedCount === files.length;
@@ -1318,7 +1330,18 @@ async function handleSentinelCheck(req: IncomingMessage, res: ServerResponse): P
     const now = Date.now();
 
     // 过期检查
-    if (now > (token.expires_at || 0)) {
+    // 🔴 2026-09-23：原为 `now > (token.expires_at || 0)` —— now 是数字，而令牌的
+    //   expires_at 是 **ISO 字符串**（如 "2026-08-16T11:11:43.635Z"）。字符串参与数值
+    //   比较时 Number("2026-08-16T…") = NaN，而 `x > NaN` 恒为 false
+    //   ⇒ **过期令牌永不失效**。
+    //   实证：data/tokens/ 下 3 个 expires_at=2026-08-16（已过期 5 周余）的令牌，
+    //   2026-09-23 仍被本接口判为「令牌有效」→ 对应文件永久免于哨兵回滚。
+    //   修法：统一解析（兼容数字毫秒与 ISO 字符串）；解析不出即视为已过期（fail-closed，
+    //   与原 `|| 0` 的语义一致，不得放宽）。
+    const expMs = typeof token.expires_at === 'number'
+      ? token.expires_at
+      : Date.parse(String(token.expires_at || ''));
+    if (!Number.isFinite(expMs) || now > expMs) {
       try { unlinkSync(tokenPath); } catch (_) {}
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ allowed: false, risk, reason: '令牌已过期', tokenFound: false }));

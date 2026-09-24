@@ -63,10 +63,14 @@ global_arch_constraint: |
   主 Harness 重大内核重构，必须由用户主动发起指令，AI 无权主动提议。
 
   # SG-R10 SelfGuard 自身规则体系自检铁律
-  每次 SelfGuard 迭代后，S4 复审必须对 SelfGuard 自身规则文件（self_guard_rules.yaml）
-  执行自检：扫描全量条目（SG-R1~R13）是否存在语义重叠、条目臃肿、权责交叉、上下矛盾；
+  # 🔴 2026-09-23：原条文要求扫描外挂文件 self_guard_rules.yaml —— 该文件在仓库中
+  #   并不存在（全仓 find 无结果，且无任何加载代码），此铁律物理上无法满足，
+  #   致 S4 必拒 → 回流 S3 → s3_patch_loop 熔断。十三条铁律全文本就内联在本流程的
+  #   global_arch_constraint 内，外挂文件是多余的，故改为自检内联条文。
+  每次 SelfGuard 迭代后，S4 复审必须对本流程 global_arch_constraint 内联的
+  SG-R1~SG-R13 规则条文执行自检：扫描是否存在语义重叠、条目臃肿、权责交叉、上下矛盾；
   若检出 → 必须自动合并重复语义、剔除冗余描述、收拢交叉条目。
-  自检范围严格限定于 SelfGuard 自身规则文件，不得越界扫描主流水线 YAML。
+  自检范围严格限定于本流程内联规则条文，不得越界扫描主流水线 YAML。
 
   # SG-R11 外部制衡与旁路巡检铁律
   系统全局只承认 SelfGuard 为 Harness 配置、脚本、规则、底层逻辑修改的合法入口；
@@ -263,12 +267,12 @@ stages:
          SG-R7: 测试覆盖与通过状态检查
          SG-R8: 归档标签与独立性检查
          SG-R9: AI 提案权限越界检测
-         SG-R10: SelfGuard 自身规则自检（仅扫描 self_guard_rules.yaml，去臃肿/去重复/一致性）
+         SG-R10: SelfGuard 自身规则自检（仅扫描本流程 global_arch_constraint 内联条文，去臃肿/去重复/一致性）
          SG-R11: 外部制衡与旁路巡检（权限基线+拦截规则+唯一入口+越权检测）
          SG-R12: 主流水线自动化校验基线完整性（S3编译自检/S5补丁嗅探/S6落盘检索未删减未弱化）
          SG-R13: 主流水线下游规则完整性交叉审计（仅扫描 wenstaros_core_repair_flow.yaml）
       3. 🔴 SG-R10 强制执行——SelfGuard 自身规则去臃肿去重复：
-         ① 扫描 self_guard_rules.yaml 全量条目（SG-R1~R13），检测语义重复、范围重叠；
+         ① 扫描本流程 global_arch_constraint 内联的 SG-R1~R13 全量条目，检测语义重复、范围重叠；
          ② 检测条目是否过度细碎、层级是否超过 3 级；
          ③ 检测不同规则之间是否存在目标冲突、约束口径不一致；
          ④ 自动输出《规则一致性复审报告》，检出臃肿/重复/矛盾则立即精简合并；

@@ -29,7 +29,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, relative, dirname, basename, join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 // 🔴 2026-09-12（④ 清单合一）：CK-07 高风险判定并入单一真值源
 import { classifyPath } from './RiskClassifier.js';
@@ -1068,30 +1068,80 @@ function checkContentSafetyExemptions(projectRoot: string, files: string[]): Che
 // CK-08: AST if 分支数量扫描（S5 补丁嗅探）
 // ════════════════════════════════════════════════════════════════════
 
+/**
+ * 取该文件的 HEAD 版本（= 本次改动**之前**的内容）。
+ *
+ * 🔴 2026-09-24：本检查的注释口径是「单个已有函数**新增** ≥N 个条件分支」，
+ *    而原实现读的是**当前全文并数总分支数**，根本没有基线比对 ——
+ *    于是把「既有代码里有 if-else」全报成「疑似补丁」。
+ *    实测（6 文件集，含 FamilyGraph.ts）：报 **104 条** violation，
+ *    且把 `if`/`for`/`switch` 块当成「函数」（报告里出现「函数 "if" 含 2 个分支」）。
+ *    后果：CK-08 恒 warn ⇒ DS-15 恒 85（100−15）⇒ S4.5「23 条全达标」永不可达，
+ *    只能熬到第 3 轮 handoff —— 实测近 6 份报告得分恒为 98.5%、轮次间「趋势 → 持平」。
+ *
+ * 基线取不到（新增文件 / 未跟踪 / git 不可用）→ 返回 null：
+ *    此时**无法判定「新增」，就不臆造告警**（与本文件原有「新增文件不适用此阈值」的处置一致）。
+ */
+function loadBaseVersion(projectRoot: string, file: string): string | null {
+  try {
+    const out = execFileSync('git', ['show', 'HEAD:' + file], {
+      cwd: projectRoot,
+      encoding: 'utf-8',
+      timeout: 15_000,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return typeof out === 'string' && out.length ? out : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** 按函数名计数（用于只挑「两侧均唯一」的名字做比较，避免同名/匿名块错配） */
+function countByName(fns: Array<{ name: string }>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const f of fns) m.set(f.name, (m.get(f.name) || 0) + 1);
+  return m;
+}
+
 function checkASTIfBranchCount(projectRoot: string, files: string[]): CheckResult {
   const start = Date.now();
   const violations: Violation[] = [];
 
   for (const file of files) {
     const absPath = resolve(projectRoot, file);
-    if (!existsSync(absPath)) continue;
+    if (!existsSync(absPath)) continue; // 新增/不存在的文件本就不适用此阈值
 
-    // 新增文件不适用此阈值
-    // (简化判断：检查 git log 或文件修改时间——这里用文件是否存在来判断)
-    const content = readFileSync(absPath, 'utf-8');
-    const lines = content.split('\n');
+    // 🔴 只比「本次新增的分支」，不数既有代码的总分支（见 loadBaseVersion 注释）
+    const beforeText = loadBaseVersion(projectRoot, file);
+    if (beforeText === null) continue; // 无基线 → 不臆造告警
 
-    // 扫描每个函数/方法内的 if/else if/switch case 分支数
-    const functions = extractFunctions(lines);
+    const nowFns = extractFunctions(readFileSync(absPath, 'utf-8').split('\n'));
+    const beforeFns = extractFunctions(beforeText.split('\n'));
 
-    for (const fn of functions) {
-      const branchCount = countConditionalBranches(fn.body);
+    // 只比较在两侧都【唯一】的函数名：extractFunctions 是缩进/关键字启发式，
+    // 会把 `if`/`for`/`switch` 块也命名为 "if"/"for"，同名必然错配。
+    const nowCnt = countByName(nowFns);
+    const beforeCnt = countByName(beforeFns);
+    const beforeByName = new Map<string, ExtractedFunction>();
+    for (const f of beforeFns) {
+      if (beforeCnt.get(f.name) === 1 && nowCnt.get(f.name) === 1) beforeByName.set(f.name, f);
+    }
 
-      if (branchCount >= PATCH_IF_THRESHOLD) {
+    for (const fn of nowFns) {
+      if (beforeCnt.get(fn.name) !== 1 || nowCnt.get(fn.name) !== 1) continue;
+      const before = beforeByName.get(fn.name);
+      if (!before) continue;
+
+      const beforeBranches = countConditionalBranches(before.body);
+      const nowBranches = countConditionalBranches(fn.body);
+      const delta = nowBranches - beforeBranches;
+
+      if (delta >= PATCH_IF_THRESHOLD) {
         violations.push({
           line: fn.startLine,
           file,
-          message: `疑似补丁: 函数 "${fn.name}" (L${fn.startLine}-L${fn.endLine}) 包含 ${branchCount} 个条件分支（if/else if/switch case），超过阈值 ${PATCH_IF_THRESHOLD}`,
+          message: `疑似补丁: 函数 "${fn.name}" (L${fn.startLine}-L${fn.endLine}) 本次改动新增 ${delta} 个条件分支（${beforeBranches} → ${nowBranches}），超过阈值 ${PATCH_IF_THRESHOLD}`,
           snippet: fn.signature.slice(0, 120),
         });
       }

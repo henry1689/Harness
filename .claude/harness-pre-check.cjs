@@ -99,6 +99,30 @@ var HARNESS_ROOT_FILES = [
 // 防线目录前缀（S4 评审 ② 补 dashboard/.github — CI 与看板是可执行治理代码）
 var DEFENSE_DIR_PREFIXES = ['src/', 'dist/', 'data/', '.claude/', 'scripts/', 'hooks/', 'mcp/', 'sentinel/', 'dashboard/', '.github/'];
 
+/* ── 🔴 2026-09-23（P1-4 同法）：签名密钥统一加载 ──
+   根因: src/security/token-verify.cjs 只读 process.env.HARNESS_TOKEN_SECRET，
+   而本钩子由 Claude Code 以子进程方式调用，该 env 从未被设置（实测）。
+   全仓仅在 ecosystem.config.cjs 给 pm2 进程设过 —— 钩子不经过那里。
+   后果: hasTokenSecret() 恒 false → checkPassToken 永远走「降级为信任 token 文件」
+   分支 → 令牌 HMAC 验签形同虚设（version / 覆盖路径 / 过期 / consumed 全是自填字段）。
+   修法: 判定前从 data/.harness-secret 回填 env，与 scripts/harness-gate.cjs 同一套语义。 */
+var SECRET_FILE = path.resolve(__dirname, '..', 'data', '.harness-secret');
+
+function loadTokenSecret() {
+  // 按【长度】判定而非真假判定：env 被设成短值时不能提前 return，
+  // 否则会把一个可用的 secret 文件白白浪费掉。
+  var env = process.env.HARNESS_TOKEN_SECRET;
+  if (env && Buffer.byteLength(env, 'utf8') >= 32) return true;
+  try {
+    var s = fs.readFileSync(SECRET_FILE, 'utf-8').trim();
+    if (s && Buffer.byteLength(s, 'utf8') >= 32) {
+      process.env.HARNESS_TOKEN_SECRET = s;
+      return true;
+    }
+  } catch (_) { /* 文件缺失/不可读 → 交由 checkPassToken 的 fail-closed 分支处理 */ }
+  return false;
+}
+
 /* ── Read input from stdin (Claude Code passes tool data via stdin, not env var) ── */
 var HOOK_INPUT = '';
 try {
@@ -148,6 +172,8 @@ function writeHookHeartbeat(result) {
 
 /* ── Core ── */
 function run() {
+  // 🔴 2026-09-23：必须在任何 checkPassToken 之前回填 secret，否则验签恒走降级分支。
+  loadTokenSecret();
   var raw = HOOK_INPUT;
   var input = {};
   try { var p = JSON.parse(raw); if (p && typeof p === 'object') input = p; } catch (_) {}

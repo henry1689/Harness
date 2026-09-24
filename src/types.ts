@@ -90,7 +90,10 @@ export type TerminalEndReason =
   | 'user_abort'
   | 'confirmations_pending'        // P0-A2: S4.5 内容达标但仅剩确认未声明（s2_evidence run 内固定 → 提前终局）
   | 's3_patch_loop'                // E-02(enhance-v1): S3 补丁循环强制回审，S2 复批仍为旧证据 → 终局要求新方案
-  | 'manual_verification_required'; // H-02(enhance-v1): S6-B 人工验收未完成 → 悬挂终局（不签发 token）
+  | 'manual_verification_required'  // H-02(enhance-v1): S6-B 人工验收未完成 → 悬挂终局（不签发 token）
+  | 'condition_rejected_terminal'; // 🔴 2026-09-24: condition 门控驳回且驳回去向为 END → 按失败终止（不签发 token）。
+                                   //   与 stage_error 区分：那是异常/兜底，这是**配置上就是终局**的正常驳回，
+                                   //   二者根因与处置不同，混用会让日志读者误判引擎故障。
 
 /** 门控决议结果（统一枚举） */
 export type GateResolution =

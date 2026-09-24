@@ -146,7 +146,13 @@ function checkTokenLocal(filePath, projectRootForContent) {
       return null;
     }
 
-    if (now > (token.expires_at || 0)) { try { fs.unlinkSync(tp); } catch (_) {} return null; }
+    // 🔴 2026-09-23：原为 `now > (token.expires_at || 0)` —— now 为数字，expires_at 为
+    //   ISO 字符串，数值比较得 NaN ⇒ 恒 false ⇒ 过期令牌永不失效（与 mcp/server.ts
+    //   的 /sentinel/check 同源缺陷）。统一解析；解析不出即视为已过期（fail-closed）。
+    var _expMs = typeof token.expires_at === 'number'
+      ? token.expires_at
+      : Date.parse(String(token.expires_at || ''));
+    if (!isFinite(_expMs) || now > _expMs) { try { fs.unlinkSync(tp); } catch (_) {} return null; }
     if (token.consumed) return null;
     if (token.caller_uuid && token.caller_uuid !== 'sg-mcp-v3-00000000-0000-0000-0000-000000000001') return null;
     return token;

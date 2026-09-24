@@ -125,8 +125,13 @@ const DEFAULT_CONFIG: ConvergenceGateConfig = {
   //   即「**每条设计标准都 ≥98**」才是真正门槛，逐条不达 98 时总分配罚也必然掉下来。
   //   所以把 60 改回 98 对多数 run **不产生行为差异**；真正的门槛调整应改
   //   ComplianceScorer.PASS_THRESHOLD 或场景A 的逐条条件。
-  passThreshold: 60,  // 24D→40D 迁移期临时值，见上（非实际卡点）
-  bypassThreshold: 60,
+  // 🔴 2026-09-23：60 是 24D→40D 迁移期临时值，迁移早已结束从未恢复；且它长期与报告
+  //   口径互相矛盾 —— 实测 61 份现场报告中，得分中位 93.9%、61/61 都"远超 60%"，却
+  //   全都判驳回，报告里「差距 = 60 − 93.9 = −33.9%」读起来像差三十多分。
+  //   改回 98 与 ComplianceScorer.PASS_THRESHOLD 对齐：行为不变（场景A 本就还要求
+  //   逐条达标），但报告从此自洽。真正的门槛仍由逐条判定承担。
+  passThreshold: 98,
+  bypassThreshold: 98,
   maxRounds: 5,
   autoHandoffRound: 3,
 };
@@ -813,9 +818,12 @@ function buildRejectReport(report: { overallScore: number; passedStandards: numb
   const lines = ['## ❌ S4.5 收敛闸门 — 驳回', ''];
   lines.push(`| 指标 | 值 |`);
   lines.push(`|------|-----|`);
-  lines.push(`| 本轮得分 | **${report.overallScore}%** |`);
-  lines.push(`| 目标阈值 | ${config.passThreshold}% |`);
-  lines.push(`| 差距 | **${(config.passThreshold - report.overallScore).toFixed(1)}%** |`);
+  lines.push(`| 本轮得分 | **${report.overallScore}%**（参考值，非卡点） |`);
+  // 🔴 2026-09-23：原为「| 目标阈值 | 60% |」「| 差距 | 60 − 得分 |」——两处都在骗人：
+  //   ① 60 不是卡点（真实卡点是逐条达标），② 得分高于阈值时"差距"为负，读起来像差几十分。
+  //   改为直接报「还差几条标准」，与真实放行条件一致。
+  lines.push(`| 放行条件 | ${report.totalStandards} 条标准**全部**达标 |`);
+  lines.push(`| 未达标标准 | **${report.totalStandards - report.passedStandards} 条** |`);
   lines.push(`| 达标标准 | ${report.passedStandards}/${report.totalStandards} |`);
   lines.push(`| 收敛轮次 | 第 ${round}/${config.maxRounds} 轮 |`);
   if (scoreDelta !== undefined) lines.push(`| 趋势 | ${scoreDelta > 0 ? '📈 +' + scoreDelta.toFixed(1) + '%' : scoreDelta === 0 ? '→ 持平' : '📉 ' + scoreDelta.toFixed(1) + '%'} |`);
@@ -830,7 +838,9 @@ function buildRejectReport(report: { overallScore: number; passedStandards: numb
     lines.push(`- ${issue}`);
   }
   lines.push('', '---', '', '🔴 请回到 S3 聚焦修复上述差距分析中的每一条，不扩大改动范围。');
-  lines.push(`剩余轮次: ${config.maxRounds - round} | 下轮仍需 ≥ ${config.passThreshold}% 方可放行。`);
+  // 🔴 2026-09-23：原为「下轮仍需 ≥ 60% 方可放行」——事实性错误。60 从不是放行条件，
+  //   真实条件是逐条达标；作者照此修改，下一轮必然再撞。
+  lines.push(`剩余轮次: ${config.maxRounds - round} | 下轮仍需**全部标准达标**方可放行（加权总分不是卡点）。`);
   return lines.join('\n');
 }
 

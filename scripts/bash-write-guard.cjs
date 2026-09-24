@@ -57,6 +57,13 @@ const CRITICAL_TARGETS = [
   { type: 'dir', match: path.resolve(__dirname, '..', '.claude'), label: 'Hook 脚本 (.claude/)' },
   { type: 'dir', match: path.resolve(__dirname, '..', 'hooks'), label: 'Git hooks (hooks/)' },
   { type: 'dir', match: path.resolve(__dirname, '..', 'src', 'harness'), label: 'Harness 内核 (src/harness/)' },
+  // 🔴 2026-09-23：反转默认 —— harness 自身 data/ 整棵纳入关键路径。
+  // 此前按目录逐条枚举，data/ 下 35 个一级条目只点名了 6 个；manual_tickets /
+  // harness_globals / convergence 三个治理路径是后来长出来的机制，从未被补进名单，
+  // 实测 `echo x > data/harness_globals.json` 直接 approve。
+  // 枚举「要保护的」必然随机制增加而漏；此处改为默认保护整棵 data/。
+  // （运行时进程不经此闸——本守卫只看 Claude 的 Bash 工具调用，不会误伤 FlowEngine 写账本。）
+  { type: 'dir', match: path.resolve(__dirname, '..', 'data'), label: '治理数据 (data/)' },
 ];
 
 // MED-4-fix: basename 级关键文件（v2.8 语义收窄为「非字面目标兜底」——含变量/命令替换的目标才用）
