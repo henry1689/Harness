@@ -235,6 +235,24 @@ export interface ReviewDetails {
 // ════════════════════════════════════════════════════════════════════
 
 /** 单条设计标准合规得分 */
+/**
+ * 🔴 2026-10-15：单条扣分记录。
+ *
+ * **为什么要它**：扣分原先是 `ComplianceScorer` 里的**局部变量**，算完即丢。
+ * 对外只给 `relatedViolations`（原始字符串，且常被截断）和 `gapToTarget`，
+ * 于是 agent 收到的是「DS-15: 85分(距达标差13分)」—— **既不知道是哪一项扣的，
+ * 也不知道为什么，只能自己回头翻 ck_reports / dim_review 去猜**，白耗 token。
+ * 本结构把「扣分来源 + 扣分量 + 原因原文」一并带出，见 §SuggestedActions 的用法。
+ */
+export interface ComplianceDeduction {
+  /** 扣分来源（CK-08 / Reviewer / DS-xx） */
+  source: string;
+  /** 扣分量（正整数） */
+  amount: number;
+  /** 扣分原因原文（检查项自身给出的说明，不加工） */
+  reason: string;
+}
+
 export interface StandardComplianceScore {
   /** 标准编号（DS-01 ~ DS-19） */
   standardId: string;
@@ -252,6 +270,8 @@ export interface StandardComplianceScore {
   failedChecks: number;
   /** 关联的违规描述 */
   relatedViolations: string[];
+  /** 🔴 2026-10-15：逐条扣分明细（来源 + 扣分量 + 原因），供报告与 agent 直接读，免去回翻原始检查结果 */
+  deductions: ComplianceDeduction[];
   /** 距 90% 目标的差距分 */
   gapToTarget: number;
 }
@@ -264,6 +284,8 @@ export interface GapItem {
   targetScore: number;
   pointsNeeded: number;
   suggestedActions: string[];
+  /** 🔴 2026-10-15：本条标准的逐条扣分（透传自 StandardComplianceScore，便于驳回报告直接引用） */
+  deductions: ComplianceDeduction[];
 }
 
 /** 合规报告（S4.5 输出） */
@@ -413,6 +435,16 @@ export interface TriggerContext {
   projectRoot?: string;
   /** 🔴 P9: 修复编译错误专用豁免标志（true = S3 跳过编译检查，仅用于清理历史错误） */
   skip_s3_compile?: boolean;
+  /**
+   * 🔴 2026-09-25 P0：本次 run 是否持有**人类锚点**。
+   *
+   * 取值由 `mcp/server.ts` 依据 `claimOwnerClosure` 的**实际结果**写入 ——
+   * 即「owner 输密码签发、绑定 branch/HEAD/文件 SHA256、TTL 一次性」的那张 closure。
+   * **它不是申请方能自声明的字段**：`s2_evidence` 里的任何内容都由申请方 Agent 提供。
+   *
+   * 用途：S6-B 据此判断 `skip_manual_verification` 是否可信（见 src/s6/manualVerify.ts）。
+   */
+  owner_closure_authorized?: boolean;
 }
 
 /** E-02(enhance-v1): 运行期机器信号（随 run 归档，供 S7 审计溯源；不影响 DFA 跳转） */
@@ -455,6 +487,8 @@ export interface FlowRunState {
   convergence_history: ConvergenceEntry[];
   /** 🔴 项目根目录（供 ConvergenceGate 运行 CK 检查） */
   project_root?: string;
+  /** 🔴 2026-09-25 P0：本次 run 持有已 claim 的 owner closure（人类锚点）——语义见 TriggerContext 同名字段 */
+  owner_closure_authorized?: boolean;
   /** 各 stage 的执行结果（key: stage_id） */
   stage_results: Map<string, StageResult>;
   /** S2 确认后持久化的全局备忘录 */

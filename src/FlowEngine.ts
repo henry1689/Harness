@@ -255,6 +255,16 @@ export class FlowEngine {
     this._s2Evidence = context.s2_evidence || null;
     if (this.state) this.state.s2_evidence = context.s2_evidence;
 
+    // 🔴 2026-09-25 P0（被哨兵回滚后重做）：把「本次 run 是否持有人类锚点」从上下文搬进
+    // state，供 S6-B 判定 `skip_manual_verification` 是否可信。该值由 MCP 依
+    // `claimOwnerClosure` 的**实际结果**写入，**刻意不走 `s2_evidence`** —— 后者全部内容由
+    // 申请方 Agent 提供，正是要被堵掉的那条自声明路径（见 src/s6/manualVerify.ts 同名注释）。
+    // 未提供 / 非布尔 true → 一律视为无锚点（fail-closed，S6-B 回落到任务单逻辑）。
+    //
+    // ⚠️ 本行缺失时**不会报错**：delegate 读到一个恒为 undefined 的字段，锚点永远不成立，
+    // P0 的加固整体静默失效。改这里之后务必端到端确认 state 上确有该值。
+    if (this.state) this.state.owner_closure_authorized = context.owner_closure_authorized === true;
+
     // 4. 初始化审计日志
     this.auditLogger = new AuditLogger(runId, this.config.flow_id);
     this.auditLogger.logFlowStart({

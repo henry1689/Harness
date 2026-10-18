@@ -14,8 +14,11 @@ describe('manualVerify（H-02）', () => {
     expect(confirmItem(t, 0, 'owner')).toBe(true);
     expect(isAwaitingManual(false, t)).toBe(false);
   });
-  it('skip_manual_verification=true → 永不等待', () => {
-    expect(isAwaitingManual(true, null)).toBe(false);
+  it('🔴 skip_manual_verification=true 但无人类锚点 → 仍等待（2026-09-25 P0：不再自助跳过）', () => {
+    expect(isAwaitingManual(true, null)).toBe(true);
+  });
+  it('🔴 skip_manual_verification=true 且持有 owner closure（人类锚点）→ 不等待', () => {
+    expect(isAwaitingManual(true, null, true)).toBe(false);
   });
   it('无 ticket → 需先生成(等待)', () => {
     expect(isAwaitingManual(false, null)).toBe(true);

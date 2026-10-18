@@ -99,6 +99,38 @@
     ".claude/"
   ],
 
+  "_auto_grant_never_comment": "🔴 2026-09-25：AUTO_GRANT_NEVER 不再等于整份 high_risk 清单，改为其【能自我放行】的子集。判据从「是不是高风险」改为「改了它，能不能为自己签发令牌」。理由（三次实测）：把产品代码也列进本清单，代价是每一次产品改动都要 owner 逐次输密码签 owner-closure；而写侧卡死正是 Agent 被逼向 skip_manual_verification 这类【无锚点自助开关】的直接原因（该开关已于 2026-09-25 收紧为需人类锚点）。锚点因此从「写」移到「竣工」：写可撤销（Sentinel 基线 + git），竣工不可撤销（入版本链）。⚠️ 风险分类本身不受影响：high_risk_files / high_risk_prefixes 原样保留，仍驱动 RiskClassifier / 哨兵分类 / CK-07；变的只是【能否经方案预审自动授权】。⚠️ src/project-brain/ 是【实证必需】的保留项，不是照抄旧清单：其 diff-scope-runtime.cjs / diff-scope-guard.ts 被 scripts/harness-gate.cjs（提交门）与 .claude/harness-pre-check.cjs（钩子）同时 require —— 可自动授权 = 能经方案预审关掉 scope 校验（回归测试 risk-governance-unified.test.ts ② 锚定此边界）。⚠️ src/governance/ 则是【有意放开】（owner 2026-09-25 批准），不是遗漏 —— 它既不签发令牌，也不参与令牌门槛判定。",
+
+  "auto_grant_never_files": [
+    "src/FlowEngine.ts",
+    "src/StageRunner.ts",
+    "src/GateController.ts",
+    "src/ToolWhitelistGuard.ts",
+    "src/ConvergenceGate.ts",
+    "src/ComplianceScorer.ts",
+    "src/DelegateReviewer.ts",
+    "src/HardnessLadder.ts",
+    "src/EvolutionEngine.ts",
+    "src/RiskClassifier.ts",
+    "src/main_harness_checker.ts",
+    "data/risk-policy.json",
+    "data/exemptions.json"
+  ],
+
+  "auto_grant_never_prefixes": [
+    "src/security/",
+    "src/s6/",
+    "src/s7/",
+    "src/project-brain/",
+    "src/hooks/",
+    "hooks/",
+    ".claude/",
+    "scripts/",
+    "data/flows/",
+    "mcp/",
+    "sentinel/"
+  ],
+
   "_low_risk_comment": "低风险规则取自【服务端分类器】(mcp/server.ts)，它是真正做判定的那一份。client 本地降级路径此前比它宽松(src/app/tools|utils|shared|__tests__ 前缀、.html/.css/.sh/.bat 扩展名)，现对齐为收紧方向。low_risk_files 是调试豁免，优先于 high 判定(EntityContextBuilder.ts 同时出现在两份清单里，按此顺序取 low)。",
   "low_risk_files": [
     "src/engine/reflex/SafetyInterceptor.ts",

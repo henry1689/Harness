@@ -76,22 +76,38 @@ export const AUTO_GRANT_ALLOWED_PREFIXES: readonly string[] = [
 /**
  * 永不允许经方案预审自动授权的路径（**优先于**白名单）。
  *
- * 🔴 2026-09-12（④ 清单合一）：**不再在本文件硬编码**，改为从 src/security/risk-lists.json
- * 的 high_risk_files / high_risk_prefixes 派生。理由：这两份清单语义相同 —— 「改它们等于
- * 改规则本身」正是它们被判为高风险的原因。此前各写一份，等于又制造一处分叉；派生后
- * 新增一个高风险文件会自动获得「永不自动授权」，不会漏。
+ * 🔴 2026-10-09：判据从「**是不是高风险**」改为「**改了它，能不能为自己签发令牌**」。
+ * 清单不再等于整份 high_risk，改由 risk-lists.json 的 `auto_grant_never_*` 两个键给出。
  *
- * 分三类（由真值源内容体现）：
+ * **为什么改**（多会话反复实测）：把产品代码也列进本清单，代价是每一次产品改动都要
+ * owner 逐次输密码签 owner-closure —— 而写侧卡死正是 Agent 被逼向 `skip_manual_verification`
+ * 这类**无锚点自助开关**的直接原因（该开关已于 2026-09-25 收紧为需人类锚点）。
+ * 锚点因此从「写」移到「竣工」：**写可撤销**（Sentinel 基线 + git），**竣工不可撤销**（入版本链）。
+ * 现状恰好相反（写卡死、竣工自动），本就是锚点放错了位置。
+ *
+ * 收窄后产品代码可经 plan_review_flow 自动拿到写令牌 —— 注意该令牌在**落地之前**签发，
+ * 这正是 S6-B 产品行为项能拿到「已落地」真实对象的前提（此前那扇门前是死的）。
+ *
+ * **分三类（自引用面，必须留人类锚点）**：
  *  ① **授权机制自身** —— src/security/。若可自动授权，Agent 就能「申请一个改白名单的
  *     令牌」把白名单改成任意值，再改一切。这是自引用绕过，必须堵死。
  *  ② **防线控制面** —— 风险策略、流水线定义、钩子、哨兵、MCP 实现、防线脚本。
- *  ③ **治理引擎核心** —— 门控与判定逻辑（FlowEngine / GateController / ComplianceScorer…）。
+ *  ③ **治理引擎核心** —— 门控与判定逻辑（FlowEngine / GateController / ComplianceScorer…），
+ *     以及 src/s6、src/s7（改弱它们 → 完整流程走到终局 → 照样能签发令牌）。
+ *
+ * ⚠️ **风险分类本身不受影响**：`high_risk_files` / `high_risk_prefixes` 原样保留，
+ * 仍驱动 RiskClassifier / 哨兵分类 / CK-07。变的只是「能否经方案预审自动授权」。
  */
-const RISK_LISTS = riskLists as unknown as { high_risk_files: string[]; high_risk_prefixes: string[] };
+const RISK_LISTS = riskLists as unknown as {
+  high_risk_files: string[];
+  high_risk_prefixes: string[];
+  auto_grant_never_files: string[];
+  auto_grant_never_prefixes: string[];
+};
 
 export const AUTO_GRANT_NEVER: readonly string[] = [
-  ...RISK_LISTS.high_risk_files,
-  ...RISK_LISTS.high_risk_prefixes,
+  ...RISK_LISTS.auto_grant_never_files,
+  ...RISK_LISTS.auto_grant_never_prefixes,
 ];
 
 export interface AutoGrantVerdict {

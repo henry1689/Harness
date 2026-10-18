@@ -86,11 +86,20 @@ export function confirmItem(ticket: ManualVerificationTicket, index: number, ver
   return allConfirmed(ticket);
 }
 
-/** S6-B 是否需人工等待：skip_manual_verification=true 或 ticket 已全确认 → false（自动放行） */
-export function isAwaitingManual(skipManualVerification: boolean | undefined, ticket: ManualVerificationTicket | null): boolean {
-  if (skipManualVerification === true) return false;
-  if (!ticket) return true; // 无 ticket → 需先生成
-  return !allConfirmed(ticket);
+/**
+ * S6-B 是否需人工等待。
+ *
+ * 🔴 2026-09-25 P0：本函数原本是 `decideManualGate` 的**第二份放行策略副本**，且停在旧口径
+ * （`skip_manual_verification=true` 即放行）。同一件事两份策略并存，正是本仓反复踩的坑
+ * （风险清单四份分叉、CK-07 双实现属同一类）。故改为**直接委托唯一的判定函数**，
+ * 不再各写一份 —— 策略只有一处，改一处即全局一致。
+ */
+export function isAwaitingManual(
+  skipManualVerification: boolean | undefined,
+  ticket: ManualVerificationTicket | null,
+  ownerClosureAuthorized?: boolean,
+): boolean {
+  return decideManualGate({ enabled: true, skipManualVerification, ownerClosureAuthorized, ticket }).action === 'await';
 }
 
 /** S6-B 门控决策（纯函数，无 IO——便于单测） */
@@ -109,10 +118,28 @@ export type ManualGateDecision =
 export function decideManualGate(opts: {
   enabled: boolean;
   skipManualVerification?: boolean;
+  /**
+   * 🔴 2026-09-24 P0：本次 run 是否持有**人类锚点**（已 claim 的 owner closure）。
+   * 由 `mcp/server.ts` 从 claim 结果写入 `state.owner_closure_authorized` ——
+   * **不是** `s2_evidence` 里的申请方自声明字段。
+   */
+  ownerClosureAuthorized?: boolean;
   ticket: ManualVerificationTicket | null;
 }): ManualGateDecision {
   if (!opts.enabled) return { action: 'pass', reason: '总开关 manual_verification_enabled=false' };
-  if (opts.skipManualVerification === true) return { action: 'pass', reason: 'skip_manual_verification=true' };
+
+  // 🔴 2026-09-24 P0（堵自声明放行）：
+  //   `skip_manual_verification` 由申请方在 `s2_evidence` 里自行声明，链上**没有任何人类锚点**
+  //   —— 实测它因此成为「跳过人工验收」的自助开关（2026-09-24 维护中被实际使用过）。
+  //   本仓对同类缺陷已有多次教训：自持降级开关 / 自声明豁免 / 伪造 .consumed。
+  //   现改为：**只有本次 run 持有已 claim 的 owner closure 时才认这条声明**。
+  //   无锚点 → 不认，回落至下面的任务单逻辑（该等就等）。
+  //   刻意不做"静默忽略"：静默忽略正是本仓查出的那类缺陷（owner-closure 曾被一段
+  //   无条件 return 挡成死代码、数月无人察觉）。**被拒的事实由调用方（delegate）可见地报出。**
+  if (opts.skipManualVerification === true && opts.ownerClosureAuthorized === true) {
+    return { action: 'pass', reason: 'skip_manual_verification=true（持有 owner closure 人类锚点）' };
+  }
+
   if (!opts.ticket || opts.ticket.items.length === 0) return { action: 'await', pending: 0, total: 0 };
   if (allConfirmed(opts.ticket)) return { action: 'pass', reason: '人工验收任务单已全部确认' };
   const pending = opts.ticket.items.filter(i => i.confirmed !== true).length;

@@ -2,7 +2,8 @@
  * H-03 / P1-1：S2「选补丁方案」→ 自动登记技术债
  * ================================================================
  * 台账三环的第一环（另两环：S4.5 DS<98→候选池、S7-B R2 校验 debt_id 存在）。
- * 覆盖：非补丁跳过 / 已绑定回填 / 未绑定新建 / 建账失败降级不阻断。
+ * 覆盖：非补丁跳过 / 已绑定回填 / 未绑定新建 / 建账失败降级不阻断；
+ * 以及 🔴 2026-09-25 补的「复用已知债务必须挂 run」（否则 S7-B R2 必挂）。
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
@@ -47,6 +48,41 @@ describe('ensurePatchDebt（S2 补丁 → 债务自动登记）', () => {
     );
     expect(out.created).toBe(false);
     expect(out.debt_id).toBe('debt_existing_001');
+  });
+
+  it('🔴 复用已知债务 + 有 runId → 必须挂 run（否则 S7-B R2 必挂）', () => {
+    if (!hasSqlite()) return;
+    // 先造一笔真实债务，作为「复用」的对象
+    const seeded = ensurePatchDebt(
+      { approval_ref: 'seed', approved_plan: 'seed', final_approved_plan: 'patch', patch_plan: { is_available: true } },
+      { dbPath: TEST_DB, runId: 'run_seed' },
+    );
+    expect(seeded.debt_id).toBeTruthy();
+
+    const out = ensurePatchDebt(
+      {
+        approval_ref: 'reuse',
+        approved_plan: '复用已知债务',
+        final_approved_plan: 'patch',
+        patch_plan: { is_available: true, associated_debt_id: seeded.debt_id },
+      },
+      { dbPath: TEST_DB, runId: 'run_reuse' },
+    );
+    expect(out.created).toBe(false);
+    expect(out.debt_id).toBe(seeded.debt_id);
+
+    const ledger = openLedger(TEST_DB);
+    try {
+      const runs = ledger.runsForDebt(seeded.debt_id!);
+      // 🔴 关键断言：本 run 必须出现在关联桥上 —— s7AutoArchive.findDebtIdForRun
+      //    正是按 runs.some(r => r.audit_ref === runId) 反查（不看 debt_occur_type）。
+      //    修前该断言为 false ⇒ debt_item_id 恒 null ⇒ R2 拒。
+      expect(runs.some(r => r.audit_ref === 'run_reuse')).toBe(true);
+      expect(runs.some(r => r.audit_ref === 'run_reuse' && r.debt_occur_type === 'reused')).toBe(true);
+      expect(runs.some(r => r.audit_ref === 'run_seed' && r.debt_occur_type === 'created')).toBe(true);
+    } finally {
+      ledger.close();
+    }
   });
 
   it('补丁方案 + 未绑定 → 新建台账条目并可查回', () => {

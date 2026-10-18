@@ -49,8 +49,12 @@ function normalizeNature(n: string | undefined): ValidNature {
 }
 
 /**
- * 若 S2 采纳补丁方案且未绑定债务 → 自动建账并 linkRun。
- * 非补丁方案 / 已绑定 / sqlite 不可用 / 建账异常 → 返回相应 outcome，**不抛异常**。
+ * S2 采纳补丁方案时的债务落账：
+ *   - 未绑定债务   → 新建条目 + `linkRun(created)`
+ *   - 已绑定（复用）→ 回填该 id + `linkRun(reused)`  ← 🔴 2026-09-25 补：此前复用分支不挂 run
+ * 两种情形都必须留下 run 关联，否则 S7-B R2 查不到债务。
+ *
+ * 非补丁方案 / sqlite 不可用 / 建账或关联异常 → 返回相应 outcome，**不抛异常**（降级不阻断）。
  */
 export function ensurePatchDebt(
   ev: S2PatchLike,
@@ -63,7 +67,35 @@ export function ensurePatchDebt(
 
   const existing = ev.patch_plan?.associated_debt_id;
   if (typeof existing === 'string' && existing.trim()) {
-    return { debt_id: existing.trim(), created: false };
+    const debtId = existing.trim();
+    // 🔴 2026-09-25 修复：复用已知债务**同样必须挂 run**。
+    //
+    // 原实现直接 return、不调 linkRun；而 `s7AutoArchive.findDebtIdForRun(runId)` 正是靠
+    // 债务↔run 关联桥反查本 run 的债务 id（该处注释明写「P1-1 的 ensurePatchDebt 会
+    // linkRun(debt_id, runId, 'created')」—— 本分支恰好破坏了这个前提）。
+    // 后果：`debt_item_id` 恒为 null ⇒ S7-B R2 以「补丁方案必须携带 debt_item_id」拒绝。
+    //
+    // 换言之：**复用已知债务本是更正确的做法（不重复造账），此前反而必然失败**。
+    // 这是漏掉的分支，不是设计取舍。
+    if (opts.runId && hasSqlite()) {
+      try {
+        const ledger = openLedger(opts.dbPath);
+        try {
+          ledger.linkRun(debtId, opts.runId, 'reused');
+        } finally {
+          ledger.close();
+        }
+      } catch (err) {
+        // 与建账同口径：降级不阻断（debt_id 已回填，S7-A 仍可据此填写），但必须可见 ——
+        // 静默降级正是本仓反复踩的坑。
+        return {
+          debt_id: debtId,
+          created: false,
+          skipped_reason: `债务已回填，但 run 关联写入失败（不阻断）：${(err as Error).message}`,
+        };
+      }
+    }
+    return { debt_id: debtId, created: false };
   }
 
   if (!hasSqlite()) {

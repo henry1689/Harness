@@ -105,6 +105,13 @@ function normalizeS2Evidence(raw: unknown): {
     skip_manual_verification?: boolean;
     /** H-05：S2 授权的整文件覆写白名单（2026-09-11 补——此前未透传，白名单恒为空） */
     allow_full_rewrite?: string[];
+    /**
+     * 🔴 2026-10-09 补：架构方案结构化字段。
+     * 此前 **zod 声明了它、本函数却漏了它** ⇒ 它止步于规范化层，永远到不了
+     * `state.s2_evidence`（下游读到的恒为 undefined）。这正是上方 2026-09-11 注释所警告的
+     * 同一类缺陷的**残留一处**：当时声称补齐了三个字段，实际只补了 zod 那一层。
+     */
+    arch_structural_plan?: Record<string, unknown> | null;
   };
   diagnostic?: string;
 } {
@@ -133,6 +140,42 @@ function normalizeS2Evidence(raw: unknown): {
     if (k && !seen.has(k)) { seen.add(k); confirmations.push(k); }
   }
 
+  // 🔴 2026-10-16：s2_evidence 已在 zod 侧改为 `z.record()`（消「丢未知键」缺陷 + 减尺寸），
+  //    因此原先由 zod 承担的**嵌套结构校验**全部下沉到这里。**语义不变：非法即 fail-closed**
+  //    （返回 S2_APPROVAL_EVIDENCE_INVALID，与旧 zod 拒绝时的行为一致）。
+  //    必填四字段的非空校验见上方；此处管的是枚举与嵌套必填布尔。
+  const PROBLEM_NATURES = ['specific_bug', 'coupling_debt', 'arch_structural_defect'];
+  const FINAL_PLANS = ['patch', 'arch_structural'];
+  if (obj.confirmations !== undefined && !Array.isArray(obj.confirmations)) {
+    return { ok: false, diagnostic: 'S2_APPROVAL_EVIDENCE_INVALID: confirmations 必须是字符串数组' };
+  }
+  if (obj.problem_nature !== undefined && !PROBLEM_NATURES.includes(String(obj.problem_nature))) {
+    return { ok: false, diagnostic: `S2_APPROVAL_EVIDENCE_INVALID: problem_nature 非法（允许：${PROBLEM_NATURES.join(' / ')}）` };
+  }
+  if (obj.final_approved_plan !== undefined && !FINAL_PLANS.includes(String(obj.final_approved_plan))) {
+    return { ok: false, diagnostic: `S2_APPROVAL_EVIDENCE_INVALID: final_approved_plan 非法（允许：${FINAL_PLANS.join(' / ')}）` };
+  }
+  for (const nested of ['patch_plan', 'arch_structural_plan'] as const) {
+    const v = obj[nested];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'object' || Array.isArray(v)) {
+      return { ok: false, diagnostic: `S2_APPROVAL_EVIDENCE_INVALID: ${nested} 必须是对象` };
+    }
+    if (typeof (v as Record<string, unknown>).is_available !== 'boolean') {
+      return { ok: false, diagnostic: `S2_APPROVAL_EVIDENCE_INVALID: ${nested}.is_available 必须是布尔值（true/false）` };
+    }
+    const scope = (v as Record<string, unknown>).change_scope;
+    if (scope !== undefined && !Array.isArray(scope)) {
+      return { ok: false, diagnostic: `S2_APPROVAL_EVIDENCE_INVALID: ${nested}.change_scope 必须是字符串数组` };
+    }
+  }
+  if (obj.skip_manual_verification !== undefined && typeof obj.skip_manual_verification !== 'boolean') {
+    return { ok: false, diagnostic: 'S2_APPROVAL_EVIDENCE_INVALID: skip_manual_verification 必须是布尔值' };
+  }
+  if (obj.allow_full_rewrite !== undefined && !Array.isArray(obj.allow_full_rewrite)) {
+    return { ok: false, diagnostic: 'S2_APPROVAL_EVIDENCE_INVALID: allow_full_rewrite 必须是字符串数组' };
+  }
+
   // H-03/P1-1: 透传 s2-evidence-v2 的可选字段（不参与必填校验，仅供应急/建账使用）
   const v2: {
     problem_nature?: string;
@@ -140,10 +183,16 @@ function normalizeS2Evidence(raw: unknown): {
     patch_plan?: Record<string, unknown> | null;
     skip_manual_verification?: boolean;
     allow_full_rewrite?: string[];
+    arch_structural_plan?: Record<string, unknown> | null;
   } = {};
   if (typeof obj.problem_nature === 'string') v2.problem_nature = obj.problem_nature;
   if (typeof obj.final_approved_plan === 'string') v2.final_approved_plan = obj.final_approved_plan;
   if (obj.patch_plan && typeof obj.patch_plan === 'object') v2.patch_plan = obj.patch_plan as Record<string, unknown>;
+  // 🔴 2026-09-25：arch_structural_plan 此前只补了 zod 声明，漏了本函数的拷贝 ——
+  // zod 放行 ≠ 到达 state。改 s2_evidence 必须【zod 声明 + 规范化类型 + 拷贝】三处同步。
+  if (obj.arch_structural_plan && typeof obj.arch_structural_plan === 'object') {
+    v2.arch_structural_plan = obj.arch_structural_plan as Record<string, unknown>;
+  }
   // 🔴 2026-09-11: H-02 / H-05 开关此前未列入白名单 → 被静默丢弃 → 两个功能从未生效
   if (typeof obj.skip_manual_verification === 'boolean') v2.skip_manual_verification = obj.skip_manual_verification;
   if (Array.isArray(obj.allow_full_rewrite)) {
@@ -353,10 +402,29 @@ async function attemptTokenIssue(
     if (violations.length > 0) {
       const detail = violations.map(v => `${v.file}: ${v.reason}`).join(' ｜ ');
       console.error(`[harness-mcp] 🚫 方案预审越界，拒绝签发写令牌: ${detail}`);
+      // 🔴 2026-10-09：原此处只回一句 `auto-grant scope denied` + 逐文件理由，而理由文案
+      //   （flow-terminal-policy 的 never_auto_grant）指向「请走完整流水线**或**人工通道」——
+      //   实测这会把 Agent 优先引进死循环：完整流水线的令牌在**终局**才签发，而 S6-B 的产品域
+      //   验收项（src/s6/manualVerify.ts 的 PRODUCT_DOMAIN_RE → 产品行为 5 项）要求改动**已落地**。
+      //   代码没落地 → 签不了令牌；没令牌 → 落不了地。**那扇门前是死的。**
+      //   故此处不再让 Agent 自己猜：显式给出【唯一可走通】的顺序，并说明人工通道需要什么。
       return {
         issued: false,
         issuedCount: 0,
-        detail: `auto-grant scope denied: ${violations.map(v => v.file).join(', ')} — ${detail}`,
+        detail: [
+          `auto-grant scope denied: ${violations.map(v => v.file).join(', ')} — ${detail}`,
+          '',
+          '⚠️ 不要直接改走完整流水线：它的令牌在【终局】才签发，而 S6-B 的产品域验收项要求改动【已落地】',
+          '   —— 代码没落地就签不了令牌、没令牌就落不了地。产品域改动走那条路是死循环。',
+          '',
+          '✅ 可走通的顺序（人工通道 = owner-closure，只在写侧补锚点，不动验收）：',
+          '  ① owner 用密码门签发 closure（一次性、绑 branch/HEAD/逐文件 sha256/规则集）：',
+          '       node scripts/harness-cli.cjs owner-closure issue <manifest.json> --project <根> --minutes 30',
+          '     注意：closure 必须在【改动之前】claim —— manifest 里的 sha256 是改动前的磁盘内容。',
+          '  ② 带 owner_closure_id 重跑本流程 → 越过本白名单，签发【写令牌】',
+          '  ③ 用写令牌落地改动 → build + 重启服务',
+          '  ④ 跑完整流水线 → S6-B 此时有真实对象可验（改动已在盘上）→ 终局签发竣工令牌',
+        ].join('\n'),
         verdictCode: 'auto_grant_out_of_scope',
       };
     }
@@ -516,48 +584,26 @@ mcpServer.registerTool(
       flow: z.string().describe('YAML 配置文件名，如 wenstaros_core_repair_flow.yaml'),
       files: z.array(z.string()).describe('待修改的文件路径列表'),
       message: z.string().optional().describe('原始修改意图描述'),
-      skip_s3_compile: z.boolean().optional().describe('🔴 修复编译错误专用：为 true 时 S3 跳过 tsc 编译检查，直接签发 token（仅限修复历史编译错误任务，改完后 S5 仍会完整验证）'),
-      exempt_files: z.array(z.string()).optional().describe('v2.9: 豁免文件列表（限定范围内仍走 S1-S7——只放宽 S4.5 复杂度收敛，token 照常签发）'),
+      skip_s3_compile: z.boolean().optional().describe('修复历史编译错误专用：跳过 S3 编译检查（S5 仍完整验证）'),
+      exempt_files: z.array(z.string()).optional().describe('只放宽 S4.5 复杂度收敛，仍走 S1-S7'),
       // H1: S2 审批证据——缺失/无效时 S2 fail-closed（返回 S2_APPROVAL_EVIDENCE_MISSING）
-      s2_evidence: z.object({
-        approval_ref: z.string().min(1),
-        approved_plan: z.string().min(1),
-        change_classification: z.string().min(1),
-        global_architecture_decision: z.string().min(1),
-        confirmations: z.array(z.string()).default([]),
-        // H-03/P1-1: s2-evidence-v2 可选字段。**必须在 zod 里声明**——zod 对象默认丢弃未知键，
-        // 不声明就会在到达 normalizeS2Evidence 之前被静默剥掉（实测踩中：补丁方案被判成
-        // 「非补丁」→ 债务不登记）。声明为 optional，不参与必填校验。
-        problem_nature: z.enum(['specific_bug', 'coupling_debt', 'arch_structural_defect']).optional(),
-        final_approved_plan: z.enum(['patch', 'arch_structural']).optional(),
-        patch_plan: z.object({
-          is_available: z.boolean(),
-          change_scope: z.array(z.string()).optional(),
-          short_term_effect: z.string().optional(),
-          debt_risks: z.string().optional(),
-          not_available_reason: z.string().nullable().optional(),
-          associated_debt_id: z.string().nullable().optional(),
-          payback_milestone: z.string().nullable().optional(),
-        }).optional(),
-        // 🔴 2026-09-11 补齐：以下三个 v2 字段（见 src/schemas/s2-evidence-v2.ts）此前**未在
-        // zod 声明**，被 zod 的「丢弃未知键」行为静默剥掉，导致功能整体失效：
-        //   skip_manual_verification → S6-B 永远要求人工验收（H-02 开关从未生效）
-        //   allow_full_rewrite       → H-05「S2 授权大文件覆写」白名单恒为空
-        //   arch_structural_plan     → 架构方案结构化字段全丢
-        // 教训：改 s2_evidence 必须对照 s2-evidence-v2.ts 全字段核对（此前 patch_plan 已踩过一次）。
-        allow_full_rewrite: z.array(z.string()).optional(),
-        skip_manual_verification: z.boolean().optional(),
-        arch_structural_plan: z.object({
-          is_available: z.boolean(),
-          change_scope: z.array(z.string()).optional(),
-          benefit: z.string().optional(),
-          dependencies: z.array(z.string()).optional(),
-          estimated_workload: z.string().optional(),
-          not_available_reason: z.string().nullable().optional(),
-        }).optional(),
-      }).optional().describe('H1: S2 审批证据（非秘密；缺失/无效时 S2 fail-closed，返回 S2_APPROVAL_EVIDENCE_MISSING）。补丁方案（final_approved_plan=patch 或 patch_plan.is_available=true）且未绑定 associated_debt_id → 批准瞬间自动登记技术债，结果见 s2_patch_debt_id。'),
+      // 🔴 2026-10-16：s2_evidence 由**展开式 zod 对象**改为 `z.record()`。
+      //
+      // 动机有二：
+      //  ① **尺寸**：本字段原占 inputSchema 的 69%（1718/2482 字符），harness_run_flow 因此是
+      //     全部工具中最大的一个（2677 字符，第二大仅 460），实测为客户端丢工具的首要嫌疑。
+      //  ② **根治一类缺陷**：zod 对象**默认丢弃未声明的键**。本仓已被它咬过两次 ——
+      //     · patch_plan 未声明 → 补丁方案判成「非补丁」→ 债务不登记 → S7-B R2 必挂；
+      //     · 三个 v2 字段未声明 → skip_manual_verification / allow_full_rewrite /
+      //       arch_structural_plan 静默丢弃，**功能整体从未生效**（见 2026-09-11 注释）。
+      //     `z.record()` 接受任意键，从此**加字段不必再同步改本 schema**。
+      //
+      // ⚠️ 校验**没有**减弱：原先由 zod 承担的必填/枚举/布尔校验，已下沉到 normalizeS2Evidence
+      //    （仍是 fail-closed，见其头部注释）。字段清单与必填要求另见流水线 S2 的 work_manual。
+      s2_evidence: z.record(z.string(), z.unknown()).optional()
+        .describe('S2 审批证据（必填/枚举由服务端校验；字段清单见流水线 S2 work_manual）'),
       owner_closure_id: z.string().regex(/^oc_[a-f0-9]{16}$/).optional()
-        .describe('一次性 owner-adopted closure ID；必须由本机密码门 CLI 预先签发并绑定精确 branch/HEAD/files/SHA/rules'),
+        .describe('owner 密码门签发的一次性 closure（绑 branch/HEAD/files/SHA）'),
     },
   },
   async ({ flow, files, message, skip_s3_compile, exempt_files, s2_evidence, owner_closure_id }) => {
@@ -787,6 +833,11 @@ mcpServer.registerTool(
         isTrivial: trivial,
         projectRoot: PROJECT_ROOT,
         skip_s3_compile: skip_s3_compile === true,
+        // 🔴 2026-09-25 P0（被回滚后重做）：人类锚点 —— 本次 run 是否**实际** claim 到了
+        // owner closure。这是唯一能让 S6-B 认可 `skip_manual_verification` 的条件：该声明由
+        // 申请方在 s2_evidence 里自填（链上无锚点），实测被当成「跳过人工验收」的自助开关。
+        // 此处取 claimOwnerClosure 的真实结果，不经任何申请方可控的字段。
+        owner_closure_authorized: ownerClosureClaim !== null,
         // H1: S2 审批证据（规范化后）——供 S2 human_report 注入 + S4 confirmations 精确匹配
         // 🔴 2026-09-11 修复（P0-A 第二层）：原实现只传 v1 的 validEvidence，s2-evidence-v2 的
         // 可选字段（problem_nature / final_approved_plan / patch_plan / skip_manual_verification

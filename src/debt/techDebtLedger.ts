@@ -25,7 +25,17 @@ export function hasSqlite(): boolean {
 export type DebtNature = 'specific_bug' | 'coupling_debt' | 'arch_structural_defect';
 export type DebtRisk = 'low' | 'medium' | 'high' | 'critical';
 export type DebtStatus = 'open' | 'deferred' | 'resolved' | 'archived';
-export type DebtOccurType = 'created' | 'referenced' | 'modified' | 'resolved';
+/**
+ * 债务 ↔ run 关联桥上的「本次是哪种关系」。
+ *
+ * 🔴 2026-09-25 新增 `'reused'`：S2 复用**已知债务**（`patch_plan.associated_debt_id`）时的关联。
+ * 此前复用分支直接 return、不挂 run，而 `s7AutoArchive.findDebtIdForRun(runId)` 正是靠这张
+ * 关联桥反查本 run 的债务 id ⇒ `debt_item_id` 恒为 null ⇒ S7-B R2 以「补丁方案必须携带
+ * debt_item_id」拒绝。**复用已知债务本是更正确的做法，此前反而必然失败。**
+ *
+ * DDL 侧无需变更：`debt_run_link.debt_occur_type` 是自由 TEXT，无 CHECK 约束。
+ */
+export type DebtOccurType = 'created' | 'referenced' | 'modified' | 'resolved' | 'reused';
 
 export interface DebtCreateInput {
   debt_title: string;

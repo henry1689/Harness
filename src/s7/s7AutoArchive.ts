@@ -33,11 +33,40 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import type { FlowRunState } from '../types.js';
 import type { S7ArchivePayload } from '../schemas/s7-archive-payload.js';
 import { hasSqlite, openLedger } from '../debt/techDebtLedger.js';
 // 🔴 2026-09-12（②）：高风险判定走单一真值源（见 src/security/risk-lists.json）
 import { classifyPath } from '../RiskClassifier.js';
+
+/**
+ * 🔴 2026-10-15：豁免台账路径**只在一处定义**（scripts/exemptions-core.cjs）。
+ *
+ * 原实现自己重推了一遍 `process.env.HARNESS_EXEMPTIONS_FILE || <harness>/data/exemptions.json`
+ * —— 与 exemptions-core 是**两个真相源**。本仓反复踩这个坑（风险清单四份分叉、CK-07 双实现）。
+ *
+ * 两边口径还不同：exemptions-core 曾是**模块加载时**定死路径，本处是**调用时**读 env ——
+ * 同一进程里可能指向不同文件（测试先 import 模块再设 env 即命中）。现已把 exemptions-core
+ * 也改成调用时解析，并导出为 getter，此处直接取用即可。
+ *
+ * require 失败时退回原路径，保证归档不因脚本不可达而中断（该路径本就只用于「查已有豁免」）。
+ */
+const _ecRequire = createRequire(import.meta.url);
+let _exemptionsCore: { EXEMPTIONS_FILE: string } | null = null;
+function exemptionsFilePath(): string {
+  try {
+    // 用局部变量收窄：模块级 let 在 try 内再赋值后 TS 无法收窄（会报 possibly null）
+    let ec = _exemptionsCore;
+    if (!ec) {
+      ec = _ecRequire('../../scripts/exemptions-core.cjs') as { EXEMPTIONS_FILE: string };
+      _exemptionsCore = ec;
+    }
+    const fp = ec.EXEMPTIONS_FILE;
+    if (typeof fp === 'string' && fp) return fp;
+  } catch { /* 脚本不可达 → 退回下面的原路径 */ }
+  return process.env.HARNESS_EXEMPTIONS_FILE || join(harnessDataDir(), 'exemptions.json');
+}
 
 /** harness 自身的 data/ 目录（与 S7ArchiveDelegate.harnessDataDir 保持一致） */
 function harnessDataDir(): string {
@@ -75,7 +104,7 @@ interface ExemptionRecord { id?: string; expires_at?: number; relaxed_checks?: s
  */
 export function findExemptionIdForFiles(modifiedFiles: string[]): string | null {
   try {
-    const fp = process.env.HARNESS_EXEMPTIONS_FILE || join(harnessDataDir(), 'exemptions.json');
+    const fp = exemptionsFilePath();
     if (!existsSync(fp)) return null;
     const raw = JSON.parse(readFileSync(fp, 'utf-8')) as { exemptions?: Record<string, ExemptionRecord> };
     const entries = Object.entries(raw.exemptions ?? {});
@@ -165,7 +194,14 @@ export function buildAutoArchive(state: FlowRunState): S7ArchivePayload {
       // 补丁却查不到债务 → 保持 null，由 R2 以「未登记债务」拒绝（不绕过 H-03）
       debt_item_id: isPatch ? findDebtIdForRun(runId) : null,
       // R5：≥3 文件视为大重构。这里填的是**计划**（引用真实轮次数据），非完成背书。
-      three_round_review_plan: files.length >= 3
+      // 🔴 2026-09-25：填充条件必须与「要求该字段的判据」同源。
+      //   R4（S7ArchiveValidator.ts:104）在「S4.5<98 + 触及高风险文件 + problem_nature=arch_structural_defect」
+      //   时**无条件**要求本字段（只看 problem_nature，与文件数无关）；而原实现只按 files.length>=3 填充。
+      //   两条 predicate 不同源 ⇒ 「单文件 + 高风险 + 走架构通道」时 R4 必要求、S7-A 必不填，
+      //   且豁免不适用（R4 明令高风险禁止 exemption 兜底）⇒ 无出口死锁。
+      //   对齐原则：填充条件取「要求条件的超集」。未放松任何规则 —— R4 判据一字未改，
+      //   R5（≥3 文件）仍只在 files.length>=3 时生效。
+      three_round_review_plan: (files.length >= 3 || ev?.problem_nature === 'arch_structural_defect')
         ? `三轮复审计划：① 架构评审（S4 记录，S4.5 共 ${rounds} 轮收敛）；② 逐文件 diff 复核（${files.length} 个文件）；③ 回滚演练（按基线还原后比对哈希）。`
         : null,
     },

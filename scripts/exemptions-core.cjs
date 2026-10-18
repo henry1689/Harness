@@ -21,8 +21,111 @@ const path = require('path');
 const crypto = require('crypto');
 
 const HARNESS_DIR = path.resolve(__dirname, '..');
-const EXEMPTIONS_FILE = process.env.HARNESS_EXEMPTIONS_FILE || path.join(HARNESS_DIR, 'data', 'exemptions.json');
-const AUDIT_DIR = path.join(HARNESS_DIR, 'data', 'audit', 'exemptions');
+
+/**
+ * 🔴 2026-10-15：`HARNESS_EXEMPTIONS_FILE` 覆盖改为**显式放行**。
+ *
+ * 原实现是一个裸的 env 覆盖 —— 一个环境变量就能把**整份豁免台账**指到别处，
+ * 而且 `AUDIT_DIR` 是写死的 ⇒ **台账与审计可以分家**（台账在 A、审计在 B）。
+ * 同类教训本仓已多次踩：**能被静默改变的判据来源**。
+ *
+ * 现要求同时设 `HARNESS_ALLOW_EXEMPTIONS_FILE_OVERRIDE=1` 才生效；否则忽略并大声告警。
+ * 这不是安全增强（同用户进程都能改 env），而是把「静默改判据来源」变成**显式且可见**。
+ *
+ * ⚠️ 台账被覆盖时**审计目录一并跟随**（见下方 AUDIT_DIR），否则又是一处台账/审计分家。
+ */
+const DEFAULT_EXEMPTIONS_FILE = path.join(HARNESS_DIR, 'data', 'exemptions.json');
+const DEFAULT_AUDIT_DIR = path.join(HARNESS_DIR, 'data', 'audit', 'exemptions');
+
+let _overrideWarned = false;
+function _warnOverride(msg) {
+  if (_overrideWarned) return;
+  _overrideWarned = true;
+  console.error('[exemptions-core] 🔴 ' + msg);
+}
+
+/**
+ * 🔴 2026-10-15：**延迟**解析台账路径（不做成模块级 const）。
+ *
+ * 为什么延迟：本文件与 `src/s7/s7AutoArchive.ts` **各自读了一次** `HARNESS_EXEMPTIONS_FILE`
+ * （本仓反复踩的「多真相源」）。s7 那侧是**调用时**读 env，本侧是**模块加载时**定死 ——
+ * 两侧在同一进程里可能指向不同文件：测试先 import 本模块、再设 env 就会分家。
+ * 改为两处都在**调用时**解析后，本文件成为唯一真值源，s7 直接引用本模块的导出即可。
+ */
+function resolveExemptionsFile() {
+  const ov = process.env.HARNESS_EXEMPTIONS_FILE;
+  if (!ov) return DEFAULT_EXEMPTIONS_FILE;
+  if (process.env.HARNESS_ALLOW_EXEMPTIONS_FILE_OVERRIDE === '1') return path.resolve(ov);
+  _warnOverride(`忽略 HARNESS_EXEMPTIONS_FILE=${ov} —— 未设 HARNESS_ALLOW_EXEMPTIONS_FILE_OVERRIDE=1，改用默认台账。`);
+  return DEFAULT_EXEMPTIONS_FILE;
+}
+
+/** 审计目录必须与台账**同源** —— 否则台账在 A、审计在 B（本仓实测吃过这个亏） */
+function resolveAuditDir() {
+  const fp = resolveExemptionsFile();
+  return fp === DEFAULT_EXEMPTIONS_FILE
+    ? DEFAULT_AUDIT_DIR
+    : path.join(path.dirname(fp), 'audit', 'exemptions');
+}
+
+function lockFileOf(fp) { return fp + '.lock'; }
+
+// ════════════════════════════════════════════════════════════════════
+// 🔴 2026-10-15：并发写保护（原子落盘 + 跨进程锁）
+// ════════════════════════════════════════════════════════════════════
+//
+// **受控实验坐实**（D:\tmp\probe-exemption-race.cjs，N 个子进程各自 load-merge-write）：
+//   N=1  → 1/1 存活（对照）
+//   N=8  → 7/8 存活，丢 1 个
+//   N=16 → 11/16 存活，丢 5 个
+// 每个子进程都**报告写入成功**，台账里却少了 —— 经典 lost update：
+//   read 全文 → map.set(自己这条) → writeFileSync 整份
+// 先写的被后写的整份覆盖。`writeFileSync` 还是非原子的（无 tmp+rename），
+// 崩在中途会留下**截断的 JSON**，后续 loadExemptions 解析失败 → 整份台账失效。
+//
+// 两条修法：
+//   ① **原子落盘**：写临时文件再 rename —— 读者要么看到旧版要么看到新版，绝无半截。
+//   ② **跨进程锁**：`wx` 独占创建锁文件，拿到才做 load-merge-write。
+//      锁有 30s 陈旧回收，防止进程被杀后留下死锁。
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_STALE_MS = 30_000;
+
+function acquireLock(lockFile) {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fd = fs.openSync(lockFile, 'wx');
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return fd !== undefined;
+    } catch (err) {
+      if (err && err.code !== 'EEXIST') throw err;
+      // 陈旧锁回收：持锁进程被杀后无人释放
+      try {
+        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockFile);
+          continue;
+        }
+      } catch (_) { /* 锁刚被别人释放 → 下一轮重试 */ }
+      if (Date.now() >= deadline) {
+        // fail-closed：宁可让本次签发失败并大声报错，也不做可能丢数据的无锁写
+        throw new Error('exemptions-core: 豁免台账加锁超时（' + LOCK_TIMEOUT_MS + 'ms），拒绝无锁写入');
+      }
+      sleepSync(15 + Math.floor(Math.random() * 20));
+    }
+  }
+}
+
+function releaseLock(lockFile) {
+  try { fs.unlinkSync(lockFile); } catch (_) { /* 已被陈旧回收 */ }
+}
+
+/** 持锁执行（无论成功失败都释放）；锁文件随当前台账路径走 */
+function withLock(fn) {
+  const lockFile = lockFileOf(resolveExemptionsFile());
+  acquireLock(lockFile);
+  try { return fn(); } finally { releaseLock(lockFile); }
+}
 
 /** 路径归一化：正斜杠 + 剥 ./ 前缀 */
 function normalizeKey(filePath) {
@@ -64,7 +167,7 @@ const LOAD_RETRY_BASE_MS = 40;
  */
 function loadExemptions(file) {
   const map = new Map();
-  const fp = file || EXEMPTIONS_FILE;
+  const fp = file || resolveExemptionsFile();
   if (!fs.existsSync(fp)) return map;
 
   let parsed = null;
@@ -134,10 +237,15 @@ function addExemption(filePath, opts = {}) {
     id: 'ex-' + crypto.randomBytes(4).toString('hex'),
   };
 
-  // load-merge-write
-  const map = loadExemptions(EXEMPTIONS_FILE);
-  map.set(key, record);
-  writeExemptions(map);
+  // 🔴 2026-10-15：整段 load-merge-write 持跨进程锁。
+  //    只原子落盘不够 —— 锁不住 read→merge 那一段，两个进程仍会各自基于旧快照合并，
+  //    后写的整份覆盖先写的（实测 N=16 丢 5 条）。
+  const map = withLock(() => {
+    const m = loadExemptions(resolveExemptionsFile());
+    m.set(key, record);
+    writeExemptions(m);
+    return m;
+  });
 
   // 签发审计
   writeAudit(record, { file: key, minutes });
@@ -151,14 +259,21 @@ function writeExemptions(map) {
   for (const [k, rec] of map) {
     if (getExpiry(rec) > Date.now()) obj.exemptions[k] = rec;
   }
-  const dir = path.dirname(EXEMPTIONS_FILE);
+  const fp = resolveExemptionsFile();
+  const dir = path.dirname(fp);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(EXEMPTIONS_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  // 🔴 2026-10-15：原子落盘 —— 写临时文件再 rename。
+  //    原为直接 `writeFileSync(EXEMPTIONS_FILE, ...)`：进程若在中途被杀（agent-guard 击杀、
+  //    30s 超时、崩溃），会留下**截断的 JSON**，此后每次 loadExemptions 解析失败 ⇒
+  //    整份豁免台账静默失效（所有文件都失去豁免）。rename 在同一文件系统上是原子的。
+  const tmp = `${fp}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf-8');
+  fs.renameSync(tmp, fp);
 }
 
 /** 查询豁免记录（未命中或过期返回 null） */
 function isExemptRecord(filePath, now) {
-  const map = loadExemptions(EXEMPTIONS_FILE);
+  const map = loadExemptions(resolveExemptionsFile());
   const key = normalizeKey(filePath);
   const rec = map.get(key);
   if (!rec) return null;
@@ -177,7 +292,8 @@ function coversOperation(record, tool) {
 /** 签发审计写盘 */
 function writeAudit(record, extra) {
   try {
-    if (!fs.existsSync(AUDIT_DIR)) fs.mkdirSync(AUDIT_DIR, { recursive: true });
+    const auditDir = resolveAuditDir();
+    if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
     const entry = {
       timestamp: new Date().toISOString(),
       event: 'EXEMPTION_ISSUE',
@@ -190,13 +306,16 @@ function writeAudit(record, extra) {
       reason: record.reason,
       issued_by: record.issued_by,
     };
-    fs.writeFileSync(path.join(AUDIT_DIR, `issue_${Date.now()}.json`), JSON.stringify(entry, null, 2), 'utf-8');
+    fs.writeFileSync(path.join(auditDir, `issue_${Date.now()}.json`), JSON.stringify(entry, null, 2), 'utf-8');
   } catch (_) {}
 }
 
 module.exports = {
-  EXEMPTIONS_FILE,
-  AUDIT_DIR,
+  // 🔴 getter 而非常量：路径在**调用时**解析（与 src/s7/s7AutoArchive.ts 同口径），
+  //    否则两处读取点会在同一进程里指向不同文件（本仓反复踩的多真相源坑）。
+  get EXEMPTIONS_FILE() { return resolveExemptionsFile(); },
+  get AUDIT_DIR() { return resolveAuditDir(); },
+  withLock,
   normalizeKey,
   loadExemptions,
   getExpiry,

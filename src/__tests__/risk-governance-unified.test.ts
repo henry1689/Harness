@@ -22,6 +22,10 @@ import type { S7ArchivePayload } from '../schemas/s7-archive-payload.js';
 const require_ = createRequire(import.meta.url);
 const { classifyRisk: cjsClassifyRisk } = require_('../../sentinel/sentinel-mcp-client.cjs');
 
+// 🔴 2026-10-15：`HARNESS_EXEMPTIONS_FILE` 覆盖现已要求显式放行标志，否则被忽略并告警。
+//    在测试进程入口统一设一次，避免逐条设置遗漏（遗漏的后果是测试读到**真实台账**，既污染证据又不稳定）。
+process.env.HARNESS_ALLOW_EXEMPTIONS_FILE_OVERRIDE = '1';
+
 const TEST_EXEMPTIONS = join(
   dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'test-exemptions-risk-gov.json',
 );
@@ -168,6 +172,25 @@ describe('④ AUTO_GRANT_NEVER 派生自真值源', () => {
   it('普通业务代码仍在白名单内（边界内自动化）', () => {
     expect(isAutoGrantAllowed('src/utils/helper.ts').allowed).toBe(true);
     expect(isAutoGrantAllowed('src/engine/tianquan/foo.ts').allowed).toBe(true);
+  });
+
+  it('🔴 2026-10-09 收窄后：产品代码可从方案预审自动授权（写侧不再卡死）', () => {
+    // 背景：产品代码此前也在 AUTO_GRANT_NEVER 内 ⇒ 每次改动都要 owner 逐次输密码签 closure，
+    // 而写侧卡死正是 Agent 被逼向 skip_manual_verification 这类无锚点自助开关的直接原因。
+    // 锚点改为压在【竣工】侧（写可撤销，竣工不可撤销）。此处同时锁住两半：
+    //   ① 风险分类**不变** —— 这些文件仍是 high（仍要令牌才能写入，仍受哨兵管）；
+    //   ② 变的只是「能否经方案预审自动授权」。
+    for (const f of [
+      'src/webui/chat.ts',
+      'src/m4/household/FamilyGraph.ts',
+      'src/m2/ConversationDB.ts',
+      'src/engine/orchestrator.ts',
+      'src/app/knowledge/KnowledgeEngine.ts',
+      'src/governance/personal-world-law.ts',
+    ]) {
+      expect(classifyPath(f), `${f} 的风险分类不应因本次收窄而改变`).toBe('high');
+      expect(isAutoGrantAllowed(f).allowed, `${f} 应收窄为可自动授权`).toBe(true);
+    }
   });
 
   it('白名单外（非 src/）一律拒绝', () => {

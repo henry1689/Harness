@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 // ESM/CJS 桥：项目 package.json type:module，模块顶层裸 require 未定义，
 // ConvergenceGate 需动态加载 CJS 的 exemptions-core 脚本 → 用 createRequire(import.meta.url) 建立桥。
 const _harnessRequire = createRequire(import.meta.url);
-import type { StageConfig, StageOutput, FlowRunState, ConvergenceEntry, UnresolvedConfirmationKey } from './types.js';
+import type { StageConfig, StageOutput, FlowRunState, ConvergenceEntry, UnresolvedConfirmationKey, ComplianceDeduction } from './types.js';
 import { passSignal, rejectSignal, makeStageOutput } from './DualChannelSignal.js';
 import { computeComplianceScore } from './ComplianceScorer.js';
 import { assembleFullReviewEvidence } from './schemas/full-review-evidence.js';
@@ -345,15 +345,29 @@ export async function evaluate(
       summary: finalReport.slice(0, 800),
       dim_review: (s4res?.review_details ?? {}) as Record<string, unknown>,
       ck_reports: ckResults.map(c => ({ ck_id: c.id, passed: c.passed, severity: c.severity, violations: c.violations || [] })),
+      // 🔴 2026-10-15：原为 `reason: relatedViolations[0]`（只取第一条且常被截断）
+      //    + `suggest_fix: 需提升 N 分`（等于没给动作）。实测抱怨点：扣分后 agent
+      //    不知道是哪一项扣的，只能自己回翻 ck_reports / dim_review 去猜，白耗 token。
+      //    现改为逐条扣分明细 + 指名最贵那一项该改什么。
       ds_score_details: complianceReport.standardScores
         .filter(s => s.score < 98)
-        .map(s => ({
-          ds_id: s.standardId,
-          score_delta: Math.round(s.score - 100),
-          reason: s.relatedViolations[0] ?? s.standardText,
-          suggest_fix: s.gapToTarget > 0 ? `需提升 ${s.gapToTarget} 分` : '达标',
-          machine_sourced: true,
-        })),
+        .map(s => {
+          const ranked = [...s.deductions].sort((a, b) => b.amount - a.amount);
+          const total = ranked.reduce((n, d) => n + d.amount, 0);
+          return {
+            ds_id: s.standardId,
+            score_delta: Math.round(s.score - 100),
+            reason: ranked.length
+              ? ranked.map(d => `[${d.source} −${d.amount}] ${d.reason}`).join(' | ')
+              : (s.relatedViolations[0] ?? s.standardText),
+            deductions: ranked,
+            deductions_total: total,
+            suggest_fix: ranked.length
+              ? `优先修 ${ranked[0].source}（当前该项 −${ranked[0].amount}）：${ranked[0].reason.slice(0, 120)}`
+              : (s.gapToTarget > 0 ? `需提升 ${s.gapToTarget} 分` : '达标'),
+            machine_sourced: true,
+          };
+        }),
     }),
   };
 
@@ -734,7 +748,7 @@ function extractS4HumanReport(state: FlowRunState): string {
 
 /** 根据得分做出决策 */
 function makeDecision(
-  report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number }>; topIssues: string[] },
+  report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number; deductions?: ComplianceDeduction[] }>; topIssues: string[] },
   round: number,
   scoreDelta: number | undefined,
   config: ConvergenceGateConfig,
@@ -814,7 +828,7 @@ function buildPassReport(report: { overallScore: number; passedStandards: number
   return lines.join('\n');
 }
 
-function buildRejectReport(report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number }>; topIssues: string[] }, round: number, scoreDelta: number | undefined, config: ConvergenceGateConfig): string {
+function buildRejectReport(report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number; deductions?: ComplianceDeduction[] }>; topIssues: string[] }, round: number, scoreDelta: number | undefined, config: ConvergenceGateConfig): string {
   const lines = ['## ❌ S4.5 收敛闸门 — 驳回', ''];
   lines.push(`| 指标 | 值 |`);
   lines.push(`|------|-----|`);
@@ -828,11 +842,31 @@ function buildRejectReport(report: { overallScore: number; passedStandards: numb
   lines.push(`| 收敛轮次 | 第 ${round}/${config.maxRounds} 轮 |`);
   if (scoreDelta !== undefined) lines.push(`| 趋势 | ${scoreDelta > 0 ? '📈 +' + scoreDelta.toFixed(1) + '%' : scoreDelta === 0 ? '→ 持平' : '📉 ' + scoreDelta.toFixed(1) + '%'} |`);
   lines.push('', '---', '', '## 🔴 差距分析（按紧急程度排序）', '');
-  lines.push('| 标准 | 当前分 | 需提升 |');
-  lines.push('|------|--------|--------|');
+  lines.push('| 标准 | 当前分 | 需提升 | 扣分来源 |');
+  lines.push('|------|--------|--------|----------|');
   for (const g of report.gapAnalysis) {
-    lines.push(`| ${g.standardId} ${g.standardText} | ${g.currentScore} | ${g.pointsNeeded} |`);
+    // 🔴 2026-10-15：补「扣分来源」一列 —— 原表只有分数与差距，读者无法知道扣在哪，
+    //   只能自己回翻 ck_reports 猜。
+    const src = (g.deductions || []).map(d => `${d.source} −${d.amount}`).join('、') || '—';
+    lines.push(`| ${g.standardId} ${g.standardText} | ${g.currentScore} | ${g.pointsNeeded} | ${src} |`);
   }
+
+  // 🔴 2026-10-15：新增「扣分明细」小节。差距分析给结论，这里给原因 ——
+  //   逐条列出「来源 −分量：原因」，agent 不必再回翻原始检查结果去猜。
+  const withDeductions = report.gapAnalysis.filter(g => (g.deductions || []).length > 0);
+  if (withDeductions.length > 0) {
+    lines.push('', '## 🔴 扣分明细（谁扣的 · 扣了多少 · 为什么）', '');
+    for (const g of withDeductions) {
+      const ranked = [...(g.deductions || [])].sort((a, b) => b.amount - a.amount);
+      const total = ranked.reduce((n, d) => n + d.amount, 0);
+      lines.push(`**${g.standardId} ${g.standardText}**（合计 −${total}，当前 ${g.currentScore} 分）`);
+      for (const d of ranked) {
+        lines.push(`- ${d.source} **−${d.amount}**：${d.reason.slice(0, 140)}`);
+      }
+      lines.push('');
+    }
+  }
+
   lines.push('', '## 🔴 重点改进方向', '');
   for (const issue of report.topIssues) {
     lines.push(`- ${issue}`);
@@ -844,7 +878,7 @@ function buildRejectReport(report: { overallScore: number; passedStandards: numb
   return lines.join('\n');
 }
 
-function buildHandoffReport(report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number }> }, round: number, scoreDelta: number | undefined, config: ConvergenceGateConfig): string {
+function buildHandoffReport(report: { overallScore: number; passedStandards: number; totalStandards: number; gapAnalysis: Array<{ standardId: string; standardText: string; currentScore: number; pointsNeeded: number; deductions?: ComplianceDeduction[] }> }, round: number, scoreDelta: number | undefined, config: ConvergenceGateConfig): string {
   const lines = ['## 🤚 S4.5 收敛闸门 — 转交用户确认', ''];
   lines.push(`| 指标 | 值 |`);
   lines.push(`|------|-----|`);

@@ -1,7 +1,8 @@
 /**
  * H-02 S6-B 门控：变更指纹寻址 + 任务单生命周期 + 门控决策 + delegate 端到端
  * 覆盖 03 文档 §4 回归用例：S6-A 过+S6-B 未确认→await_manual；确认后重跑→pass；
- * skip_manual_verification=true→全自动 completed。
+ * 🔴 2026-09-25 P0 收紧：skip_manual_verification=true **单独不再放行** ——
+ * 该字段由申请方自填，必须同时持有 owner closure（人类锚点）才认 → 全自动 completed。
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
@@ -50,8 +51,11 @@ describe('decideManualGate（纯门控决策）', () => {
   it('总开关关闭 → pass', () => {
     expect(decideManualGate({ enabled: false, ticket: null }).action).toBe('pass');
   });
-  it('skip_manual_verification=true → pass', () => {
-    expect(decideManualGate({ enabled: true, skipManualVerification: true, ticket: null }).action).toBe('pass');
+  it('🔴 skip_manual_verification=true 无锚点 → await（不再自助放行）', () => {
+    expect(decideManualGate({ enabled: true, skipManualVerification: true, ticket: null }).action).toBe('await');
+  });
+  it('🔴 skip_manual_verification=true 且持 owner closure（人类锚点）→ pass', () => {
+    expect(decideManualGate({ enabled: true, skipManualVerification: true, ownerClosureAuthorized: true, ticket: null }).action).toBe('pass');
   });
   it('无任务单 → await', () => {
     expect(decideManualGate({ enabled: true, ticket: null }).action).toBe('await');
@@ -116,9 +120,22 @@ describe('s6ManualVerifyDelegate（端到端：确认后重跑同一批文件即
     expect(isAwaitingManual(false, loadTicket(key))).toBe(false);
   });
 
-  it('skip_manual_verification=true → 全自动 pass，不落盘任务单', async () => {
+  it('🔴 skip_manual_verification=true 但无人类锚点 → 不认：仍悬挂且落盘任务单', async () => {
     const only = ['src/only/a.ts'];
     const out = await s6ManualVerifyDelegate({} as never, { run_id: 'run_skip', modified_files: only, s2_evidence: { skip_manual_verification: true } } as never);
+    expect(out.machine_signal.passed).toBe(false);
+    expect(out.machine_signal.metrics?.await_manual_verification).toBe(true);
+    expect(existsSync(ticketPathFor(computeChangeKey(only)))).toBe(true);
+  });
+
+  it('🔴 skip_manual_verification=true 且持有 owner closure → 全自动 pass，不落盘任务单', async () => {
+    const only = ['src/only/b.ts'];
+    const out = await s6ManualVerifyDelegate({} as never, {
+      run_id: 'run_skip_anchored',
+      modified_files: only,
+      owner_closure_authorized: true,
+      s2_evidence: { skip_manual_verification: true },
+    } as never);
     expect(out.machine_signal.passed).toBe(true);
     expect(existsSync(ticketPathFor(computeChangeKey(only)))).toBe(false);
   });

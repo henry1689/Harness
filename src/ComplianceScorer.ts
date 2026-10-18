@@ -21,6 +21,7 @@ import type { DesignStandard } from './DesignStandards.js';
 import type {
   ComplianceReport,
   StandardComplianceScore,
+  ComplianceDeduction,
   GapItem,
 } from './types.js';
 
@@ -36,12 +37,13 @@ interface CKCheckResult {
   violations: Array<{ message: string }>;
 }
 
-/** 扣分规则 */
-interface Deduction {
-  source: string;
-  amount: number;
-  reason: string;
-}
+/**
+ * 扣分规则。
+ * 🔴 2026-10-15：类型本体移到 `src/types.ts::ComplianceDeduction` 并对外导出 ——
+ *    此前它是本文件的**局部 interface 且不返回**，算完即丢，报告层拿不到「谁扣了多少、为什么」，
+ *    agent 只能回翻 ck_reports/dim_review 去猜（实测抱怨点）。此处保留别名以免大面积改写。
+ */
+type Deduction = ComplianceDeduction;
 
 // ════════════════════════════════════════════════════════════════════
 // 评分常量
@@ -131,13 +133,21 @@ export function computeComplianceScore(
       targetScore: PASS_THRESHOLD,
       pointsNeeded: PASS_THRESHOLD - s.score,
       suggestedActions: buildSuggestedActions(s),
+      // 🔴 2026-10-15：透传逐条扣分，供 ConvergenceGate 的驳回报告直接引用
+      deductions: s.deductions,
     }))
     .sort((a, b) => b.pointsNeeded - a.pointsNeeded);
 
-  // Top 5 问题
+  // 🔴 2026-10-15：Top 5 问题 —— 原本只写「85分(需提升13分)」，**没有任何原因**，
+  //    agent 拿到只能自己回翻 ck_reports 猜是哪一项扣的（实测抱怨点）。
+  //    现把扣分最多的那一项连同原因一并带上，一句话就能定位。
   const topIssues = gapAnalysis
     .slice(0, 5)
-    .map(g => `DS-${g.standardId.slice(3)} ${g.standardText}: ${g.currentScore}分(需提升${g.pointsNeeded}分)`);
+    .map(g => {
+      const worst = [...g.deductions].sort((a, b) => b.amount - a.amount)[0];
+      const why = worst ? ` ← ${worst.source} −${worst.amount}: ${worst.reason.slice(0, 80)}` : '';
+      return `DS-${g.standardId.slice(3)} ${g.standardText}: ${g.currentScore}分(需提升${g.pointsNeeded}分)${why}`;
+    });
 
   return {
     overallScore,
@@ -232,6 +242,8 @@ function scoreStandard(
       totalChecks,
       passedChecks,
       failedChecks,
+      // 🔴 2026-10-15：不计分标准恒为空（本路径刻意不扣分，见上方注释）
+      deductions: [],
       relatedViolations: relatedViolations.slice(0, 20),
       gapToTarget: 0,
     };
@@ -274,6 +286,9 @@ function scoreStandard(
     passedChecks,
     failedChecks,
     relatedViolations,
+    // 🔴 2026-10-15：把扣分明细一并带出。此前 deductions 是局部变量、算完即丢，
+    // 报告只能给「DS-15: 85分(距达标差13分)」这种无原因结论。
+    deductions,
     gapToTarget: Math.max(0, PASS_THRESHOLD - score),
   };
 }
@@ -285,13 +300,25 @@ function buildSuggestedActions(s: StandardComplianceScore): string[] {
   if (s.score < 60) {
     actions.push('⚠️ 严重违规——优先修复此项');
   }
-  if (s.relatedViolations.length > 0) {
-    actions.push(`共 ${s.relatedViolations.length} 条违规需修复`);
-    // 前 3 条违规作为具体指引
+
+  // 🔴 2026-10-15：改用「真实扣分明细」而不是违规文本条数。
+  //    原实现只说「共 N 条违规需修复」+ 贴 3 条截断原文，agent 仍不知道该改哪一项、改成什么；
+  //    现在逐条给出「来源 −分量：原因」，并把最贵的一项置顶，避免在长列表里找。
+  if (s.deductions.length > 0) {
+    const ranked = [...s.deductions].sort((a, b) => b.amount - a.amount);
+    const total = ranked.reduce((n, d) => n + d.amount, 0);
+    actions.push(`扣分明细（合计 −${total}）：`);
+    for (const d of ranked) {
+      actions.push(`  → ${d.source} −${d.amount}：${d.reason.slice(0, 100)}`);
+    }
+  } else if (s.relatedViolations.length > 0) {
+    // 无结构化扣分但有违规文本（信息性 CK 等只记录不扣分的场景）—— 仍给出原文
+    actions.push(`共 ${s.relatedViolations.length} 条违规需修复（本标准未扣分，仅供参考）：`);
     for (const v of s.relatedViolations.slice(0, 3)) {
       actions.push(`  → ${v.slice(0, 80)}`);
     }
   }
+
   if (s.totalChecks === 0 && s.score === 100) {
     actions.push('无关联检查项——默认满分（仅作为文档备案）');
   }

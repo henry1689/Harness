@@ -193,7 +193,66 @@ const WATCH_ROOTS = [
   'scripts/',     // P7: 关键防线脚本
   'hooks/',       // P7: Git hooks
   'data/flows/',  // P7: 流水线定义
+  'data/',        // 🔴 2026-10-15 ③cwd 盲区修复：治理开关纳入监控（见下方 DATA_GOVERNANCE_FILES）
 ];
+
+/**
+ * 🔴 2026-10-15：data/ 下**真正受管**的文件白名单。
+ *
+ * **为什么原来漏了**：`WATCH_ROOTS` 里只有 `data/flows/`，而 Edit/Write/Bash 三道钩子
+ * 只在**受管 cwd** 下生效 —— 从 `C:\Users\henry` 这类不受管 cwd 写 data/ 是**零拦截**的。
+ * 两者叠加，data/ 治理文件等于无人看管。
+ *
+ * **可利用的一条（本轮定位）**：`data/harness_globals.json` 的 `manual_verification_enabled`
+ * 写成 false ⇒ `src/s6/manualVerify.ts` 的 `if (!opts.enabled) return {action:'pass'}` ⇒
+ * **S6-B 总开关关闭，人工验收全部自动放行**。该文件全仓只有 readFileSync，**无程序写入者**。
+ *
+ * ⚠️ **刻意用白名单而非黑名单**：data/ 下绝大多数是**高频合法写入**
+ * （audit 6275 / alerts 1026 / tokens 1996 / sentinel 512 / archives 375 /
+ *  convergence 89 / manual_tickets 89，外加 6 个每几秒一写的心跳文件）。
+ * 黑名单必然随机制增加而漏；白名单则**未知文件默认不纳入监控**（= 维持改动前的原状），
+ * 误回滚风险从"随机制增长"变为零。
+ *
+ * ⚠️ 未纳入的（**二期，需先解决合法写入者识别**，本轮不做）：
+ *   `data/exemptions.json` —— 有合法程序写入者 `exemptions-core.writeExemptions`。
+ *   直接纳入 ⇒ **豁免 CLI 自己的写入会被回滚 ⇒ 全线授权死锁**（豁免是当前唯一畅通的通道）。
+ *   纳入前须配「刚有 EXEMPTION_ISSUE 审计记录即放行」的窗口规则（同 tokenWasRecentlyConsumed）。
+ */
+const DATA_GOVERNANCE_FILES = new Set([
+  'data/harness_globals.json',   // S6-B 人工验收总开关 + 大文件覆写阈值
+  'data/risk-policy.json',       // 风险策略（全仓同样无程序写入者）
+  // 🔴 2026-10-15 补（落盘前复核时查出）：S4.5 的纯数据映射豁免清单。
+  //   读取点只有 src/ConvergenceGate.ts:71 loadPureMappingExempt（**仅 readFileSync，无写入者**）。
+  //   攻击面与上面同级：往里写 {"files":["*"]} ⇒ CK-08 补丁嗅探 / CK-06.5 举一反三
+  //   的复杂度收敛评估对**全部文件**豁免，而这两个正是 S4.5 长期失准的两项。
+  'data/s4-pure-mapping-exempt.json',
+  // 🔴 2026-10-15 C：豁免台账本身（二期）。它有**合法程序写入者**（exemptions-core.writeExemptions），
+  //   故纳入时必须配合下方 exemptionLedgerWriteIsLegitimate() 的「合法写入者识别」，
+  //   否则会把豁免签发回滚掉、造成全线授权死锁。
+  'data/exemptions.json',
+]);
+
+/** 豁免台账写入是否为「豁免 CLI 的合法动作」：3 分钟内存在新的 EXEMPTION_ISSUE 审计记录 */
+const EXEMPTION_LEDGER_WRITE_WINDOW_MS = 3 * 60 * 1000;
+function exemptionLedgerWriteIsLegitimate() {
+  try {
+    // 从 exemptions-core 自身取审计目录（导出为 getter，调用时解析），不再手推路径
+    const _r = require('path').resolve(__dirname, '..', 'scripts', 'exemptions-core.cjs');
+    const auditDir = require(_r).AUDIT_DIR;
+    if (!auditDir || !fs.existsSync(auditDir)) return false;
+    const cutoff = Date.now() - EXEMPTION_LEDGER_WRITE_WINDOW_MS;
+    for (const f of fs.readdirSync(auditDir)) {
+      if (!f.startsWith('issue_')) continue;
+      try {
+        if (fs.statSync(require('path').join(auditDir, f)).mtimeMs >= cutoff) return true;
+      } catch (_) { /* 单个文件读不到不影响判定 */ }
+    }
+    return false;
+  } catch (e) {
+    // 判不出来 → 视为**不合法**（fail-closed）：宁可回滚一次台账写入，也不放过偷改
+    return false;
+  }
+}
 
 if (!fs.existsSync(auditDir)) fs.mkdirSync(auditDir, { recursive: true });
 
@@ -356,6 +415,28 @@ async function processFileChange(filePath, isBatchAlert) {
     return;
   }
 
+  // 🔴 2026-10-15 C：豁免台账**自身**的合法写入者识别。
+  //   `data/exemptions.json` 由 exemptions-core.writeExemptions 写入 —— 那是豁免 CLI 的**合法动作**。
+  //   若对它一并走分支3 回滚，等于把**豁免签发本身**回滚掉 ⇒ 全线授权死锁。
+  //   （这正是上一轮刻意把它排除在白名单外的原因；现在补上识别规则，它才可安全纳入。）
+  //
+  //   判据：**3 分钟内存在新的 EXEMPTION_ISSUE 审计记录**。依据是豁免 CLI 的固定时序 ——
+  //   `addExemption` 先 load-merge-write 台账、随后才写审计文件，二者总是紧邻发生。
+  //   审计目录取自 exemptions-core 自身的 AUDIT_DIR 导出（getter，调用时解析），
+  //   避免这里再手推一遍路径 —— 本仓已多次因「多真相源」出事。
+  //
+  //   ⚠️ 反向仍被拦：Agent 偷改豁免台账时**没有**对应的审计记录 ⇒ 判不合法 ⇒ 照常回滚。
+  if (filePath === 'data/exemptions.json') {
+    if (exemptionLedgerWriteIsLegitimate()) {
+      stats.allowed++;
+      try { baseline.refresh(filePath); } catch (_) {}
+      console.error(`${prefix} ✅ 放行: ${filePath} — 豁免台账合法写入（3 分钟内有 EXEMPTION_ISSUE 审计记录）`);
+      archiveEvent('allowed', { file: filePath, risk: result.risk, reason: '豁免台账合法写入', timestamp });
+      return;
+    }
+    console.error(`${prefix} ⚠️ 豁免台账写入无对应签发审计 —— 按非法写入处理（继续走回滚）`);
+  }
+
   // 分支3: 无豁免 + 无令牌 → 回滚 + 升级（原逻辑）
   console.error(`${prefix} 🚫 拦截: ${filePath} — ${result.reason}`);
 
@@ -432,6 +513,11 @@ function onFileChanged(relPath) {
   if (filePath.startsWith(normalizedProjectRoot + '/')) {
     filePath = filePath.slice(normalizedProjectRoot.length + 1);
   }
+  // 🔴 2026-10-15：data/ 白名单过滤 —— 必须放在下面的幽灵前缀逻辑**之前**。
+  // 不在白名单内的 data/ 路径**直接返回**，语义 = 与改动前完全一致（根本不监控），
+  // 既不会走到 `src/` 前缀拼接产生幽灵路径，也不会进入回滚判定。
+  if (filePath.startsWith('data/') && !DATA_GOVERNANCE_FILES.has(filePath)) return;
+
   // 确认文件路径匹配已知的监控根目录之一（排除完全无关的路径）
   const inWatchedDir = WATCH_ROOTS.some(r => filePath.startsWith(r.replace(/\\/g, '/')));
   if (!inWatchedDir) {
@@ -499,12 +585,20 @@ for (const root of WATCH_ROOTS) {
   try {
     // MID-4-fix: watcher 回调传相对项目根的路径（root 前缀 + relPath），
     // 修复 dist 等非 src 监控根下 relPath 被误拼成 src/ 前缀导致路径错配。
+    // 🔴 2026-10-15 ③：data/ 根**排除全部子目录** —— 否则轮询会递归扫 audit(6275)/
+    //    tokens(1996)/alerts(1026)/sentinel(512) 等合计上万文件，既慢又无意义
+    //    （白名单已在 onFileChanged 拦下，此处是把扫描成本也降下来）。
+    //    ⚠️ 传 excludeDirs 会**覆盖** createWatcher 的默认忽略表，故基表必须一并带上。
+    const watcherOpts = root === 'data/'
+      ? { excludeDirs: [...fs.readdirSync(fullPath, { withFileTypes: true })
+          .filter(e => e.isDirectory()).map(e => e.name), 'node_modules', '.git', '.claude', '__tests__'] }
+      : undefined;
     const w = createWatcher(fullPath, (relPath) => {
       const p = relPath.replace(/\\/g, '/');
       // 🔴 P0-fix 双保险 (S4 评审): 真正识别绝对路径——watcher 正常输出相对 watchDir 路径走 root+p；
       // 万一未来有绝对路径混入，转成项目根相对路径，绝不拼出 src/D:/... 幽灵前缀。
       onFileChanged(path.isAbsolute(p) ? path.relative(projectRoot, p) : root + p);
-    });
+    }, watcherOpts);
     w.start();
     watchers.push({ root, watcher: w });
   } catch (err) {
@@ -525,8 +619,17 @@ if (dryRun) {
   console.error('[sentinel] 🧬 基线播种: 已跳过（--dry 干运行模式不落盘）');
 } else {
   try {
-    const seed = baseline.seedDirs(WATCH_ROOTS);
-    console.error(`[sentinel] 🧬 基线播种完成: 新增 ${seed.seeded} / 已有 ${seed.skipped} / 失败 ${seed.failed}（${seed.dirs} 个根目录）→ ${baseline.dir}`);
+    // 🔴 2026-10-15：data/ **不交给 seedDirs 递归播种**（那会把 audit/tokens/alerts 等
+    //    上万文件全部建基线——纯浪费，且这些文件根本不在监听白名单内）。
+    //    改为只对 DATA_GOVERNANCE_FILES 逐个 init（init = 仅当基线不存在时建立，
+    //    不覆盖已有授权态，与 seedDirs 的 skipped 语义一致）。
+    const seed = baseline.seedDirs(WATCH_ROOTS.filter(r => r !== 'data/'));
+    let govSeeded = 0, govFailed = 0;
+    for (const f of DATA_GOVERNANCE_FILES) {
+      if (!fs.existsSync(path.join(projectRoot, f))) continue;
+      try { const r = baseline.init(f); if (r && r.skipped === true) continue; (r && r.ok) ? govSeeded++ : govFailed++; } catch (_) { govFailed++; }
+    }
+    console.error(`[sentinel] 🧬 基线播种完成: 新增 ${seed.seeded} / 已有 ${seed.skipped} / 失败 ${seed.failed}（${seed.dirs} 个根目录；治理文件 ${govSeeded} 新增/${govFailed} 失败）→ ${baseline.dir}`);
   } catch (err) {
     console.error(`[sentinel] ⚠️ 基线播种失败（回滚将退化为「拒绝破坏性回滚 + 隔离告警」）: ${err.message}`);
   }

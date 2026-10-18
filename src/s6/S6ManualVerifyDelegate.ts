@@ -15,7 +15,9 @@
  *
  * 放行条件（任一）：
  *   ① data/harness_globals.json 中 manual_verification_enabled === false（总开关，兼容/回滚）
- *   ② 本次 s2_evidence.skip_manual_verification === true（方案声明免人工验收）
+ *   ② 本次 s2_evidence.skip_manual_verification === true **且** 本 run 持有 owner closure
+ *      （人类锚点，见 state.owner_closure_authorized）
+ *      🔴 2026-09-25 P0 收紧：单凭申请方自声明不再放行，且被拒时**可见留痕**。
  *   ③ change_key 对应任务单已全部 confirmed
  */
 import type { StageConfig, FlowRunState, StageOutput } from '../types.js';
@@ -48,8 +50,23 @@ export async function s6ManualVerifyDelegate(_stage: StageConfig, state: FlowRun
   const skip = state.s2_evidence?.skip_manual_verification === true;
   const enabled = manualVerificationEnabled();
 
-  // ①② 总开关关闭 / 方案声明免人工验收 → 放行（不落盘任务单，无副作用）
-  const pre = decideManualGate({ enabled, skipManualVerification: skip, ticket: null });
+  // 🔴 2026-09-25 P0：人类锚点。`skip_manual_verification` 由申请方在 s2_evidence 里
+  // 自行声明，链上没有任何人类锚点 —— 实测它因此成了「跳过人工验收」的自助开关。
+  // 现改为：仅当本次 run 持有已 claim 的 owner closure（owner 密码门签发、绑 branch/HEAD/
+  // 文件 SHA256、TTL 一次性）时才认这条声明。取值由 mcp/server.ts 写入，申请方无法自填。
+  const anchored = state.owner_closure_authorized === true;
+  if (skip && !anchored) {
+    // 🔴 刻意不静默忽略。静默忽略正是本仓反复踩过的坑 —— owner-closure 曾被一段无条件
+    // return 挡成死代码、数月无人察觉。被拒的事实必须报出来，否则申请方会误以为已豁免，
+    // 把「悬挂」当成「已放行」。
+    console.error(
+      '[S6-B] ⛔ skip_manual_verification=true 被拒：本次 run 未持有 owner closure（人类锚点）。' +
+      '该声明由申请方自填，不足以跳过人工验收 —— 已回落至任务单逻辑（该等就等）。',
+    );
+  }
+
+  // ①② 总开关关闭 / 方案声明免人工验收（且持有锚点）→ 放行（不落盘任务单，无副作用）
+  const pre = decideManualGate({ enabled, skipManualVerification: skip, ownerClosureAuthorized: anchored, ticket: null });
   if (pre.action === 'pass') {
     const msg = `## ⏭ S6-B 人工验证已通过（${pre.reason}）\n放行 S7。`;
     return makeStageOutput(passSignal({ files_checked: files.length, await_manual_verification: false, manual_ticket_key: changeKey }), msg);
@@ -73,7 +90,7 @@ export async function s6ManualVerifyDelegate(_stage: StageConfig, state: FlowRun
   }
 
   // ④⑤ 已全确认 → 放行；否则悬挂
-  const decision = decideManualGate({ enabled, skipManualVerification: skip, ticket });
+  const decision = decideManualGate({ enabled, skipManualVerification: skip, ownerClosureAuthorized: anchored, ticket });
   if (decision.action === 'pass') {
     const msg = `## ✅ S6-B 人工验证通过（${changeKey}）\n共 ${ticket.items.length} 项已全部由人工确认，放行 S7 归档。`;
     return makeStageOutput(passSignal({ files_checked: files.length, await_manual_verification: false, manual_ticket_key: changeKey }), msg);
