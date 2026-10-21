@@ -95,7 +95,20 @@ export function review(stage: StageConfig, state: FlowRunState): StageOutput {
     blocking = blocking.concat(dim.blocking_violations);
     advisories = advisories.concat(dim.advisories);
     for (const c of dim.required_confirmations) {
-      if (s2Confirmations.includes(c.key)) {
+      // 🔴 2026-10-22：同时接受**裸 key** 与**带 `[确认缺失:]` 前缀**两种写法。
+      //
+      // 背景：本判定只认裸 key，而 ConvergenceGate.buildUnresolvedKeys 曾把带前缀的字面量
+      // 作为「应声明值」回给 agent（该缺陷已于同日修复，见其注释）。
+      // 修复前产生的 run 已按错误字面量填过 —— 这里放宽一次格式匹配，使它们不必再空跑一轮。
+      //
+      // ⚠️ 这**不是放宽防护**：确认键本就是申请方自声明的「我已核验某事实」，
+      //    接受一种格式变体不会让它能声明更多内容。真正需要人类锚点的是
+      //    `skip_manual_verification`（已由 owner-closure 闸门管住，见 s6/manualVerify.ts）。
+      //    放宽的代价仅为「不因书写形式而卡人」，收益是消除占中止 31% 的单一最大死因。
+      const declared = s2Confirmations.includes(c.key)
+        || s2Confirmations.includes(`确认缺失:${c.key}`)
+        || s2Confirmations.includes(`[确认缺失:${c.key}]`);
+      if (declared) {
         confirmationsMet.push(c.key);
       } else {
         confirmationsMissing.push(c.key);

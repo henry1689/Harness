@@ -289,7 +289,7 @@ export async function evaluate(
     finalReport = finalReport + `\n\n## 📋 待声明确认（${confirmations.length} 项，声明即清除）\n${actionable}`;
   } else if (confirmations.length > 0) {
     // 内容分不足时：把确认清单并入报告帮助收敛（reject_reason 仍以 DS 差距为主）
-    finalReport = finalReport + `\n\n## 📋 同时待声明的评审确认（${confirmations.length} 项）\n${confirmations.slice(0, 15).map(o => `- ${o}`).join('\n')}\n\n> 声明方式：下次 flow 在 s2_evidence.confirmations 加入上述 [确认缺失:*] 对应的 key。`;
+    finalReport = finalReport + `\n\n## 📋 同时待声明的评审确认（${confirmations.length} 项）\n${confirmations.slice(0, 15).map(o => `- ${o}`).join('\n')}\n\n> 🔴 声明方式：下次 flow 在 s2_evidence.confirmations 加入**裸 key**（**不含** \`[确认缺失:]\` 前缀）。\n> 例：\`[确认缺失:HOOK_M_LAYER]\` → 数组里加 \`"HOOK_M_LAYER"\`。\n> 声明时必须确保它断言的事实成立（这是自我核验，不是走过场）。`;
     // P0-A2: 让 FlowEngine 识别"内容分达标但仅剩确认未声明"（score<90 时 FlowEngine 仍回流修码，不误终局）
     const fm = finalSignal.metrics as Record<string, unknown> | undefined;
     if (fm) { fm.unresolved_confirmations = confirmations.length; }
@@ -574,7 +574,19 @@ export function buildUnresolvedKeys(
 ): UnresolvedConfirmationKey[] {
   return confirmations.map((msg) => {
     const end = msg.indexOf(']');
-    const key = end > 0 ? msg.slice(1, end) : msg;
+    const raw = end > 0 ? msg.slice(1, end) : msg;
+    // 🔴 2026-10-22：剥掉 `[确认缺失:]` 前缀 —— **本处原本漏剥，是确认键死结的根因**。
+    //
+    // 症状（生产实证，见 run_mvg3dtsg_ixok 等）：
+    //   key = "确认缺失:ARCH_M_LAYER_NO_REVERSE_DEP"
+    //   → KEY_DECLARATION_EXAMPLES[key] 按**裸 key**建表 ⇒ 100% miss
+    //   → 落到兜底文案，而兜底**主动指示 agent 填带前缀的字面量**
+    //   → 但判定侧 DelegateReviewer.ts:98 是 `includes(c.key)`，只认**裸 key**
+    //   ⇒ 照报告填必然失败。实测：同一文件集连着失败两次。
+    // 顺带失效的第二处：下方 ds_standards 反查 `[确认缺失:${key}]`，key 带前缀时
+    //   变成 `[确认缺失:确认缺失:X]` ⇒ **恒为空**，agent 看不出归哪个 DS。
+    // 影响面：占近期中止的 31%（近 5 天 43/137），是单一最大死因。
+    const key = raw.startsWith('确认缺失:') ? raw.slice('确认缺失:'.length) : raw;
     const requirement = end > 0 ? msg.slice(end + 1).trim() : msg;
     // DS 归属由 relatedViolations 反查；查不到就诚实留空，不编造
     const ds_standards = standardScores

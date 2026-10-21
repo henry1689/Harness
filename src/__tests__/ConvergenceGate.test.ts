@@ -4,7 +4,7 @@
  * - exempt_files 严格校验 relaxed_checks 精确包含 S4.5_complexity
  */
 import { describe, it, expect } from 'vitest';
-import { evaluate, isRelaxedForComplexity } from '../ConvergenceGate.js';
+import { evaluate, isRelaxedForComplexity, buildUnresolvedKeys } from '../ConvergenceGate.js';
 import type { StageConfig, FlowRunState, StageResult, MachineSignal } from '../types.js';
 
 function makeStage(overrides: Partial<StageConfig> = {}): StageConfig {
@@ -358,5 +358,43 @@ describe('ConvergenceGate (H1)', () => {
     expect(isRelaxedForComplexity({ relaxed_checks: ['breaker'] })).toBe(false);         // 其他检查
     expect(isRelaxedForComplexity(undefined)).toBe(false);                               // 无记录
     expect(isRelaxedForComplexity(null)).toBe(false);
+  });
+});
+
+// 🔴 2026-10-22 回归：buildUnresolvedKeys 必须剥掉 `[确认缺失:]` 前缀
+//
+// 该缺陷是确认键死结的根因（占近期中止 31%，单一最大死因）：
+//   key 未剥前缀 → `确认缺失:XXX`
+//   → KEY_DECLARATION_EXAMPLES[带前缀] 恒 miss → 兜底文案**主动指示 agent 填错误字面量**
+//   → 而判定侧只认裸 key ⇒ 照报告填必然失败，同一文件集连着失败两次。
+//   同时 ds_standards 反查 `[确认缺失:确认缺失:X]` ⇒ 恒为空。
+describe('buildUnresolvedKeys — 确认键前缀剥离（2026-10-22 回归）', () => {
+  const scores = [{
+    standardId: 'DS-15', standardText: '静态质量', score: 95, weight: 1,
+    totalChecks: 0, passedChecks: 0, failedChecks: 0,
+    relatedViolations: ['[确认缺失:STATIC_TESTS] 测试文件修改需确认测试用例本身编译通过'],
+    deductions: [], gapToTarget: 3,
+  }];
+
+  it('🔴 key 剥掉 [确认缺失:] 前缀（判定侧只认裸 key）', () => {
+    const [row] = buildUnresolvedKeys(
+      ['[确认缺失:STATIC_TESTS] 测试文件修改需确认测试用例本身编译通过'],
+      scores,
+    );
+    expect(row!.key).toBe('STATIC_TESTS');
+  });
+
+  it('🔴 剥前缀后能命中声明示例表（不再落到兜底的错误字面量）', () => {
+    const [row] = buildUnresolvedKeys(['[确认缺失:STATIC_TESTS] 测试文件修改需确认…'], scores);
+    // 命中 KEY_DECLARATION_EXAMPLES['STATIC_TESTS']，其文案含「测试用例本身编译通过」
+    expect(row!.expected_in_s2_evidence).toContain('测试用例本身编译通过');
+    // 兜底文案会写出「加入字面量 "…"」——命中示例表时不应出现该形态
+    expect(row!.expected_in_s2_evidence).not.toContain('加入字面量');
+    expect(row!.expected_in_s2_evidence).not.toContain('确认缺失:');
+  });
+
+  it('🔴 ds_standards 能反查到（剥前缀后匹配 [确认缺失:KEY]）', () => {
+    const [row] = buildUnresolvedKeys(['[确认缺失:STATIC_TESTS] 测试文件修改需确认…'], scores);
+    expect(row!.ds_standards.map(s => s.id)).toContain('DS-15');
   });
 });

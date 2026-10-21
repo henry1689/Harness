@@ -652,6 +652,66 @@ describe('DelegateReviewer', () => {
       expect(output.machine_signal.reject_reason.some(r => r.includes('ARCH_CHAT_TS_THIN'))).toBe(false);
     });
 
+    // 🔴 2026-10-22 回归：确认键书写形式容错
+    // 背景（占近期中止 31% 的单一最大死因）：判定只认裸 key，而 ConvergenceGate 的
+    // buildUnresolvedKeys 曾把带前缀的字面量当「应声明值」回给 agent ⇒ 照报告填必然失败，
+    // 且同一文件集会连着失败两次。这三条钉住「三种写法都应被接受」。
+    it('🔴 带「确认缺失:」前缀的确认键同样被接受（历史 run 按错误字面量填过）', () => {
+      const stage = makeStage();
+      const state = makeState({
+        modified_files: ['src/webui/chat.ts'],
+        risk_level: 'high',
+        s2_evidence: {
+          approval_ref: 'ref-prefixed',
+          approved_plan: '修复 chat.ts',
+          change_classification: 'specific',
+          global_architecture_decision: '维持原始',
+          confirmations: ['确认缺失:ARCH_CHAT_TS_THIN'],
+        },
+      });
+
+      const d = review(stage, state).machine_signal.review_details!;
+      expect(d.confirmations_met).toContain('ARCH_CHAT_TS_THIN');
+      expect(d.confirmations_missing).not.toContain('ARCH_CHAT_TS_THIN');
+    });
+
+    it('🔴 带方括号完整形态的确认键同样被接受', () => {
+      const stage = makeStage();
+      const state = makeState({
+        modified_files: ['src/webui/chat.ts'],
+        risk_level: 'high',
+        s2_evidence: {
+          approval_ref: 'ref-bracket',
+          approved_plan: '修复 chat.ts',
+          change_classification: 'specific',
+          global_architecture_decision: '维持原始',
+          confirmations: ['[确认缺失:ARCH_CHAT_TS_THIN]'],
+        },
+      });
+
+      const d = review(stage, state).machine_signal.review_details!;
+      expect(d.confirmations_met).toContain('ARCH_CHAT_TS_THIN');
+    });
+
+    it('🔴 写错 key（既非裸也非前缀）仍照常判缺失 —— 容错不等于放水', () => {
+      const stage = makeStage();
+      const state = makeState({
+        modified_files: ['src/webui/chat.ts'],
+        risk_level: 'high',
+        s2_evidence: {
+          approval_ref: 'ref-wrong',
+          approved_plan: '修复 chat.ts',
+          change_classification: 'specific',
+          global_architecture_decision: '维持原始',
+          confirmations: ['确认缺失:THIS_KEY_DOES_NOT_EXIST'],
+        },
+      });
+
+      const d = review(stage, state).machine_signal.review_details!;
+      expect(d.confirmations_met).not.toContain('THIS_KEY_DOES_NOT_EXIST');
+      expect(d.confirmations_missing.length).toBeGreaterThan(0);
+    });
+
     it('未满足的 confirmation → 转 blocking（带稳定 key）', () => {
       const stage = makeStage();
       const state = makeState({
