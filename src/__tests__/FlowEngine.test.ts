@@ -10,6 +10,9 @@ import path from 'node:path';
 import { FlowEngine, type FlowResult } from '../FlowEngine.js';
 import type { TriggerContext, StageConfig, StageOutput, MachineSignal, FlowRunState } from '../types.js';
 import { CircuitBreakerError, WhitelistViolationError } from '../types.js';
+// 🔴 2026-10-22：审计目录必须与被测代码同源。原三处各自 `path.resolve('data','audit')`
+// 直指生产目录，导致每跑一遍全量测试就往生产审计写 20 条假 run（实测占 data/audit 的 50.4%）。
+import { auditDir } from '../paths.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Mock DelegateReviewer
@@ -249,9 +252,8 @@ describe('FlowEngine', () => {
       expect(result.end_reason).toBe('user_abort');
       expect(result.flow_status).toBe('aborted');
       // 审计补记验证：run_id 对应审计文件存在且含唯一 flow_abort
-      const auditDir = path.resolve('data', 'audit');
-      const found = readdirSync(auditDir).flatMap((d: string) => {
-        const f = path.join(auditDir, d, result.run_id + '.json');
+      const found = readdirSync(auditDir()).flatMap((d: string) => {
+        const f = path.join(auditDir(), d, result.run_id + '.json');
         return existsSync(f) ? [f] : [];
       });
       expect(found.length).toBe(1);
@@ -351,11 +353,10 @@ describe('FlowEngine', () => {
       expect(result.success).toBe(true);
 
       // 审计文件应记录 S2 gate_resolve 的 evidence 摘要（含 hash，不含原文全文）
-      const auditDir = path.resolve('data', 'audit');
-      const dirs = readdirSync(auditDir).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+      const dirs = readdirSync(auditDir()).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
       let foundAudit: string | null = null;
       for (const d of dirs) {
-        const f = path.join(auditDir, d, result.run_id + '.json');
+        const f = path.join(auditDir(), d, result.run_id + '.json');
         if (existsSync(f)) { foundAudit = f; break; }
       }
       expect(foundAudit).not.toBeNull();
@@ -461,10 +462,13 @@ describe('F3 S7 归档回退硬止', () => {
     // 回归保护：曾写死「S7-A 为本地空跑 stage，无法自动产出归档，请人工产出」——该前提在
     // S7-A 进程内自动归档（src/s7/s7AutoArchive.ts）落地后已失效，实测把 R4（缺豁免）
     // 误导成「归档没生成」。新文案取 machine_signal.reject_reason，不得再回退到写死原因。
-    const auditDir = path.resolve('data', 'audit');
     let abortReason = '';
-    for (const d of readdirSync(auditDir).filter((x: string) => /^\d{4}-\d{2}-\d{2}$/.test(x))) {
-      const f = path.join(auditDir, d, result.run_id + '.json');
+    const auditRoot = auditDir();
+    const auditDateDirs = existsSync(auditRoot)
+      ? readdirSync(auditRoot).filter((x: string) => /^\d{4}-\d{2}-\d{2}$/.test(x))
+      : [];
+    for (const d of auditDateDirs) {
+      const f = path.join(auditRoot, d, result.run_id + '.json');
       if (!existsSync(f)) continue;
       const audit = JSON.parse(readFileSync(f, 'utf-8'));
       const aborts = (audit.entries ?? []).filter((e: { event: string }) => e.event === 'flow_abort');

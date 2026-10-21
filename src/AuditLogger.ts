@@ -22,16 +22,13 @@
  */
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, rmdirSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import type { AuditEntry, AuditEventType, MachineSignal } from './types.js';
-
-/** 审计日志根目录 */
-const AUDIT_DIR = (() => {
-  const base = typeof import.meta !== 'undefined' && (import.meta as any).dirname
-    ? (import.meta as any).dirname
-    : __dirname;
-  return resolve(base, '..', 'data', 'audit');
-})();
+// 🔴 2026-10-22：审计目录改由**唯一解析入口**给出，此处不再自推路径。
+// 原实现是模块加载时定死的常量，导致单元测试把 run 记录直接写进生产 data/audit/ ——
+// 实测 776 个 run 里 391 个（50.4%）是 vitest 写入，跑通率/中止归因全部被污染。
+// 见 src/paths.ts（含解析优先级与「调用时解析」的理由）。
+import { auditDir } from './paths.js';
 
 /** 容量管控常量 */
 const CAPACITY = {
@@ -67,15 +64,15 @@ export class AuditLogger {
   /** 获取审计日志磁盘使用量（估算） */
   static getDiskUsage(): { totalFiles: number; totalBytes: number; warning: boolean } {
     try {
-      if (!existsSync(AUDIT_DIR)) return { totalFiles: 0, totalBytes: 0, warning: false };
+      if (!existsSync(auditDir())) return { totalFiles: 0, totalBytes: 0, warning: false };
 
       let totalBytes = 0;
       let totalFiles = 0;
 
-      const dateDirs = readdirSync(AUDIT_DIR);
+      const dateDirs = readdirSync(auditDir());
       for (const dateDir of dateDirs) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateDir)) continue;
-        const dirPath = join(AUDIT_DIR, dateDir);
+        const dirPath = join(auditDir(), dateDir);
         const files = readdirSync(dirPath);
         for (const file of files) {
           try {
@@ -97,19 +94,19 @@ export class AuditLogger {
   /** 清理超过保留天数的旧日志 */
   static cleanupExpired(): number {
     try {
-      if (!existsSync(AUDIT_DIR)) return 0;
+      if (!existsSync(auditDir())) return 0;
 
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - CAPACITY.MAX_RETENTION_DAYS);
       const cutoffStr = cutoffDate.toISOString().slice(0, 10);
 
-      const dateDirs = readdirSync(AUDIT_DIR);
+      const dateDirs = readdirSync(auditDir());
       let cleaned = 0;
 
       for (const dateDir of dateDirs) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateDir)) continue;
         if (dateDir < cutoffStr) {
-          const dirPath = join(AUDIT_DIR, dateDir);
+          const dirPath = join(auditDir(), dateDir);
           try {
             const files = readdirSync(dirPath);
             for (const file of files) {
@@ -277,7 +274,7 @@ export class AuditLogger {
           archive.comparisonSummary || '(未提供)',
         ].join('\n');
 
-        const archiveDir = join(AUDIT_DIR, 'proposals');
+        const archiveDir = join(auditDir(), 'proposals');
         if (!existsSync(archiveDir)) mkdirSync(archiveDir, { recursive: true });
 
         const archivePath = join(archiveDir, `${this.runId}_proposal.md`);
@@ -320,7 +317,7 @@ export class AuditLogger {
   persist(): void {
     try {
       const dateDir = new Date().toISOString().slice(0, 10);
-      const dir = join(AUDIT_DIR, dateDir);
+      const dir = join(auditDir(), dateDir);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
       const filePath = join(dir, `${this.runId}.json`);
@@ -345,7 +342,7 @@ export class AuditLogger {
   /** 从磁盘加载审计日志（复盘用） */
   static load(runId: string): AuditEntry[] | null {
     try {
-      const base = AUDIT_DIR;
+      const base = auditDir();
       if (!existsSync(base)) return null;
 
       const dateDirs = readdirSync(base).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d));
