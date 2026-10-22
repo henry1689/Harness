@@ -665,6 +665,26 @@ export class FlowEngine {
       const _passed = resolution !== 'condition_rejected';
       _rec.consecutive_below = _passed ? 0 : _rec.consecutive_below + 1;
 
+      // 🔴 2026-10-22（④转人工裁决永久堵死 · 单函数内新增 1 个 if 分支）
+      //
+      // 缺陷：下面开单条件里的 `!_rec.ticket_issued` 依赖本标志，而它**一旦置真永不复位**，
+      //   却与 `consecutive_below` 不同步 —— 后者在任一轮通过时清零。两个计数器语义脱钩。
+      //   模块头注释「本文件不需要在此读取任务单完成态」正是这个疏漏的来源：因为不读完成态，
+      //   就没有任何人负责复位它。
+      //
+      // 后果（2026-10-22 实测 data/convergence 126 个账本）：
+      //   58 个 ticket_issued=true、**0 个被确认**；其中 **52 个的 consecutive_below 已归零**
+      //   （= 该 change_key 后来已经通过了），标志却仍卡在 true。
+      //   于是同一文件集再次连续 3 轮未过时，`!_rec.ticket_issued` 恒为 false ⇒ **永远不再开新单**，
+      //   该指纹永久失去「转人工裁决」这条出路，只能落进 confirmations_pending 等终局。
+      //   这解释了④为何从 10-17 起从个位数涨到 27 次/5 天。
+      //
+      // 修法：**通过即复位**。语义是「S4.5 已通过 ⇒ 本批文件的裁决需求消失，允许未来重新开单」。
+      //   安全性：不触碰 ConvergenceGate 的放行路径 —— 那里读的是 data/manual_tickets/<ck>.json
+      //   的 `run_status === 'completed'`，与本账本是**两套独立存储**，复位此处不影响已确认的单。
+      //   「一张单只开一次」也仍成立：未通过时 `_passed=false`，标志不动。
+      if (_passed) _rec.ticket_issued = false;
+
       if (!_passed && _rec.consecutive_below >= P0_1_TICKET_THRESHOLD && !_rec.ticket_issued) {
         try {
           const _t = issueConvergenceTicket(_ck, this.state.run_id, _rec.consecutive_below, _score);

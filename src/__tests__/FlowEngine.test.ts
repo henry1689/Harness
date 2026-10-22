@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { FlowEngine, type FlowResult } from '../FlowEngine.js';
 import type { TriggerContext, StageConfig, StageOutput, MachineSignal, FlowRunState } from '../types.js';
@@ -487,5 +487,112 @@ describe('F3 S7 归档回退硬止', () => {
     const result = await engine.start('wenstaros_core_repair_flow.yaml', makeHighRiskContext());
     expect(result.end_reason).toBe('completed');
     expect(result.run_status).toBe('completed');
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// P0-1: 任务单标志复位（2026-10-22 回归护栏）
+// ════════════════════════════════════════════════════════════════════
+// 缺陷：FlowEngine.ts 的开单条件依赖 `_rec.ticket_issued`，而该标志一旦置真永不复位，
+//   却与 `consecutive_below` 不同步 —— 后者在任一轮通过时清零。两个计数器语义脱钩。
+// 后果：某 change_key 开过一次任务单且无人确认后，即使之后再次连续 3 轮未过
+//   也**永远不再开新单**，该指纹永久失去「转人工裁决」这条出路。
+//   2026-10-22 实测：126 个账本里 58 个已开单、**0 个被确认**，其中 52 个标志永久卡死。
+//
+// 🔴 两条设计约束（都是踩过的坑）：
+//  1. 必须**临时清掉 `process.env.VITEST`**：P0-1 段有 `&& !process.env.VITEST` 闸门
+//     （防止测试把失败轮次累加进真实账本），不清就永远走不到被测代码。
+//  2. 探针会短暂写入 `data/convergence/`，故**只认跑之前不存在、跑之后新出现的文件**：
+//     用目录快照 diff 定位，结束时只删这些新增文件。**绝不按内容特征匹配** ——
+//     那种判据会误伤恰好形状相似的真实账本。
+describe('P0-1 任务单标志复位（2026-10-22 回归）', () => {
+  const PROBE_FILE = 'src/__tests__/__zombie_ticket_probe__.ts';
+  const LEDGER_DIR = path.resolve('data', 'convergence');
+
+  const s45Reject: StageOutput = {
+    machine_signal: {
+      passed: false, risk_level: 'mid',
+      reject_reason: ['内容不足'],
+      // unresolved_confirmations=0：避免抢先进 confirmations_pending 终局
+      metrics: { compliance_score: 85, unresolved_confirmations: 0 },
+    },
+    human_report: '# 分数不足',
+  };
+  const s45Pass: StageOutput = {
+    machine_signal: {
+      passed: true, risk_level: 'low',
+      reject_reason: [],
+      metrics: { compliance_score: 99, unresolved_confirmations: 0 },
+    },
+    human_report: '# 通过',
+  };
+
+  /** 只读取「本次探针新建」的账本文件（相对运行前快照的新增集） */
+  const readNewLedger = (baseline: Set<string>): Record<string, unknown> | null => {
+    if (!existsSync(LEDGER_DIR)) return null;
+    for (const f of readdirSync(LEDGER_DIR)) {
+      if (baseline.has(f)) continue; // 跑之前就在的，一律不碰
+      try {
+        return JSON.parse(readFileSync(path.join(LEDGER_DIR, f), 'utf-8')) as Record<string, unknown>;
+      } catch { /* 跳过损坏项 */ }
+    }
+    return null;
+  };
+
+  it('🔴 通过后复位 ticket_issued → 该指纹能重新开单（修复前永远开不出）', async () => {
+    const hadVitest = 'VITEST' in process.env;
+    delete (process.env as Record<string, string | undefined>).VITEST;
+
+    // 运行前快照：后续所有读写都只针对快照之外的文件
+    const baseline = new Set<string>(
+      existsSync(LEDGER_DIR) ? readdirSync(LEDGER_DIR) : [],
+    );
+    const produced: string[] = [];
+
+    const runOne = async (s45: StageOutput): Promise<void> => {
+      await engineWithS45(s45).start(
+        'wenstaros_core_repair_flow.yaml',
+        makeHighRiskContext({ modifiedFiles: [PROBE_FILE], message: '僵尸任务单探针' }),
+      );
+    };
+
+    try {
+      // ① 连续 3 轮未过 → 应开出任务单
+      for (let i = 0; i < 3; i++) await runOne(s45Reject);
+      const after3 = readNewLedger(baseline);
+      expect(after3, '连续 3 轮未过后应生成账本').not.toBeNull();
+      expect(after3!.ticket_issued, '第 3 轮未过应开单').toBe(true);
+
+      // ② S4.5 通过 → 修复点：标志必须复位
+      await runOne(s45Pass);
+      const afterPass = readNewLedger(baseline);
+      expect(afterPass!.consecutive_below, '通过后连续计数清零').toBe(0);
+      // 🔴 本次修复的唯一断言点
+      expect(afterPass!.ticket_issued, '通过后任务单标志必须复位').toBe(false);
+
+      // ③ 再次连续 3 轮未过 → 应**重新**开单（修复前此处永远不再开）
+      for (let i = 0; i < 3; i++) await runOne(s45Reject);
+      const afterReissue = readNewLedger(baseline);
+      expect(afterReissue!.ticket_issued, '复位后同一指纹应能重新开单').toBe(true);
+
+      // ④ 反向：继续未过**不得**重复开单（「一张单只开一次」仍然成立）
+      for (let i = 0; i < 2; i++) await runOne(s45Reject);
+      const afterMore = readNewLedger(baseline);
+      expect(afterMore!.ticket_issued, '未通过期间不重复开单').toBe(true);
+      expect(afterMore!.consecutive_below as number).toBeGreaterThan(3);
+    } finally {
+      if (hadVitest) process.env.VITEST = 'true';
+      // 只删探针新建的文件（快照 diff），既有账本一个不动
+      if (existsSync(LEDGER_DIR)) {
+        for (const f of readdirSync(LEDGER_DIR)) {
+          if (!baseline.has(f)) { produced.push(f); rmSync(path.join(LEDGER_DIR, f)); }
+        }
+      }
+    }
+    // 兜底：探针跑完不应留下任何东西
+    if (existsSync(LEDGER_DIR)) {
+      const leftover = readdirSync(LEDGER_DIR).filter(f => !baseline.has(f));
+      expect(leftover, '探针账本未清理干净').toEqual([]);
+    }
   });
 });
