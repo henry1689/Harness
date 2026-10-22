@@ -541,6 +541,12 @@ describe('P0-1 任务单标志复位（2026-10-22 回归）', () => {
 
   it('🔴 通过后复位 ticket_issued → 该指纹能重新开单（修复前永远开不出）', async () => {
     const hadVitest = 'VITEST' in process.env;
+    const prevAuditDir = process.env.HARNESS_AUDIT_DIR;
+    // `VITEST` 是进程级变量：paths.isTestProcess() 同样读它。删掉后 AuditLogger 会
+    // 回到默认目录，而 vitest 并行跑其它测试文件时它们也看不到该变量，
+    // 于是同窗口内一起落盘到非隔离区（2026-10-22 实测：修复隔离后仍新增 34 条）。
+    // 故落盘目录须另行显式指定，与该变量分开控制。
+    process.env.HARNESS_AUDIT_DIR = path.resolve('data', 'test-runs', 'audit');
     delete (process.env as Record<string, string | undefined>).VITEST;
 
     // 运行前快照：后续所有读写都只针对快照之外的文件
@@ -582,6 +588,9 @@ describe('P0-1 任务单标志复位（2026-10-22 回归）', () => {
       expect(afterMore!.consecutive_below as number).toBeGreaterThan(3);
     } finally {
       if (hadVitest) process.env.VITEST = 'true';
+      // 落盘目录必须还原 —— 尤其是并行的其它测试文件还依赖默认判定
+      if (prevAuditDir === undefined) delete process.env.HARNESS_AUDIT_DIR;
+      else process.env.HARNESS_AUDIT_DIR = prevAuditDir;
       // 只删探针新建的文件（快照 diff），既有账本一个不动
       if (existsSync(LEDGER_DIR)) {
         for (const f of readdirSync(LEDGER_DIR)) {
