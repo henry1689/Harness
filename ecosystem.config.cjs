@@ -83,6 +83,9 @@ module.exports = {
       autorestart: true,
       max_restarts: 3,
       restart_delay: 2000,
+      // 撞锁时 sentinel 以 exit(0) 正常退出 → pm2 记为 stopped，不再无限重启
+      // 兜底路径不变：watchdog 心跳超时后仍用 `pm2 restart` 拉起（restart 对 stopped 状态有效）
+      stop_exit_codes: [0],
       listen_timeout: 3000,
       error_file: path.join(HARNESS_ROOT, 'data', 'logs', 'sentinel-error.log'),
       out_file: path.join(HARNESS_ROOT, 'data', 'logs', 'sentinel-out.log'),
