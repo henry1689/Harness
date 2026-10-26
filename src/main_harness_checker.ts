@@ -498,19 +498,59 @@ function checkUUIDAnnotationChain(projectRoot: string, files: string[]): CheckRe
 // CK-05: 12 处 _meetingEntityName grep 核验
 // ════════════════════════════════════════════════════════════════════
 
+/** 编目条目。`probe` 仅新格式（V15 probe 化，2026-10-23 起）携带 —— 有它即表示行号是动态定位的 */
+interface MeetingCatalogEntry {
+  line: number;
+  stage: string;
+  desc: string;
+  via: string;
+  probe?: string;
+}
+
 /** v2.9.2: 从 chat.ts 解析 V15 自编目（MEETING_PROP_POINTS 数组字面量）——权威索引在代码内，随代码同步漂移
- *  返回 { entries, catalogEndIdx }——catalogEndIdx 为编目数组结束行，供 via 搜索排除编目自身 */
-function parseMeetingCatalog(lines: string[]): { entries: Array<{ line: number; stage: string; desc: string; via: string }>; catalogEndIdx: number } {
-  const entries: Array<{ line: number; stage: string; desc: string; via: string }> = [];
+ *  返回 { entries, catalogEndIdx }——catalogEndIdx 为编目数组结束行，供 via 搜索排除编目自身
+ *
+ *  🔴 2026-10-26（CK-05 全线卡死修复）：同时认两种编目格式。
+ *  原实现只有 `line:` 一条正则，而 wenstar 侧 V15 编目自 2026-10-23 起改为
+ *  `{ probe, stage, desc, via }`（probe 为该点位在 chat.ts 里的**特征串**）。
+ *  格式对不上 ⇒ entries 恒空 ⇒ 下游 `catalog.length === 0` 直接 hard fail ⇒
+ *  DS-06 扣 40 分且**无豁免出口**（豁免只覆盖 CK-06.5/CK-08）⇒ 任何含 chat.ts 的 flow 必挂。
+ *
+ *  probe 化是既定演进（行号随代码漂移、手填必失准），故此处**向下兼容**，不回退 wenstar 侧。
+ *  行号改为用 probe 特征串从**编目结束之后**动态定位 —— 两趟：先解析出 entries 与
+ *  catalogEndIdx，再统一定位，避免把编目内后续条目的 probe 串误当成目标代码行。
+ */
+function parseMeetingCatalog(lines: string[]): { entries: MeetingCatalogEntry[]; catalogEndIdx: number } {
+  const entries: MeetingCatalogEntry[] = [];
   let started = false;
   let catalogEndIdx = -1;
+  // 旧格式（向后兼容）：{ line: 数字, stage, desc, via }
+  const RE_LINE = /\{\s*line:\s*(\d+),\s*stage:\s*'([^']*)',\s*desc:\s*'([^']*)',\s*via:\s*'([^']*)'\s*\}/;
+  // 新格式（V15 probe 化）：{ probe: 特征串, stage, desc, via }
+  const RE_PROBE = /\{\s*probe:\s*'([^']*)',\s*stage:\s*'([^']*)',\s*desc:\s*'([^']*)',\s*via:\s*'([^']*)'\s*\}/;
+
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (l.includes('MEETING_PROP_POINTS')) { started = true; continue; }
     if (!started) continue;
-    const m = l.match(/\{\s*line:\s*(\d+),\s*stage:\s*'([^']*)',\s*desc:\s*'([^']*)',\s*via:\s*'([^']*)'\s*\}/);
-    if (m) entries.push({ line: +m[1], stage: m[2], desc: m[3], via: m[4] });
+    const ml = l.match(RE_LINE);
+    if (ml) { entries.push({ line: +ml[1], stage: ml[2], desc: ml[3], via: ml[4] }); }
+    else {
+      const mp = l.match(RE_PROBE);
+      // line 暂填 0，下面统一用 probe 特征串从编目之后定位
+      if (mp) entries.push({ line: 0, stage: mp[2], desc: mp[3], via: mp[4], probe: mp[1] });
+    }
     if (entries.length > 0 && /^\s*\];/.test(l)) { catalogEndIdx = i; break; }
+  }
+
+  // 第二趟：probe 格式条目用特征串定位真实代码行（从编目结束之后搜索，排除编目自身）
+  if (catalogEndIdx >= 0) {
+    for (const e of entries) {
+      if (!e.probe) continue;
+      const at = lines.findIndex((l, j) => j > catalogEndIdx && l.includes(e.probe!));
+      // 定位不到时保持 0 —— 下游 catalogLineDrifted 对 line<=0 返回 null，不误报漂移
+      e.line = at >= 0 ? at + 1 : 0;
+    }
   }
   return { entries, catalogEndIdx };
 }
@@ -541,8 +581,17 @@ function catalogEntryHasEvidence(lines: string[], entry: { line: number; via: st
 
 /** v2.9.2: 编目行号是否与实际 via 位置偏差过大（>20 行 → warn，提示编目需同步）
  *  排除编目定义自身行（MEETING_PROP_POINTS 数组内也含 via 字符串），从编目结束后搜索 */
-function catalogLineDrifted(lines: string[], entry: { line: number; via: string }, catalogStartIdx: number): number | null {
+function catalogLineDrifted(lines: string[], entry: { line: number; via: string; probe?: string }, catalogStartIdx: number): number | null {
   if (!entry.via) return null;
+  // 🔴 2026-10-26：probe 格式下跳过漂移检测。
+  // 该检测的语义是「编目手填的行号是否与实际代码位置脱节」。probe 格式里行号由
+  // probe 特征串动态定位，**天然不会脱节**，检测本身失去意义。
+  // 且 `via` 是**描述性文本**（如「getEntityName() 汇聚」）而非必紧邻的代码片段 ——
+  // 实测 wenstar HEAD：L10-主人镜像的 via 与 probe 相距 248 行，据此报 warn 会
+  // 把 CK-05 打成 severity=warn，而 ComplianceScorer 对 warn 仍扣 15 分、
+  // DS-06=85 < PASS_THRESHOLD 98 ⇒ 解析修好了照样过不了。属误报，不是真漂移。
+  // 传播链的硬判据在 catalogEntryHasEvidence（via 全文存在），**未放松**。
+  if (entry.probe) return null;
   const fromIdx = catalogStartIdx > 0 ? catalogStartIdx : 0;
   const actualIdx = lines.findIndex((l, i) => i > fromIdx && l.includes(entry.via));
   if (actualIdx === -1) return null;
@@ -599,7 +648,12 @@ function checkMeetingEntityPoints(projectRoot: string, files: string[]): CheckRe
     { name: '实体名声明(let _meetingEntityName)', re: /let\s+_meetingEntityName/ },
     { name: '实体名赋值(getEntityName)', re: /_meetingEntityName\s*=\s*ctx\._entityMeeting\.getEntityName/ },
     { name: 'M4 会晤UUID隔离(orchestrate)', re: /ctx\.m4\.orchestrate\(/ },
-    { name: 'M5 会晤标记(orchestrate 传 _meetingEntityName)', re: /ctx\.m5\.orchestrate\([^)]*_meetingEntityName/ },
+    // 🔴 2026-10-26：同时认两种传参形式。wenstar 侧已把会晤实体信息收进 `_identity` 对象
+    // （`_resolveIdentity({ isMeeting: !!_meetingEntityName, speakerName: _meetingEntityName, ... })`
+    //  → `ctx.m5.orchestrate(..., _identity)`），实体名**仍在传**，只是换了载体。
+    // 原正则只认裸 `_meetingEntityName` 参数 ⇒ 恒不匹配 ⇒ push violation ⇒ hard fail，
+    // 且该锚点失败会绕过上面所有修复，仍卡死全部含 chat.ts 的 flow。
+    { name: 'M5 会晤标记(orchestrate 传会晤实体信息)', re: /ctx\.m5\.orchestrate\([^)]*(?:_meetingEntityName|_identity)/ },
     { name: 'ChatPolicy 会晤模式(meetingMode)', re: /new\s+ChatPolicy\(meetingMode\(/ },
   ];
   for (const a of anchors) {
